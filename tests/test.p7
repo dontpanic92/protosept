@@ -1,0 +1,66 @@
+enum SomeErrors {
+    NumberIsNot42,
+}
+
+fn add(a: number, b: number) -> number {
+    a + b
+}
+
+fn sub(a: number, b: number) -> number {
+    return a - b;
+}
+
+fn[throws] test42(a: number) -> number {
+    if a != 42 {
+        throw NumberIsNot42
+    }
+
+    a
+}
+
+fn assign42(a: &number) {
+    a = 42;
+}
+
+struct Vec2 {
+    secret: number = 42;
+
+    pub x: number = 0;
+    pub y: number = 0;
+
+    pub fn new(x: number, y: number) -> Self {
+        Self { x, y }
+    }
+
+    pub fn add(self, other: Self) -> Self {
+        Self {
+            x: self.x + other.x,
+            y: self.y + other.y,
+        }
+    }
+
+    pub fn get_secret(self) -> number {
+            self.secret
+    }
+
+    pub fn set_secret(&self, value: number) {
+        self.secret = value;
+    }
+}
+
+fn test() -> number {
+    let a = Vec2.new(1, 2.5);
+    let b = Vec2.new(3, 4.5);
+    let c = a.add(b);
+    let d = sub(a.x, b.y);
+    
+    let e = try test42(d) else {
+        err: SomeErrors.NumberIsNot42 => 0,
+    }
+
+    let f = try test42(e) else 0;
+
+    assign42(&f);
+
+    f
+}
