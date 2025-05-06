@@ -6,7 +6,7 @@ pub struct Identifier {
 }
 #[derive(Debug, PartialEq, Clone)]
 pub struct Argument {
-    pub identifier: Identifier,
+    pub name: Identifier,
     pub arg_type: Identifier,
 }
 
@@ -47,6 +47,21 @@ pub enum Expression {
     BlockValue(Box<Expression>),
 }
 
+const BINARY_OPTERATORS: &[TokenType] = &[
+    TokenType::And,
+    TokenType::Or,
+    TokenType::Plus,
+    TokenType::Minus,
+    TokenType::Multiply,
+    TokenType::Divide,
+    TokenType::Equals,
+    TokenType::NotEquals,
+    TokenType::GreaterThan,
+    TokenType::GreaterThanOrEqual,
+    TokenType::LessThan,
+    TokenType::LessThanOrEqual,
+];
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Statement {
     Let {
@@ -56,6 +71,7 @@ pub enum Statement {
     Expression(Expression),
     FunctionDeclaration {
         name: Identifier,
+        effects: Vec<Identifier>,
         parameters: Vec<Argument>,
         return_type: Option<Identifier>,
         body: Expression,
@@ -76,8 +92,6 @@ pub enum ParserError {
     UnexpectedToken(Token),
     ExpectedToken(TokenType, Token),
     UnexpectedEof,
-    InvalidExpression,
-    InvalidStatement,
 }
 
 type ParseResult<T> = Result<T, ParserError>;
@@ -86,9 +100,9 @@ pub struct Parser {
     position: usize,
 }
 
-macro_rules! consume_match {
-    ($self:ident, $($pattern:pat => $body: expr $(,)?)*) => {
-        match $self.consume() {
+macro_rules! match_token {
+    ($token:expr, $($pattern:pat => $body: expr $(,)?)*) => {
+        match $token {
             $(Some(&Token {
                 token_type: $pattern,
                 ..
@@ -119,19 +133,21 @@ impl Parser {
     }
 
     fn consume_match(&mut self, token_type: TokenType) -> ParseResult<&Token> {
-        match self.consume() {
-            Some(t) if t.token_type == token_type => Ok(t),
+        match self.peek() {
+            Some(t) if t.token_type == token_type => Ok(self.consume().unwrap()),
             Some(t) => Err(ParserError::ExpectedToken(token_type, t.clone())),
             _ => Err(ParserError::UnexpectedEof),
         }
     }
 
-    fn consume_match_identifier(&mut self) -> ParseResult<String> {
+    fn parse_identifier(&mut self) -> ParseResult<Identifier> {
         match self.consume() {
             Some(Token {
                 token_type: TokenType::Identifier(literal),
                 ..
-            }) => Ok(literal.clone()),
+            }) => Ok(Identifier {
+                name: literal.clone(),
+            }),
             Some(t) => Err(ParserError::ExpectedToken(
                 TokenType::Identifier("".to_string()),
                 t.clone(),
@@ -171,11 +187,10 @@ impl Parser {
 
     fn parse_field_access(&mut self, object: Expression) -> ParseResult<Expression> {
         self.consume_match(TokenType::Dot)?;
-        let field_name = self.consume_match_identifier()?;
-        let field_identifier = Identifier { name: field_name };
+        let field = self.parse_identifier()?;
 
         if self.peek_match(TokenType::OpenParen) {
-            let call = self.parse_function_call(field_identifier)?;
+            let call = self.parse_function_call(field)?;
             return Ok(Expression::FieldAccess {
                 object: Box::new(object),
                 field: Identifier {
@@ -186,13 +201,13 @@ impl Parser {
 
         Ok(Expression::FieldAccess {
             object: Box::new(object),
-            field: field_identifier,
+            field,
         })
     }
 
     fn parse_primary_expression(&mut self) -> ParseResult<Expression> {
-        consume_match! {
-            self,
+        match_token! {
+            self.consume(),
             TokenType::Integer(value) => {
                 Ok(Expression::Number(value))
             }
@@ -270,7 +285,7 @@ impl Parser {
     fn parse_expression(&mut self) -> ParseResult<Expression> {
         let mut left = self.parse_primary_expression()?;
         while let Some(token) = self.peek() {
-            if token.token_type == TokenType::Plus || token.token_type == TokenType::Minus {
+            if BINARY_OPTERATORS.contains(&token.token_type) {
                 let operator = self.consume().unwrap().clone();
                 let right = self.parse_primary_expression()?;
                 left = Expression::Binary {
@@ -327,16 +342,12 @@ impl Parser {
                 break;
             }
 
-            let literal_name = self.consume_match_identifier()?;
-            let identifier = Identifier { name: literal_name };
+            let name = self.parse_identifier()?;
+            self.consume_match(TokenType::Colon)?;
 
-            let literal_type = self.consume_match_identifier()?;
-            let arg_type = Identifier { name: literal_type };
+            let arg_type = self.parse_identifier()?;
 
-            parameters.push(Argument {
-                identifier,
-                arg_type,
-            });
+            parameters.push(Argument { name, arg_type });
 
             let _ = self.consume_match(TokenType::Comma);
         }
@@ -346,8 +357,7 @@ impl Parser {
 
     fn parse_enum_declaration(&mut self) -> ParseResult<Statement> {
         self.consume_match(TokenType::Enum)?;
-        let literal = self.consume_match_identifier()?;
-        let name = Identifier { name: literal };
+        let name = self.parse_identifier()?;
 
         self.consume_match(TokenType::OpenBrace)?;
 
@@ -358,11 +368,8 @@ impl Parser {
                 break;
             }
 
-            let literal = self.consume_match_identifier()?;
-
-            values.push(EnumValue {
-                name: literal.clone(),
-            });
+            let literal = self.parse_identifier()?;
+            values.push(EnumValue { name: literal.name });
 
             if !self.peek_match(TokenType::CloseBrace) {
                 self.consume_match(TokenType::Comma)?;
@@ -374,22 +381,35 @@ impl Parser {
 
     fn parse_function_declaration(&mut self) -> ParseResult<Statement> {
         self.consume_match(TokenType::Fn)?;
-        let literal = self.consume_match_identifier()?;
-        let name = Identifier { name: literal };
+        let mut effects = vec![];
+        if self.consume_match(TokenType::OpenBracket).is_ok() {
+            loop {
+                effects.push(self.parse_identifier()?);
 
+                if !self.peek_match(TokenType::CloseBracket) {
+                    self.consume_match(TokenType::Comma)?;
+                } else {
+                    let _ = self.consume_match(TokenType::Comma);
+                    self.consume_match(TokenType::CloseBracket)?;
+
+                    break;
+                }
+            }
+        }
+
+        let name = self.parse_identifier()?;
         let parameters = self.parse_argument_list()?;
         let mut return_type: Option<Identifier> = None;
+
         if self.consume_match(TokenType::RightArrow).is_ok() {
-            let literal = self.consume_match_identifier()?;
-            return_type = Some(Identifier {
-                name: literal.clone(),
-            });
+            return_type = Some(self.parse_identifier()?);
         }
 
         let body = self.parse_block()?;
 
         Ok(Statement::FunctionDeclaration {
             name,
+            effects,
             parameters,
             body,
             return_type,
@@ -403,9 +423,9 @@ impl Parser {
             Some(TokenType::If) => self.parse_if_expression().map(Statement::Expression),
             Some(TokenType::Return) => {
                 self.consume();
-                Ok(Statement::Expression(Expression::Return(Box::new(
-                    self.parse_expression()?,
-                ))))
+                let expr = self.parse_expression()?;
+                self.consume_match(TokenType::Semicolon)?;
+                Ok(Statement::Expression(Expression::Return(Box::new(expr))))
             }
             Some(TokenType::Try) => {
                 self.consume();
@@ -416,6 +436,8 @@ impl Parser {
                     None
                 };
 
+                self.consume_match(TokenType::Semicolon)?;
+
                 Ok(Statement::TryElse {
                     try_block,
                     else_block,
@@ -423,37 +445,34 @@ impl Parser {
             }
             Some(TokenType::Throw) => {
                 self.consume();
-                return self
-                    .parse_expression()
-                    .map_err(|err| err)
-                    .map(|expression| Statement::Throw(expression));
+                let expr = self.parse_expression()?;
+                self.consume_match(TokenType::Semicolon)?;
+                Ok(Statement::Throw(expr))
             }
             Some(TokenType::Let) => {
                 self.consume();
 
-                let literal = self.consume_match_identifier()?;
+                let identifier = self.parse_identifier()?;
                 self.consume_match(TokenType::Assignment)?;
                 let expression = self.parse_expression()?;
                 self.consume_match(TokenType::Semicolon)?;
 
                 Ok(Statement::Let {
-                    identifier: Identifier {
-                        name: literal.clone(),
-                    },
+                    identifier,
                     expression,
                 })
             }
             _ => {
                 let expression = self.parse_expression()?;
-                match self.peek().map(|t| t.token_type.clone()) {
-                    Some(TokenType::Semicolon) => {
+                match_token! {
+                    self.peek(),
+                    TokenType::Semicolon => {
                         self.consume();
                         Ok(Statement::Expression(expression))
                     }
-                    Some(TokenType::CloseBrace) => Ok(Statement::Expression(
+                    TokenType::CloseBrace => Ok(Statement::Expression(
                         Expression::BlockValue(Box::new(expression)),
                     )),
-                    _ => Err(ParserError::InvalidStatement),
                 }
             }
         }

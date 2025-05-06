@@ -12,7 +12,7 @@ fn sub(a: number, b: number) -> number {
 
 fn[throws] test42(a: number) -> number {
     if a != 42 {
-        throw NumberIsNot42
+        throw NumberIsNot42;
     }
 
     a
