@@ -62,7 +62,7 @@ pub enum Statement {
     },
     TryElse {
         try_block: Expression,
-        else_block: Expression,
+        else_block: Option<Expression>,
     },
     Throw(Expression),
     EnumDeclaration {
@@ -86,14 +86,14 @@ pub struct Parser {
     position: usize,
 }
 
-macro_rules! peek_match {
+macro_rules! consume_match {
     ($self:ident, $($pattern:pat => $body: expr $(,)?)*) => {
-        match $self.peek() {
-            Some(&Token {
+        match $self.consume() {
+            $(Some(&Token {
                 token_type: $pattern,
                 ..
-            }) => $body,
-            Some(t) => Err(ParserError::UnexpectedToken(t)),
+            }) => $body,)*
+            Some(t) => Err(ParserError::UnexpectedToken(t.clone())),
             _ => Err(ParserError::UnexpectedEof),
         }
     };
@@ -126,6 +126,20 @@ impl Parser {
         }
     }
 
+    fn consume_match_identifier(&mut self) -> ParseResult<String> {
+        match self.consume() {
+            Some(Token {
+                token_type: TokenType::Identifier(literal),
+                ..
+            }) => Ok(literal.clone()),
+            Some(t) => Err(ParserError::ExpectedToken(
+                TokenType::Identifier("".to_string()),
+                t.clone(),
+            )),
+            _ => Err(ParserError::UnexpectedEof),
+        }
+    }
+
     fn consume(&mut self) -> Option<&Token> {
         if self.position < self.tokens.len() {
             let token = &self.tokens[self.position];
@@ -137,103 +151,81 @@ impl Parser {
     }
 
     fn parse_function_call(&mut self, identifier: Identifier) -> ParseResult<Expression> {
-        if let Some(token) = self.consume() {
-            if token.token_type != TokenType::OpenParen {
-                return Err(ParserError::ExpectedToken(
-                    TokenType::OpenParen,
-                    token.clone(),
-                ));
+        self.consume_match(TokenType::OpenParen)?;
+        let mut arguments = Vec::new();
+        while let Some(token) = self.peek() {
+            if token.token_type == TokenType::CloseParen {
+                self.consume();
+                break;
             }
-            let mut arguments = Vec::new();
-            while let Some(token) = self.peek() {
-                if token.token_type == TokenType::CloseParen {
-                    self.consume();
-                    break;
-                }
 
-                arguments.push(self.parse_expression()?);
-
-                let _ = self.consume_match(TokenType::Comma);
-            }
-            return Ok(Expression::FunctionCall(FunctionCall {
-                name: identifier.name,
-                arguments,
-            }));
-        } else {
-            Err(ParserError::UnexpectedEof)
+            arguments.push(self.parse_expression()?);
+            let _ = self.consume_match(TokenType::Comma);
         }
+
+        Ok(Expression::FunctionCall(FunctionCall {
+            name: identifier.name,
+            arguments,
+        }))
     }
 
     fn parse_field_access(&mut self, object: Expression) -> ParseResult<Expression> {
         self.consume_match(TokenType::Dot)?;
-        if let Some(&Token {
-            token_type: TokenType::Identifier(ref field_name),
-            ..
-        }) = self.peek()
-        {
-            let field_identifier = Identifier {
-                name: field_name.clone(),
-            };
-            if self.peek_match(TokenType::OpenParen) {
-                let call = self.parse_function_call(field_identifier)?;
-                return Ok(Expression::FieldAccess {
-                    object: Box::new(object),
-                    field: Identifier {
-                        name: (call.clone()).get_name(),
-                    },
-                });
-            }
+        let field_name = self.consume_match_identifier()?;
+        let field_identifier = Identifier { name: field_name };
+
+        if self.peek_match(TokenType::OpenParen) {
+            let call = self.parse_function_call(field_identifier)?;
             return Ok(Expression::FieldAccess {
                 object: Box::new(object),
-                field: field_identifier,
+                field: Identifier {
+                    name: (call.clone()).get_name(),
+                },
             });
-        } else {
-            return Err(ParserError::InvalidExpression);
         }
+
+        Ok(Expression::FieldAccess {
+            object: Box::new(object),
+            field: field_identifier,
+        })
     }
 
     fn parse_primary_expression(&mut self) -> ParseResult<Expression> {
-        if let Some(token) = self.peek() {
-            match token.token_type {
-                TokenType::Integer(value) => {
-                    self.consume();
-                    Ok(Expression::Number(value))
-                }
-                TokenType::Identifier(ref literal) => {
-                    let identifier = Identifier {
-                        name: literal.clone(),
-                    };
-                    self.consume();
-                    let mut current: Expression = Expression::Identifier(identifier);
-                    loop {
-                        if self.peek_match(TokenType::OpenParen) {
-                            current = self.parse_function_call_with_expression(current)?;
-                        } else if self.peek_match(TokenType::Dot) {
-                            current = self.parse_field_access(current)?;
-                        } else {
-                            break;
-                        }
-                    }
-                    Ok(current)
-                }
-                TokenType::OpenBrace => {
-                    self.consume();
-                    let mut statements = Vec::new();
-                    while let Some(token) = self.peek() {
-                        if token.token_type == TokenType::CloseBrace {
-                            self.consume();
-                            break;
-                        }
-
-                        statements.push(self.parse_statement()?);
-                    }
-
-                    Ok(Expression::Block { statements })
-                }
-                _ => Err(ParserError::UnexpectedToken(token.clone())),
+        consume_match! {
+            self,
+            TokenType::Integer(value) => {
+                Ok(Expression::Number(value))
             }
-        } else {
-            Err(ParserError::UnexpectedEof)
+            TokenType::Identifier(ref literal) => {
+                let identifier = Identifier {
+                    name: literal.clone(),
+                };
+
+                let mut current: Expression = Expression::Identifier(identifier);
+                loop {
+                    if self.peek_match(TokenType::OpenParen) {
+                        current = self.parse_function_call_with_expression(current)?;
+                    } else if self.peek_match(TokenType::Dot) {
+                        current = self.parse_field_access(current)?;
+                    } else {
+                        break;
+                    }
+                }
+                Ok(current)
+            }
+            TokenType::OpenBrace => {
+                let mut statements = Vec::new();
+                while let Some(token) = self.peek() {
+                    if token.token_type == TokenType::CloseBrace {
+                        self.consume();
+                        break;
+                    }
+
+                    statements.push(self.parse_statement()?);
+                }
+
+                Ok(Expression::Block { statements })
+            }
         }
     }
 
@@ -256,25 +248,22 @@ impl Parser {
                 self.consume_match(TokenType::Comma)?;
             }
         }
+
         match identifier.clone() {
-            Expression::Identifier(identifier) => {
-                return Ok(Expression::FunctionCall(FunctionCall {
-                    name: identifier.name,
-                    arguments,
-                }))
-            }
+            Expression::Identifier(identifier) => Ok(Expression::FunctionCall(FunctionCall {
+                name: identifier.name,
+                arguments,
+            })),
             Expression::FieldAccess { object, field } => {
-                return Ok(Expression::FunctionCall(FunctionCall {
+                Ok(Expression::FunctionCall(FunctionCall {
                     name: format!("{}.{}", object.clone().get_name(), field.name),
                     arguments,
                 }))
             }
-            _ => {
-                return Ok(Expression::FunctionCall(FunctionCall {
-                    name: identifier.get_name(),
-                    arguments,
-                }))
-            }
+            _ => Ok(Expression::FunctionCall(FunctionCall {
+                name: identifier.get_name(),
+                arguments,
+            })),
         }
     }
 
@@ -298,22 +287,20 @@ impl Parser {
     }
 
     fn parse_if_expression(&mut self) -> ParseResult<Expression> {
-        self.consume();
-        if let Ok(condition) = self.parse_expression() {
-            if let Ok(then_branch) = self.parse_expression() {
-                let else_branch = if self.consume_match(TokenType::Else).is_ok() {
-                    Some(Box::new(self.parse_expression()?))
-                } else {
-                    None
-                };
-                return Ok(Expression::If {
-                    condition: Box::new(condition),
-                    then_branch: Box::new(then_branch),
-                    else_branch,
-                });
-            }
-        }
-        Err(ParserError::InvalidExpression)
+        self.consume_match(TokenType::If)?;
+        let condition = self.parse_expression()?;
+        let then_branch = self.parse_expression()?;
+        let else_branch = if self.consume_match(TokenType::Else).is_ok() {
+            Some(Box::new(self.parse_expression()?))
+        } else {
+            None
+        };
+
+        Ok(Expression::If {
+            condition: Box::new(condition),
+            then_branch: Box::new(then_branch),
+            else_branch,
+        })
     }
 
     fn parse_block(&mut self) -> ParseResult<Expression> {
@@ -333,175 +320,106 @@ impl Parser {
 
     fn parse_argument_list(&mut self) -> ParseResult<Vec<Argument>> {
         let mut parameters = Vec::new();
-        if let Some(token) = self.consume() {
-            if token.token_type != TokenType::OpenParen {
-                return Err(ParserError::ExpectedToken(
-                    TokenType::OpenParen,
-                    token.clone(),
-                ));
+        self.consume_match(TokenType::OpenParen)?;
+        while let Some(token) = self.peek() {
+            if token.token_type == TokenType::CloseParen {
+                self.consume();
+                break;
             }
-            while let Some(token) = self.peek() {
-                if token.token_type == TokenType::CloseParen {
-                    self.consume();
-                    break;
-                }
 
-                if let Some(Token {
-                    token_type: TokenType::Identifier(literal_name),
-                    ..
-                }) = self.consume()
-                {
-                    let identifier = Identifier {
-                        name: literal_name.clone(),
-                    };
-                    let mut arg_type = Identifier {
-                        name: "".to_string(),
-                    };
+            let literal_name = self.consume_match_identifier()?;
+            let identifier = Identifier { name: literal_name };
 
-                    if self.peek_match(TokenType::Colon) {
-                        self.consume();
-                        if let Some(Token {
-                            token_type: TokenType::Identifier(literal_type),
-                            ..
-                        }) = self.consume()
-                        {
-                            arg_type = Identifier {
-                                name: literal_type.clone(),
-                            };
-                        }
-                    }
+            let literal_type = self.consume_match_identifier()?;
+            let arg_type = Identifier { name: literal_type };
 
-                    parameters.push(Argument {
-                        identifier,
-                        arg_type,
-                    });
-                }
+            parameters.push(Argument {
+                identifier,
+                arg_type,
+            });
 
-                if self.peek_match(TokenType::Comma) {
-                    self.consume();
-                }
-            }
-            return Ok(parameters);
-        } else {
-            return Err(ParserError::UnexpectedEof);
+            let _ = self.consume_match(TokenType::Comma);
         }
+
+        Ok(parameters)
     }
 
     fn parse_enum_declaration(&mut self) -> ParseResult<Statement> {
         self.consume_match(TokenType::Enum)?;
-        let token = self.consume();
+        let literal = self.consume_match_identifier()?;
+        let name = Identifier { name: literal };
 
-        if let Some(Token {
-            token_type: TokenType::Identifier(literal),
-            ..
-        }) = token
-        {
-            let name = Identifier {
-                name: literal.clone(),
-            };
+        self.consume_match(TokenType::OpenBrace)?;
 
-            self.consume_match(TokenType::OpenBrace)?;
-
-            let mut values = Vec::new();
-            while let Some(token) = self.peek() {
-                if token.token_type == TokenType::CloseBrace {
-                    self.consume();
-                    break;
-                }
-                if let Some(Token {
-                    token_type: TokenType::Identifier(literal),
-                    ..
-                }) = self.consume()
-                {
-                    values.push(EnumValue {
-                        name: literal.clone(),
-                    });
-                } else {
-                    return Err(ParserError::InvalidStatement);
-                }
-                if self.peek_match(TokenType::Comma) {
-                    self.consume();
-                }
+        let mut values = Vec::new();
+        while let Some(token) = self.peek() {
+            if token.token_type == TokenType::CloseBrace {
+                self.consume();
+                break;
             }
 
-            return Ok(Statement::EnumDeclaration { name, values });
-        } else if let Some(t) = token {
-            return Err(ParserError::UnexpectedToken(t.clone()));
-        } else {
-            return Err(ParserError::UnexpectedEof);
+            let literal = self.consume_match_identifier()?;
+
+            values.push(EnumValue {
+                name: literal.clone(),
+            });
+
+            if !self.peek_match(TokenType::CloseBrace) {
+                self.consume_match(TokenType::Comma)?;
+            }
         }
+
+        Ok(Statement::EnumDeclaration { name, values })
     }
 
     fn parse_function_declaration(&mut self) -> ParseResult<Statement> {
         self.consume_match(TokenType::Fn)?;
+        let literal = self.consume_match_identifier()?;
+        let name = Identifier { name: literal };
 
-        if let Some(Token {
-            token_type: TokenType::Identifier(literal),
-            ..
-        }) = self.consume()
-        {
-            let name = Identifier {
+        let parameters = self.parse_argument_list()?;
+        let mut return_type: Option<Identifier> = None;
+        if self.consume_match(TokenType::RightArrow).is_ok() {
+            let literal = self.consume_match_identifier()?;
+            return_type = Some(Identifier {
                 name: literal.clone(),
-            };
-            let parameters = self.parse_argument_list()?;
-            let mut return_type: Option<Identifier> = None;
-            if self.peek_match(TokenType::RightArrow) {
-                self.consume();
-                if let Some(Token {
-                    token_type: TokenType::Identifier(literal),
-                    ..
-                }) = self.consume()
-                {
-                    return_type = Some(Identifier {
-                        name: literal.clone(),
-                    });
-                }
-            }
-            if let Ok(body) = self.parse_block() {
-                return Ok(Statement::FunctionDeclaration {
-                    name,
-                    parameters,
-                    body,
-                    return_type,
-                });
-            }
+            });
         }
-        Err(ParserError::InvalidStatement)
+
+        let body = self.parse_block()?;
+
+        Ok(Statement::FunctionDeclaration {
+            name,
+            parameters,
+            body,
+            return_type,
+        })
     }
 
     fn parse_statement(&mut self) -> ParseResult<Statement> {
         match self.peek().map(|t| t.token_type.clone()) {
-            Some(TokenType::Fn) => self
-                .parse_function_declaration()
-                .map_err(|err| err)
-                .and_then(|stmt| Ok(stmt)),
-            Some(TokenType::Enum) => self
-                .parse_enum_declaration()
-                .map_err(|err| err)
-                .and_then(|stmt| Ok(stmt)),
-            Some(TokenType::If) => self
-                .parse_if_expression()
-                .map_err(|err| err)
-                .map(Statement::Expression),
+            Some(TokenType::Fn) => self.parse_function_declaration(),
+            Some(TokenType::Enum) => self.parse_enum_declaration(),
+            Some(TokenType::If) => self.parse_if_expression().map(Statement::Expression),
             Some(TokenType::Return) => {
-                let _ = self.consume();
-                Ok(Statement::Expression(Expression::Return(Box::new(self.parse_expression()?))))
+                self.consume();
+                Ok(Statement::Expression(Expression::Return(Box::new(
+                    self.parse_expression()?,
+                ))))
             }
             Some(TokenType::Try) => {
                 self.consume();
-                if let Ok(try_block) = self.parse_expression() {
-                    if self.peek_match(TokenType::Else) {
-                        self.consume();
-                        if let Ok(else_block) = self.parse_expression() {
-                            return Ok(Statement::TryElse {
-                                try_block,
-                                else_block,
-                            });
-                        }
-                    }
-                }
+                let try_block = self.parse_expression()?;
+                let else_block = if self.consume_match(TokenType::Else).is_ok() {
+                    Some(self.parse_expression()?)
+                } else {
+                    None
+                };
 
-                return Err(ParserError::InvalidStatement);
+                Ok(Statement::TryElse {
+                    try_block,
+                    else_block,
+                })
             }
             Some(TokenType::Throw) => {
                 self.consume();
@@ -513,24 +431,17 @@ impl Parser {
             Some(TokenType::Let) => {
                 self.consume();
 
-                if let Some(Token {
-                    token_type: TokenType::Identifier(literal),
-                    ..
-                }) = self.consume().cloned()
-                {
-                    self.consume_match(TokenType::Assignment)?;
-                    let expression = self.parse_expression()?;
+                let literal = self.consume_match_identifier()?;
+                self.consume_match(TokenType::Assignment)?;
+                let expression = self.parse_expression()?;
+                self.consume_match(TokenType::Semicolon)?;
 
-                    self.consume_match(TokenType::Semicolon)?;
-                    Ok(Statement::Let {
-                        identifier: Identifier {
-                            name: literal.clone(),
-                        },
-                        expression,
-                    })
-                } else {
-                    Err(ParserError::InvalidStatement)
-                }
+                Ok(Statement::Let {
+                    identifier: Identifier {
+                        name: literal.clone(),
+                    },
+                    expression,
+                })
             }
             _ => {
                 let expression = self.parse_expression()?;
