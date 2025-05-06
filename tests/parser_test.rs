@@ -12,7 +12,7 @@ fn test_parser_with_file() -> Result<(), Box<dyn Error>> {
     
     loop {
         let token = lexer.next_token();
-        if token == p7lang::lexer::Token::EOF {
+        if token.token_type == p7lang::lexer::TokenType::EOF {
             break;
         } else {
             tokens.push(token);

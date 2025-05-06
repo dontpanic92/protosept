@@ -1,7 +1,15 @@
 use std::fmt;
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum Token {
+pub struct Token {
+    pub token_type: TokenType,
+    pub line: usize,
+    pub col: usize,
+    pub length: usize,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum TokenType {
     // Keywords
     Enum,
     Fn,
@@ -56,7 +64,7 @@ pub enum Token {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum LexerError{
+pub enum LexerError {
     UnexpectedCharacter(char, (usize, usize)),
     UnterminatedString((usize, usize)),
     InvalidNumber(String, (usize, usize)),
@@ -66,16 +74,23 @@ impl fmt::Display for LexerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             LexerError::UnexpectedCharacter(c, (line, col)) => {
-                write!(f, "Unexpected character: {} at line: {} column: {}", c, line, col)
+                write!(
+                    f,
+                    "Unexpected character: {} at line: {} column: {}",
+                    c, line, col
+                )
             }
             LexerError::UnterminatedString((line, col)) => {
                 write!(f, "Unterminated string at line: {} column: {}", line, col)
             }
             LexerError::InvalidNumber(num, (line, col)) => {
-                write!(f, "Invalid number: {} at line: {} column: {}", num, line, col)
+                write!(
+                    f,
+                    "Invalid number: {} at line: {} column: {}",
+                    num, line, col
+                )
             }
         }
-
     }
 }
 
@@ -102,8 +117,14 @@ impl Lexer {
     }
 
     fn read_char(&mut self) {
-        if self.position < self.input.len() {
+        if self.peek_char() == Some('\n') {
+            self.line += 1;
+            self.col = 1;
+        } else {
             self.col += 1;
+        }
+
+        if self.position < self.input.len() {
             self.position += 1;
         }
     }
@@ -117,13 +138,7 @@ impl Lexer {
             if !c.is_whitespace() {
                 break;
             }
-            if c == '\n' {
-                self.line += 1;
-                self.col = 1;
-            } else {
-                 self.col += 1;
-            }
-            
+
             self.read_char();
         }
     }
@@ -162,7 +177,7 @@ impl Lexer {
 
         if self.position == self.input.len() - 1 {
             return Err(LexerError::UnterminatedString((self.line, self.col)));
-        } 
+        }
 
         let start_position = self.position + 1;
         self.read_char();
@@ -184,23 +199,27 @@ impl Lexer {
     pub fn next_token(&mut self) -> Token {
         self.skip_whitespace();
 
-        let token = match self.peek_char() {
+        let start_line = self.line;
+        let start_col = self.col;
+        let start_position = self.position;
+
+        let token_type = match self.peek_char() {
             Some('+') => {
                 self.read_char();
-                Token::Plus
+                TokenType::Plus
             }
             Some('-') => {
                 self.read_char();
                 if self.peek_char() == Some('>') {
                     self.read_char();
-                    Token::RightArrow
+                    TokenType::RightArrow
                 } else {
-                    Token::Minus
+                    TokenType::Minus
                 }
             }
             Some('*') => {
                 self.read_char();
-                Token::Multiply
+                TokenType::Multiply
             }
             Some('/') => {
                 self.read_char();
@@ -213,96 +232,96 @@ impl Lexer {
                     }
                     return self.next_token();
                 } else {
-                    Token::Divide
+                    TokenType::Divide
                 }
             }
             Some('=') => {
                 self.read_char();
                 if self.peek_char() == Some('=') {
-                    Token::Equals
+                    TokenType::Equals
                 } else if self.peek_char() == Some('>') {
                     self.read_char();
-                    Token::FatRightArrow
+                    TokenType::FatRightArrow
                 } else {
-                    Token::Assignment
+                    TokenType::Assignment
                 }
             }
             Some('!') => {
                 self.read_char();
                 if self.peek_char() == Some('=') {
                     self.read_char();
-                    Token::NotEquals
+                    TokenType::NotEquals
                 } else {
-                    Token::Not
+                    TokenType::Not
                 }
             }
             Some('>') => {
                 self.read_char();
                 if self.peek_char() == Some('=') {
                     self.read_char();
-                    Token::GreaterThanOrEqual
+                    TokenType::GreaterThanOrEqual
                 } else {
-                    Token::GreaterThan
+                    TokenType::GreaterThan
                 }
             }
             Some('<') => {
                 self.read_char();
                 if self.peek_char() == Some('=') {
                     self.read_char();
-                    Token::LessThanOrEqual
+                    TokenType::LessThanOrEqual
                 } else {
-                    Token::LessThan
+                    TokenType::LessThan
                 }
             }
             Some('&') => {
                 self.read_char();
-                Token::Ampersand
+                TokenType::Ampersand
             }
             Some(',') => {
                 self.read_char();
-                Token::Comma
+                TokenType::Comma
             }
             Some('.') => {
                 self.read_char();
-                Token::Dot
+                TokenType::Dot
             }
             Some(';') => {
                 self.read_char();
-                Token::Semicolon
+                TokenType::Semicolon
             }
             Some(':') => {
                 self.read_char();
-                Token::Colon
+                TokenType::Colon
             }
             Some('{') => {
                 self.read_char();
-                Token::OpenBrace
+                TokenType::OpenBrace
             }
             Some('}') => {
                 self.read_char();
-                Token::CloseBrace
+                TokenType::CloseBrace
             }
             Some('(') => {
                 self.read_char();
-                Token::OpenParen
+                TokenType::OpenParen
             }
             Some(')') => {
                 self.read_char();
-                Token::CloseParen
+                TokenType::CloseParen
             }
             Some('[') => {
                 self.read_char();
-                Token::OpenBracket
+                TokenType::OpenBracket
             }
             Some(']') => {
                 self.read_char();
-                Token::CloseBracket
+                TokenType::CloseBracket
             }
             Some('"') => match self.read_string() {
-                Ok(string) => Token::StringLiteral(string),
+                Ok(string) => TokenType::StringLiteral(string),
                 Err(err) => {
                     self.errors.push(err);
-                    Token::EOF
+                    TokenType::EOF
                 }
             },
 
@@ -310,20 +329,19 @@ impl Lexer {
                 if c.is_alphabetic() || c == '_' {
                     let ident = self.read_identifier();
                     match ident.as_str() {
-                        "enum" => Token::Enum,
-                        "fn" => Token::Fn,
-                        "struct" => Token::Struct,
-                        "let" => Token::Let,
-                        "pub" => Token::Pub,
-                        "return" => Token::Return,
-                        "if" => Token::If,
-                        "throw" => Token::Throw,
-                        "try" => Token::Try,
-                        "else" => Token::Else,
-                        _ => Token::Identifier(ident),
+                        "enum" => TokenType::Enum,
+                        "fn" => TokenType::Fn,
+                        "struct" => TokenType::Struct,
+                        "let" => TokenType::Let,
+                        "pub" => TokenType::Pub,
+                        "return" => TokenType::Return,
+                        "if" => TokenType::If,
+                        "throw" => TokenType::Throw,
+                        "try" => TokenType::Try,
+                        "else" => TokenType::Else,
+                        _ => TokenType::Identifier(ident),
                     }
                 } else if c.is_numeric() {
-                    let current_position = self.position;
                     let num = self.read_number();
 
                     let parsed_number = num.parse::<f64>();
@@ -331,24 +349,29 @@ impl Lexer {
                     match parsed_number {
                         Ok(n) => {
                             if num.contains('.') {
-                                Token::Float(n)
+                                TokenType::Float(n)
                             } else {
-                                Token::Integer(n as i64)
+                                TokenType::Integer(n as i64)
                             }
                         }
                         Err(_) => {
                             self.errors
                                 .push(LexerError::InvalidNumber(num, (self.line, self.col)));
-                            Token::EOF
+                            TokenType::EOF
                         }
                     }
                 } else {
                     panic!("Unexpected character: {}", c);
                 }
             }
-            None => Token::EOF,
+            None => TokenType::EOF,
         };
 
-        token
+        Token {
+            token_type,
+            line: start_line,
+            col: start_col,
+            length: self.position - start_position,
+        }
     }
 }
