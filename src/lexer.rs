@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     // Keywords
@@ -53,10 +55,37 @@ pub enum Token {
     EOF,
 }
 
+#[derive(Debug, PartialEq)]
+pub enum LexerError{
+    UnexpectedCharacter(char, (usize, usize)),
+    UnterminatedString((usize, usize)),
+    InvalidNumber(String, (usize, usize)),
+}
+
+impl fmt::Display for LexerError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            LexerError::UnexpectedCharacter(c, (line, col)) => {
+                write!(f, "Unexpected character: {} at line: {} column: {}", c, line, col)
+            }
+            LexerError::UnterminatedString((line, col)) => {
+                write!(f, "Unterminated string at line: {} column: {}", line, col)
+            }
+            LexerError::InvalidNumber(num, (line, col)) => {
+                write!(f, "Invalid number: {} at line: {} column: {}", num, line, col)
+            }
+        }
+
+    }
+}
+
 #[derive(Debug)]
 pub struct Lexer {
     input: String,
     position: usize,
+    line: usize,
+    col: usize,
+    pub errors: Vec<LexerError>,
 }
 
 impl Lexer {
@@ -64,6 +93,9 @@ impl Lexer {
         let lexer = Lexer {
             input,
             position: 0,
+            line: 1,
+            col: 1,
+            errors: vec![],
         };
 
         lexer
@@ -71,6 +103,7 @@ impl Lexer {
 
     fn read_char(&mut self) {
         if self.position < self.input.len() {
+            self.col += 1;
             self.position += 1;
         }
     }
@@ -84,7 +117,13 @@ impl Lexer {
             if !c.is_whitespace() {
                 break;
             }
-
+            if c == '\n' {
+                self.line += 1;
+                self.col = 1;
+            } else {
+                 self.col += 1;
+            }
+            
             self.read_char();
         }
     }
@@ -105,7 +144,7 @@ impl Lexer {
     fn read_number(&mut self) -> String {
         let start_position = self.position;
         while let Some(c) = self.peek_char() {
-            if !c.is_numeric() && c != '.' {
+            if !c.is_numeric() && c != '.' && c != '_' {
                 break;
             }
             self.read_char();
@@ -113,7 +152,18 @@ impl Lexer {
         self.input[start_position..self.position].to_string()
     }
 
-    fn read_string(&mut self) -> String {
+    fn read_string(&mut self) -> Result<String, LexerError> {
+        if self.peek_char() != Some('"') {
+            return Err(LexerError::UnexpectedCharacter(
+                self.peek_char().unwrap(),
+                (self.line, self.col),
+            ));
+        }
+
+        if self.position == self.input.len() - 1 {
+            return Err(LexerError::UnterminatedString((self.line, self.col)));
+        } 
+
         let start_position = self.position + 1;
         self.read_char();
         while let Some(c) = self.peek_char() {
@@ -122,10 +172,13 @@ impl Lexer {
             }
             self.read_char();
         }
+        if self.peek_char() != Some('"') {
+            return Err(LexerError::UnterminatedString((self.line, self.col)));
+        }
+
         let result = self.input[start_position..self.position].to_string();
         self.read_char();
-
-        result
+        Ok(result)
     }
 
     pub fn next_token(&mut self) -> Token {
@@ -245,7 +298,13 @@ impl Lexer {
                 self.read_char();
                 Token::CloseBracket
             }
-            Some('"') => Token::StringLiteral(self.read_string()),
+            Some('"') => match self.read_string() {
+                Ok(string) => Token::StringLiteral(string),
+                Err(err) => {
+                    self.errors.push(err);
+                    Token::EOF
+                }
+            },
 
             Some(c) => {
                 if c.is_alphabetic() || c == '_' {
@@ -264,11 +323,24 @@ impl Lexer {
                         _ => Token::Identifier(ident),
                     }
                 } else if c.is_numeric() {
+                    let current_position = self.position;
                     let num = self.read_number();
-                    if num.contains(".") {
-                        Token::Float(num.parse().unwrap())
-                    } else {
-                        Token::Integer(num.parse().unwrap())
+
+                    let parsed_number = num.parse::<f64>();
+
+                    match parsed_number {
+                        Ok(n) => {
+                            if num.contains('.') {
+                                Token::Float(n)
+                            } else {
+                                Token::Integer(n as i64)
+                            }
+                        }
+                        Err(_) => {
+                            self.errors
+                                .push(LexerError::InvalidNumber(num, (self.line, self.col)));
+                            Token::EOF
+                        }
                     }
                 } else {
                     panic!("Unexpected character: {}", c);
