@@ -40,7 +40,7 @@ struct Vec2 {
     }
 
     pub fn get_secret(self) -> number {
-            self.secret
+        self.secret
     }
 
     pub fn set_secret(&self, value: number) {

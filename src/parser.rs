@@ -27,6 +27,7 @@ impl Type {
         }
     }
 }
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Argument {
     pub name: Identifier,
@@ -37,6 +38,29 @@ pub struct Argument {
 pub struct FunctionCall {
     pub name: String,
     pub arguments: Vec<Expression>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct FunctionDeclaration {
+    name: Identifier,
+    effects: Vec<Identifier>,
+    parameters: Vec<Argument>,
+    return_type: Option<Type>,
+    body: Expression,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct StructField {
+    pub is_pub: bool,
+    pub name: Identifier,
+    pub field_type: Type,
+    pub default_value: Option<Expression>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct StructMethod {
+    pub is_pub: bool,
+    pub function: FunctionDeclaration,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -71,6 +95,7 @@ pub enum Expression {
 }
 
 const BINARY_OPTERATORS: &[TokenType] = &[
+    TokenType::Assignment,
     TokenType::And,
     TokenType::Or,
     TokenType::Plus,
@@ -92,13 +117,7 @@ pub enum Statement {
         expression: Expression,
     },
     Expression(Expression),
-    FunctionDeclaration {
-        name: Identifier,
-        effects: Vec<Identifier>,
-        parameters: Vec<Argument>,
-        return_type: Option<Type>,
-        body: Expression,
-    },
+    FunctionDeclaration(FunctionDeclaration),
     TryElse {
         try_block: Expression,
         else_block: Option<Expression>,
@@ -107,6 +126,10 @@ pub enum Statement {
     EnumDeclaration {
         name: Identifier,
         values: Vec<EnumValue>,
+    },
+    StructDeclaration {
+        name: Identifier,
+        fields: Vec<StructField>,
     },
 }
 
@@ -132,12 +155,12 @@ pub struct Parser {
 }
 
 macro_rules! match_token {
-    ($token:expr, $($pattern:pat => $body: expr $(,)?)*) => {
+    ($token:expr, $($pattern:pat $(if $guard:expr)? => $body: expr $(,)?)*) => {
         match $token {
             $(Some(&Token {
                 token_type: $pattern,
                 ..
-            }) => $body,)*
+            }) $(if $guard)? => $body,)*
             Some(t) => Err(ParserError::UnexpectedToken(t.clone())),
             _ => Err(ParserError::UnexpectedEof),
         }
@@ -373,11 +396,33 @@ impl Parser {
                 break;
             }
 
-            let name = self.parse_identifier()?;
-            self.consume_match(TokenType::Colon)?;
+            let parameter = match_token! {
+                self.peek(),
+                TokenType::Ampersand => {
+                    self.consume();
+                    self.consume_match(TokenType::Identifier("self".to_string()))?;
+                    Ok(Argument {
+                        name: Identifier {name: "self".to_string()},
+                        arg_type: Type::Reference(Box::new(Type::Identifier(Identifier {name: "Self".to_string()})))
+                     })
+                },
+                TokenType::Identifier(ref ident) if ident == "self" => {
+                    self.consume();
+                    Ok(Argument {
+                        name: Identifier {name: "self".to_string()},
+                        arg_type: Type::Identifier(Identifier {name: "Self".to_string()})
+                    })
+                },
+                TokenType::Identifier(_) => {
+                    let name = self.parse_identifier()?;
+                    self.consume_match(TokenType::Colon)?;
 
-            let arg_type = self.parse_type()?;
-            parameters.push(Argument { name, arg_type });
+                    let arg_type = self.parse_type()?;
+                    Ok(Argument { name, arg_type })
+                },
+            };
+
+            parameters.push(parameter?);
 
             let _ = self.consume_match(TokenType::Comma);
         }
@@ -409,7 +454,65 @@ impl Parser {
         Ok(Statement::EnumDeclaration { name, values })
     }
 
-    fn parse_function_declaration(&mut self) -> ParseResult<Statement> {
+    fn parse_struct_field(&mut self, is_pub: bool) -> ParseResult<StructField> {
+        let field_name = self.parse_identifier()?;
+        self.consume_match(TokenType::Colon)?;
+        let field_type = self.parse_type()?;
+        let default_value = if self.consume_match(TokenType::Assignment).is_ok() {
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+
+        self.consume_match(TokenType::Semicolon)?;
+
+        Ok(StructField {
+            is_pub,
+            name: field_name,
+            field_type,
+            default_value,
+        })
+    }
+
+    fn parse_struct_method(&mut self, is_pub: bool) -> ParseResult<StructMethod> {
+        let function = self.parse_function_declaration()?;
+
+        Ok(StructMethod { is_pub, function })
+    }
+
+    fn parse_struct_declaration(&mut self) -> ParseResult<Statement> {
+        self.consume_match(TokenType::Struct)?;
+        let name = self.parse_identifier()?;
+        self.consume_match(TokenType::OpenBrace)?;
+
+        let mut fields = vec![];
+        let mut methods = vec![];
+        while let Some(token) = self.peek() {
+            if token.token_type == TokenType::CloseBrace {
+                self.consume();
+                break;
+            }
+
+            let is_pub = self.consume_match(TokenType::Pub).is_ok();
+            let res = match_token! {
+                self.peek(),
+                TokenType::Fn => {
+                    methods.push(self.parse_struct_method(is_pub)?);
+                    Ok(())
+                },
+                TokenType::Identifier(_) => {
+                    fields.push(self.parse_struct_field(is_pub)?);
+                    Ok(())
+                },
+            };
+
+            res?;
+        }
+
+        Ok(Statement::StructDeclaration { name, fields })
+    }
+
+    fn parse_function_declaration(&mut self) -> ParseResult<FunctionDeclaration> {
         self.consume_match(TokenType::Fn)?;
         let mut effects = vec![];
         if self.consume_match(TokenType::OpenBracket).is_ok() {
@@ -437,7 +540,7 @@ impl Parser {
 
         let body = self.parse_block()?;
 
-        Ok(Statement::FunctionDeclaration {
+        Ok(FunctionDeclaration {
             name,
             effects,
             parameters,
@@ -466,8 +569,11 @@ impl Parser {
 
     fn parse_statement(&mut self) -> ParseResult<Statement> {
         match self.peek().map(|t| t.token_type.clone()) {
-            Some(TokenType::Fn) => self.parse_function_declaration(),
+            Some(TokenType::Fn) => self
+                .parse_function_declaration()
+                .map(Statement::FunctionDeclaration),
             Some(TokenType::Enum) => self.parse_enum_declaration(),
+            Some(TokenType::Struct) => self.parse_struct_declaration(),
             Some(TokenType::If) => self.parse_if_expression().map(Statement::Expression),
             Some(TokenType::Return) => {
                 self.consume();
