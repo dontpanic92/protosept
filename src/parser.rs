@@ -71,8 +71,10 @@ pub struct EnumValue {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
     Identifier(Identifier),
-    Integer(i64),
-    Float(f64),
+    IntegerLiteral(i64),
+    FloatLiteral(f64),
+    StringLiteral(String),
+    BooleanLiteral(bool),
     Binary {
         left: Box<Expression>,
         operator: Token,
@@ -107,6 +109,25 @@ pub struct StructInitiation {
     pub fields: Vec<(Identifier, Option<Expression>)>,
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub enum Pattern {
+    Identifier(Identifier),
+    IntegerLiteral(i64),
+    FloatLiteral(f64),
+    StringLiteral(String),
+    BooleanLiteral(bool),
+    FieldAccess {
+        object: Box<Pattern>,
+        field: Identifier,
+    },
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct NamedPattern {
+    pub name: Option<Identifier>,
+    pub pattern: Pattern,
+}
+
 const BINARY_OPTERATORS: &[TokenType] = &[
     TokenType::Assignment,
     TokenType::And,
@@ -139,6 +160,10 @@ pub enum Statement {
     StructDeclaration {
         name: Identifier,
         fields: Vec<StructField>,
+    },
+    Branch {
+        named_pattern: NamedPattern,
+        expression: Expression,
     },
 }
 
@@ -196,6 +221,16 @@ impl Parser {
 
     fn peek_previous(&self) -> Option<&Token> {
         self.tokens.get(self.position.checked_sub(1)?)
+    }
+
+    fn ends_with_brace(&self) -> bool {
+        matches!(
+            self.peek_previous(),
+            Some(Token {
+                token_type: TokenType::CloseBrace,
+                ..
+            })
+        )
     }
 
     fn peek_match(&self, token_type: TokenType) -> bool {
@@ -325,8 +360,8 @@ impl Parser {
     fn parse_primary_expression(&mut self) -> ParseResult<Expression> {
         let expression = match_token! {
             self.consume(),
-            TokenType::Integer(value) => Ok(Expression::Integer(value)),
-            TokenType::Float(value) => Ok(Expression::Float(value)),
+            TokenType::Integer(value) => Ok(Expression::IntegerLiteral(value)),
+            TokenType::Float(value) => Ok(Expression::FloatLiteral(value)),
             TokenType::Identifier(ref literal) => {
                 let identifier = Identifier { name: literal.clone() };
                 if self.peek_match(TokenType::OpenBrace) {
@@ -435,11 +470,83 @@ impl Parser {
         })
     }
 
+    fn parse_pattern_suffix(&mut self, mut pattern: Pattern) -> ParseResult<Pattern> {
+        loop {
+            if self.consume_match(TokenType::Dot).is_ok() {
+                let field = self.parse_identifier()?;
+                pattern = Pattern::FieldAccess {
+                    object: Box::new(pattern),
+                    field,
+                };
+            } else {
+                break;
+            }
+        }
+
+        Ok(pattern)
+    }
+
+    fn parse_pattern(&mut self) -> ParseResult<Pattern> {
+        let pattern = match_token! {
+            self.consume(),
+            TokenType::Integer(value) => Ok(Pattern::IntegerLiteral(value)),
+            TokenType::Float(value) => Ok(Pattern::FloatLiteral(value)),
+            TokenType::StringLiteral(ref value) => Ok(Pattern::StringLiteral(value.clone())),
+            TokenType::Identifier(ref literal) => {
+                let identifier = Pattern::Identifier(Identifier { name: literal.clone() });
+                let identifier = self.parse_pattern_suffix(identifier)?;
+
+                Ok(identifier)
+            },
+        };
+
+        pattern
+    }
+
+    fn parse_named_pattern(&mut self) -> ParseResult<NamedPattern> {
+        let ident = self.parse_identifier()?;
+        let name = if self.consume_match(TokenType::Colon).is_ok() {
+            Some(ident)
+        } else {
+            self.unconsume();
+            None
+        };
+
+        let pattern = self.parse_pattern()?;
+        Ok(NamedPattern { name, pattern })
+    }
+
     fn parse_try_expression(&mut self) -> ParseResult<Expression> {
         self.consume_match(TokenType::Try)?;
         let try_block = self.parse_expression()?;
         let else_block = if self.consume_match(TokenType::Else).is_ok() {
-            Some(Box::new(self.parse_expression()?))
+            if self.consume_match(TokenType::OpenBrace).is_ok() {
+                let mut statements = vec![];
+                loop {
+                    let named_pattern = self.parse_named_pattern()?;
+                    self.consume_match(TokenType::FatRightArrow)?;
+
+                    let expression = self.parse_expression()?;
+                    statements.push(Statement::Branch {
+                        named_pattern,
+                        expression,
+                    });
+
+                    let ends_with_brace = self.ends_with_brace();
+                    let comma = self.consume_match(TokenType::Comma);
+                    if !ends_with_brace {
+                        comma?;
+                    }
+
+                    if self.consume_match(TokenType::CloseBrace).is_ok() {
+                        break;
+                    }
+                }
+
+                Some(Box::new(Expression::Block { statements }))
+            } else {
+                Some(Box::new(self.parse_expression()?))
+            }
         } else {
             None
         };
@@ -680,7 +787,7 @@ impl Parser {
             }
             _ => {
                 let expression = self.parse_expression()?;
-                let ends_with_brace = matches!(self.peek_previous(), Some(Token { token_type: TokenType::CloseBrace, .. }));
+                let ends_with_brace = self.ends_with_brace();
 
                 match_token! {
                     self.peek(),
