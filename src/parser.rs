@@ -93,6 +93,11 @@ pub enum Expression {
     Block {
         statements: Vec<Statement>,
     },
+    Try {
+        try_block: Box<Expression>,
+        else_block: Option<Box<Expression>>,
+    },
+
     BlockValue(Box<Expression>),
 }
 
@@ -126,10 +131,6 @@ pub enum Statement {
     },
     Expression(Expression),
     FunctionDeclaration(FunctionDeclaration),
-    TryElse {
-        try_block: Expression,
-        else_block: Option<Expression>,
-    },
     Throw(Expression),
     EnumDeclaration {
         name: Identifier,
@@ -183,8 +184,18 @@ impl Parser {
         }
     }
 
+    fn unconsume(&mut self) {
+        if self.position > 0 {
+            self.position -= 1;
+        }
+    }
+
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.position)
+    }
+
+    fn peek_previous(&self) -> Option<&Token> {
+        self.tokens.get(self.position.checked_sub(1)?)
     }
 
     fn peek_match(&self, token_type: TokenType) -> bool {
@@ -298,38 +309,32 @@ impl Parser {
         }))
     }
 
+    fn parse_expression_suffix(&mut self, mut expression: Expression) -> ParseResult<Expression> {
+        loop {
+            if self.peek_match(TokenType::OpenParen) {
+                expression = self.parse_function_call_with_expression(expression)?;
+            } else if self.peek_match(TokenType::Dot) {
+                expression = self.parse_field_access(expression)?;
+            } else {
+                break;
+            }
+        }
+        Ok(expression)
+    }
+
     fn parse_primary_expression(&mut self) -> ParseResult<Expression> {
-        match_token! {
+        let expression = match_token! {
             self.consume(),
-            TokenType::Integer(value) => {
-                Ok(Expression::Integer(value))
-            }
-            TokenType::Float(value) => {
-                Ok(Expression::Float(value))
-            }
+            TokenType::Integer(value) => Ok(Expression::Integer(value)),
+            TokenType::Float(value) => Ok(Expression::Float(value)),
             TokenType::Identifier(ref literal) => {
-                let identifier = Identifier {
-                    name: literal.clone(),
-                };
-
-                let mut current: Expression = if self.peek_match(TokenType::OpenBrace) {
-                    self.parse_struct_initiation(identifier)?
+                let identifier = Identifier { name: literal.clone() };
+                if self.peek_match(TokenType::OpenBrace) {
+                    self.parse_struct_initiation(identifier)
                 } else {
-                    Expression::Identifier(identifier)
-                };
-
-                loop {
-                    if self.peek_match(TokenType::OpenParen) {
-                        current = self.parse_function_call_with_expression(current)?;
-                    } else if self.peek_match(TokenType::Dot) {
-                        current = self.parse_field_access(current)?;
-                    } else {
-                        break;
-                    }
+                    Ok(Expression::Identifier(identifier))
                 }
-
-                Ok(current)
-            }
+            },
             TokenType::OpenBrace => {
                 let mut statements = Vec::new();
                 while let Some(token) = self.peek() {
@@ -338,12 +343,21 @@ impl Parser {
                         break;
                     }
 
-                    statements.push(self.parse_statement()?);
+                    statements.push(self.parse_statement()?)
                 }
-
                 Ok(Expression::Block { statements })
-            }
-        }
+            },
+            TokenType::Try => {
+                self.unconsume();
+                self.parse_try_expression()
+            },
+            TokenType::If => {
+                self.unconsume();
+                self.parse_if_expression()
+            },
+        }?;
+
+        self.parse_expression_suffix(expression)
     }
 
     fn parse_function_call_with_expression(
@@ -421,6 +435,20 @@ impl Parser {
         })
     }
 
+    fn parse_try_expression(&mut self) -> ParseResult<Expression> {
+        self.consume_match(TokenType::Try)?;
+        let try_block = self.parse_expression()?;
+        let else_block = if self.consume_match(TokenType::Else).is_ok() {
+            Some(Box::new(self.parse_expression()?))
+        } else {
+            None
+        };
+
+        Ok(Expression::Try {
+            try_block: Box::new(try_block),
+            else_block,
+        })
+    }
     fn parse_block(&mut self) -> ParseResult<Expression> {
         self.consume_match(TokenType::OpenBrace)?;
         let mut statements = Vec::new();
@@ -624,28 +652,12 @@ impl Parser {
                 .map(Statement::FunctionDeclaration),
             Some(TokenType::Enum) => self.parse_enum_declaration(),
             Some(TokenType::Struct) => self.parse_struct_declaration(),
-            Some(TokenType::If) => self.parse_if_expression().map(Statement::Expression),
+            // Some(TokenType::If) => self.parse_if_expression().map(Statement::Expression),
             Some(TokenType::Return) => {
                 self.consume();
                 let expr = self.parse_expression()?;
                 self.consume_match(TokenType::Semicolon)?;
                 Ok(Statement::Expression(Expression::Return(Box::new(expr))))
-            }
-            Some(TokenType::Try) => {
-                self.consume();
-                let try_block = self.parse_expression()?;
-                let else_block = if self.consume_match(TokenType::Else).is_ok() {
-                    Some(self.parse_expression()?)
-                } else {
-                    None
-                };
-
-                self.consume_match(TokenType::Semicolon)?;
-
-                Ok(Statement::TryElse {
-                    try_block,
-                    else_block,
-                })
             }
             Some(TokenType::Throw) => {
                 self.consume();
@@ -668,6 +680,8 @@ impl Parser {
             }
             _ => {
                 let expression = self.parse_expression()?;
+                let ends_with_brace = matches!(self.peek_previous(), Some(Token { token_type: TokenType::CloseBrace, .. }));
+
                 match_token! {
                     self.peek(),
                     TokenType::Semicolon => {
@@ -677,6 +691,9 @@ impl Parser {
                     TokenType::CloseBrace => Ok(Statement::Expression(
                         Expression::BlockValue(Box::new(expression)),
                     )),
+                    _ if ends_with_brace => {
+                        Ok(Statement::Expression(expression))
+                    },
                 }
             }
         }
