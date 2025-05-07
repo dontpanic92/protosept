@@ -1,3 +1,5 @@
+use std::{error::Error, fmt::Display};
+
 use crate::lexer::{Token, TokenType};
 
 #[derive(Debug, PartialEq, Clone)]
@@ -93,6 +95,14 @@ pub enum ParserError {
     ExpectedToken(TokenType, Token),
     UnexpectedEof,
 }
+
+impl Display for ParserError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl Error for ParserError {}
 
 type ParseResult<T> = Result<T, ParserError>;
 pub struct Parser {

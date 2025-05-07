@@ -20,7 +20,7 @@ fn test_parser_with_file() -> Result<(), Box<dyn Error>> {
     }
 
     let mut parser = p7lang::parser::Parser::new(tokens);
-    let statements = parser.parse();
+    let statements = parser.parse()?;
 
     println!("statements: {:?}", statements);
 
