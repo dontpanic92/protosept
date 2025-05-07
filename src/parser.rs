@@ -75,6 +75,10 @@ pub enum Expression {
     FloatLiteral(f64),
     StringLiteral(String),
     BooleanLiteral(bool),
+    Unary {
+        operator: Token,
+        right: Box<Expression>,
+    },
     Binary {
         left: Box<Expression>,
         operator: Token,
@@ -103,6 +107,29 @@ pub enum Expression {
     BlockValue(Box<Expression>),
 }
 
+const UNARY_OPERATIONS: &[TokenType] = &[
+    TokenType::Not,
+    TokenType::Plus,
+    TokenType::Minus,
+    TokenType::Ampersand,
+];
+
+const BINARY_OPTERATORS: &[TokenType] = &[
+    TokenType::Assignment,
+    TokenType::And,
+    TokenType::Or,
+    TokenType::Plus,
+    TokenType::Minus,
+    TokenType::Multiply,
+    TokenType::Divide,
+    TokenType::Equals,
+    TokenType::NotEquals,
+    TokenType::GreaterThan,
+    TokenType::GreaterThanOrEqual,
+    TokenType::LessThan,
+    TokenType::LessThanOrEqual,
+];
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct StructInitiation {
     pub struct_type: Identifier,
@@ -127,22 +154,6 @@ pub struct NamedPattern {
     pub name: Option<Identifier>,
     pub pattern: Pattern,
 }
-
-const BINARY_OPTERATORS: &[TokenType] = &[
-    TokenType::Assignment,
-    TokenType::And,
-    TokenType::Or,
-    TokenType::Plus,
-    TokenType::Minus,
-    TokenType::Multiply,
-    TokenType::Divide,
-    TokenType::Equals,
-    TokenType::NotEquals,
-    TokenType::GreaterThan,
-    TokenType::GreaterThanOrEqual,
-    TokenType::LessThan,
-    TokenType::LessThanOrEqual,
-];
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Statement {
@@ -434,8 +445,23 @@ impl Parser {
         }
     }
 
+    fn parse_unary_expression(&mut self) -> ParseResult<Expression> {
+        if let Some(token) = self.peek() {
+            if UNARY_OPERATIONS.contains(&token.token_type) {
+                let operator = self.consume().unwrap().clone();
+                let right = self.parse_unary_expression()?;
+                return Ok(Expression::Unary {
+                    operator,
+                    right: Box::new(right),
+                });
+            }
+        }
+
+        return self.parse_primary_expression();
+    }
+
     fn parse_expression(&mut self) -> ParseResult<Expression> {
-        let mut left = self.parse_primary_expression()?;
+        let mut left = self.parse_unary_expression()?;
         while let Some(token) = self.peek() {
             if BINARY_OPTERATORS.contains(&token.token_type) {
                 let operator = self.consume().unwrap().clone();
