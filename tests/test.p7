@@ -56,7 +56,7 @@ fn test() -> number {
     
     let e = try test42(d) else {
         err: SomeErrors.NumberIsNot42 => 0,
-    }
+    };
 
     let f = try test42(e) else 0;
 

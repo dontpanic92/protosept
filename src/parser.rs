@@ -71,7 +71,8 @@ pub struct EnumValue {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
     Identifier(Identifier),
-    Number(i64),
+    Integer(i64),
+    Float(f64),
     Binary {
         left: Box<Expression>,
         operator: Token,
@@ -88,10 +89,17 @@ pub enum Expression {
         object: Box<Expression>,
         field: Identifier,
     },
+    StructInitiation(StructInitiation),
     Block {
         statements: Vec<Statement>,
     },
     BlockValue(Box<Expression>),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct StructInitiation {
+    pub struct_type: Identifier,
+    pub fields: Vec<(Identifier, Option<Expression>)>,
 }
 
 const BINARY_OPTERATORS: &[TokenType] = &[
@@ -186,9 +194,12 @@ impl Parser {
         }
     }
 
-    fn consume_match(&mut self, token_type: TokenType) -> ParseResult<&Token> {
+    fn consume_match(&mut self, token_type: TokenType) -> ParseResult<()> {
         match self.peek() {
-            Some(t) if t.token_type == token_type => Ok(self.consume().unwrap()),
+            Some(t) if t.token_type == token_type => {
+                self.consume().unwrap();
+                Ok(())
+            }
             Some(t) => Err(ParserError::ExpectedToken(token_type, t.clone())),
             _ => Err(ParserError::UnexpectedEof),
         }
@@ -259,18 +270,54 @@ impl Parser {
         })
     }
 
+    fn parse_struct_initiation(&mut self, struct_type: Identifier) -> ParseResult<Expression> {
+        self.consume_match(TokenType::OpenBrace)?;
+
+        let mut fields = Vec::new();
+        while !self.peek_match(TokenType::CloseBrace) {
+            let field_name = self.parse_identifier()?;
+            let field_value = if self.consume_match(TokenType::Colon).is_ok() {
+                Some(self.parse_expression()?)
+            } else {
+                None
+            };
+
+            fields.push((field_name, field_value));
+
+            let comma = self.consume_match(TokenType::Comma);
+            if !self.peek_match(TokenType::CloseBrace) {
+                comma?;
+            }
+        }
+
+        self.consume_match(TokenType::CloseBrace)?;
+
+        Ok(Expression::StructInitiation(StructInitiation {
+            struct_type,
+            fields,
+        }))
+    }
+
     fn parse_primary_expression(&mut self) -> ParseResult<Expression> {
         match_token! {
             self.consume(),
             TokenType::Integer(value) => {
-                Ok(Expression::Number(value))
+                Ok(Expression::Integer(value))
+            }
+            TokenType::Float(value) => {
+                Ok(Expression::Float(value))
             }
             TokenType::Identifier(ref literal) => {
                 let identifier = Identifier {
                     name: literal.clone(),
                 };
 
-                let mut current: Expression = Expression::Identifier(identifier);
+                let mut current: Expression = if self.peek_match(TokenType::OpenBrace) {
+                    self.parse_struct_initiation(identifier)?
+                } else {
+                    Expression::Identifier(identifier)
+                };
+
                 loop {
                     if self.peek_match(TokenType::OpenParen) {
                         current = self.parse_function_call_with_expression(current)?;
@@ -280,6 +327,7 @@ impl Parser {
                         break;
                     }
                 }
+
                 Ok(current)
             }
             TokenType::OpenBrace => {
@@ -313,8 +361,9 @@ impl Parser {
 
             arguments.push(self.parse_expression()?);
 
+            let comma = self.consume_match(TokenType::Comma);
             if !self.peek_match(TokenType::CloseParen) {
-                self.consume_match(TokenType::Comma)?;
+                comma?;
             }
         }
 
@@ -446,8 +495,9 @@ impl Parser {
             let literal = self.parse_identifier()?;
             values.push(EnumValue { name: literal.name });
 
+            let comma = self.consume_match(TokenType::Comma);
             if !self.peek_match(TokenType::CloseBrace) {
-                self.consume_match(TokenType::Comma)?;
+                comma?;
             }
         }
 
@@ -519,15 +569,15 @@ impl Parser {
             loop {
                 effects.push(self.parse_identifier()?);
 
+                let comma = self.consume_match(TokenType::Comma);
                 if !self.peek_match(TokenType::CloseBracket) {
-                    self.consume_match(TokenType::Comma)?;
+                    comma?;
                 } else {
-                    let _ = self.consume_match(TokenType::Comma);
-                    self.consume_match(TokenType::CloseBracket)?;
-
                     break;
                 }
             }
+
+            self.consume_match(TokenType::CloseBracket)?;
         }
 
         let name = self.parse_identifier()?;
