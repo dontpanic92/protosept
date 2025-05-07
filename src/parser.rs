@@ -6,10 +6,31 @@ use crate::lexer::{Token, TokenType};
 pub struct Identifier {
     pub name: String,
 }
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Type {
+    Identifier(Identifier),
+    Reference(Box<Type>),
+    Array(Box<Type>),
+}
+
+impl Type {
+    pub fn get_name(&self) -> String {
+        match self {
+            Type::Identifier(identifier) => identifier.name.clone(),
+            Type::Reference(r) => {
+                format!("&{}", r.get_name())
+            }
+            Type::Array(a) => {
+                format!("{}[]", a.get_name())
+            }
+        }
+    }
+}
 #[derive(Debug, PartialEq, Clone)]
 pub struct Argument {
     pub name: Identifier,
-    pub arg_type: Identifier,
+    pub arg_type: Type,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -75,7 +96,7 @@ pub enum Statement {
         name: Identifier,
         effects: Vec<Identifier>,
         parameters: Vec<Argument>,
-        return_type: Option<Identifier>,
+        return_type: Option<Type>,
         body: Expression,
     },
     TryElse {
@@ -355,8 +376,7 @@ impl Parser {
             let name = self.parse_identifier()?;
             self.consume_match(TokenType::Colon)?;
 
-            let arg_type = self.parse_identifier()?;
-
+            let arg_type = self.parse_type()?;
             parameters.push(Argument { name, arg_type });
 
             let _ = self.consume_match(TokenType::Comma);
@@ -409,11 +429,11 @@ impl Parser {
 
         let name = self.parse_identifier()?;
         let parameters = self.parse_argument_list()?;
-        let mut return_type: Option<Identifier> = None;
-
-        if self.consume_match(TokenType::RightArrow).is_ok() {
-            return_type = Some(self.parse_identifier()?);
-        }
+        let return_type = if self.consume_match(TokenType::RightArrow).is_ok() {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
 
         let body = self.parse_block()?;
 
@@ -424,6 +444,24 @@ impl Parser {
             body,
             return_type,
         })
+    }
+
+    fn parse_type(&mut self) -> ParseResult<Type> {
+        match_token! {
+            self.consume(),
+            TokenType::Ampersand => {
+                let ty = self.parse_type()?;
+                Ok(Type::Reference(Box::new(ty)))
+            },
+            TokenType::OpenBracket => {
+                let ty = self.parse_type()?;
+                self.consume_match(TokenType::CloseBracket)?;
+                Ok(Type::Array(Box::new(ty)))
+            },
+            TokenType::Identifier(ref identifier) => {
+                Ok(Type::Identifier(Identifier { name: identifier.clone() }))
+            },
+        }
     }
 
     fn parse_statement(&mut self) -> ParseResult<Statement> {
