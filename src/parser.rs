@@ -42,11 +42,11 @@ pub struct FunctionCall {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct FunctionDeclaration {
-    name: Identifier,
-    effects: Vec<Identifier>,
-    parameters: Vec<Argument>,
-    return_type: Option<Type>,
-    body: Expression,
+    pub name: Identifier,
+    pub effects: Vec<Identifier>,
+    pub parameters: Vec<Argument>,
+    pub return_type: Option<Type>,
+    pub body: StatementBlock,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -67,6 +67,8 @@ pub struct StructMethod {
 pub struct EnumValue {
     pub name: String,
 }
+
+type StatementBlock = Vec<Statement>;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
@@ -96,9 +98,7 @@ pub enum Expression {
         field: Identifier,
     },
     StructInitiation(StructInitiation),
-    Block {
-        statements: Vec<Statement>,
-    },
+    Block(StatementBlock),
     Try {
         try_block: Box<Expression>,
         else_block: Option<Box<Expression>>,
@@ -391,7 +391,7 @@ impl Parser {
 
                     statements.push(self.parse_statement()?)
                 }
-                Ok(Expression::Block { statements })
+                Ok(Expression::Block(statements))
             },
             TokenType::Try => {
                 self.unconsume();
@@ -569,7 +569,7 @@ impl Parser {
                     }
                 }
 
-                Some(Box::new(Expression::Block { statements }))
+                Some(Box::new(Expression::Block(statements)))
             } else {
                 Some(Box::new(self.parse_expression()?))
             }
@@ -582,7 +582,8 @@ impl Parser {
             else_block,
         })
     }
-    fn parse_block(&mut self) -> ParseResult<Expression> {
+
+    fn parse_block(&mut self) -> ParseResult<Vec<Statement>> {
         self.consume_match(TokenType::OpenBrace)?;
         let mut statements = Vec::new();
         while let Some(token) = self.peek() {
@@ -594,7 +595,7 @@ impl Parser {
             statements.push(self.parse_statement()?);
         }
 
-        return Ok(Expression::Block { statements });
+        return Ok(statements);
     }
 
     fn parse_argument_list(&mut self) -> ParseResult<Vec<Argument>> {

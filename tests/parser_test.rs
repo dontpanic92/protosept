@@ -4,7 +4,7 @@ use std::path::Path;
 
 #[test]
 fn test_parser_with_file() -> Result<(), Box<dyn Error>> {
-    let file_path = Path::new("tests/test.p7");
+    let file_path = Path::new("tests/test2.p7");
     let contents = fs::read_to_string(file_path)?;
 
     let mut lexer = p7lang::lexer::Lexer::new(contents);
@@ -22,7 +22,10 @@ fn test_parser_with_file() -> Result<(), Box<dyn Error>> {
     let mut parser = p7lang::parser::Parser::new(tokens);
     let statements = parser.parse()?;
 
-    println!("statements: {:?}", statements);
+    let mut codegen = p7lang::bytecode::codegen::Generator::new();
+    let bytecode = codegen.generate(statements)?;
+
+    println!("statements: {:?}", bytecode);
 
     Ok(())
 }

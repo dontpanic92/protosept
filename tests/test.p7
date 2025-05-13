@@ -2,15 +2,15 @@ enum SomeErrors {
     NumberIsNot42,
 }
 
-fn add(a: number, b: number) -> number {
+fn add(a: int, b: int) -> int {
     a + b
 }
 
-fn sub(a: number, b: number) -> number {
+fn sub(a: float, b: float) -> float {
     return a - b;
 }
 
-fn[throws] test42(a: number) -> number {
+fn[throws] test42(a: float) -> float {
     if a != 42 {
         throw NumberIsNot42;
     }
@@ -18,17 +18,17 @@ fn[throws] test42(a: number) -> number {
     a
 }
 
-fn assign42(a: &number) {
+fn assign42(a: &float) {
     a = 42;
 }
 
 struct Vec2 {
-    secret: number = 42;
+    secret: int = 42;
 
-    pub x: number = 0;
-    pub y: number = 0;
+    pub x: float = 0;
+    pub y: float = 0;
 
-    pub fn new(x: number, y: number) -> Self {
+    pub fn new(x: float, y: float) -> Self {
         Self { x, y }
     }
 
@@ -39,16 +39,16 @@ struct Vec2 {
         }
     }
 
-    pub fn get_secret(self) -> number {
+    pub fn get_secret(self) -> int {
         self.secret
     }
 
-    pub fn set_secret(&self, value: number) {
+    pub fn set_secret(&self, value: int) {
         self.secret = value;
     }
 }
 
-fn test() -> number {
+fn test() -> int {
     let a = Vec2.new(1, 2.5);
     let b = Vec2.new(3, 4.5);
     let c = a.add(b);

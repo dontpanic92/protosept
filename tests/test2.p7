@@ -1,0 +1,16 @@
+fn add(a: float, b: float) -> int {
+    a + b
+}
+
+fn sub(a: float, b: float) -> float {
+    return a - b;
+}
+
+fn test() -> float {
+    let a = 1.1;
+    let b = 2.3;
+    let c = add(a + b);
+    let d = sub(c - b);
+
+    d
+}
