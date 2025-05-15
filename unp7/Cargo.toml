@@ -1,0 +1,8 @@
+[package]
+name = "unp7"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+p7 = { path = "../p7" }
+binrw = "0.15"

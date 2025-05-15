@@ -4,7 +4,7 @@ mod tests {
     use std::fs::File;
     use std::io::{self, Read};
     use std::path::Path;
-    use p7lang::lexer::{Lexer, TokenType};
+    use p7::lexer::{Lexer, TokenType};
     
     fn read_file_to_string(filepath: &Path) -> io::Result<String> {
         let mut file = File::open(filepath)?;

@@ -1,0 +1,152 @@
+use std::io::{Cursor, Write};
+
+use binrw::BinWrite;
+
+use crate::bytecode::Instruction;
+
+pub struct ByteCodeBuilder {
+    writer: Cursor<Vec<u8>>,
+}
+
+impl ByteCodeBuilder {
+    pub fn new() -> Self {
+        ByteCodeBuilder {
+            writer: Cursor::new(Vec::new()),
+        }
+    }
+
+    pub fn next_address(&self) -> u32 {
+        self.writer.position() as u32
+    }
+
+    pub fn add_instruction(&mut self, inst: Instruction) {
+        inst.write(&mut self.writer).unwrap();
+    }
+
+    pub fn ldi(&mut self, value: u32) {
+        self.add_instruction(Instruction::Ldi(value));
+    }
+
+    pub fn ldf(&mut self, value: f64) {
+        self.add_instruction(Instruction::Ldf(value));
+    }
+
+    pub fn ldvar(&mut self, var_id: u32) {
+        self.add_instruction(Instruction::Ldvar(var_id));
+    }
+
+    pub fn stvar(&mut self, var_id: u32) {
+        self.add_instruction(Instruction::Stvar(var_id));
+    }
+
+    pub fn addi(&mut self) {
+        self.add_instruction(Instruction::Addi);
+    }
+
+    pub fn subi(&mut self) {
+        self.add_instruction(Instruction::Subi);
+    }
+
+    pub fn muli(&mut self) {
+        self.add_instruction(Instruction::Muli);
+    }
+
+    pub fn divi(&mut self) {
+        self.add_instruction(Instruction::Divi);
+    }
+
+    pub fn modi(&mut self) {
+        self.add_instruction(Instruction::Mod);
+    }
+
+    pub fn addf(&mut self) {
+        self.add_instruction(Instruction::Addf);
+    }
+
+    pub fn subf(&mut self) {
+        self.add_instruction(Instruction::Subf);
+    }
+
+    pub fn mulf(&mut self) {
+        self.add_instruction(Instruction::Mulf);
+    }
+
+    pub fn divf(&mut self) {
+        self.add_instruction(Instruction::Divf);
+    }
+
+    pub fn neg(&mut self) {
+        self.add_instruction(Instruction::Neg);
+    }
+
+    pub fn and(&mut self) {
+        self.add_instruction(Instruction::And);
+    }
+
+    pub fn or(&mut self) {
+        self.add_instruction(Instruction::Or);
+    }
+
+    pub fn not(&mut self) {
+        self.add_instruction(Instruction::Not);
+    }
+
+    pub fn eq(&mut self) {
+        self.add_instruction(Instruction::Eq);
+    }
+
+    pub fn neq(&mut self) {
+        self.add_instruction(Instruction::Neq);
+    }
+
+    pub fn lt(&mut self) {
+        self.add_instruction(Instruction::Lt);
+    }
+
+    pub fn gt(&mut self) {
+        self.add_instruction(Instruction::Gt);
+    }
+
+    pub fn lte(&mut self) {
+        self.add_instruction(Instruction::Lte);
+    }
+
+    pub fn gte(&mut self) {
+        self.add_instruction(Instruction::Gte);
+    }
+
+    pub fn jmp(&mut self, address: u32) {
+        self.add_instruction(Instruction::Jmp(address));
+    }
+
+    pub fn jif(&mut self, address: u32) {
+        self.add_instruction(Instruction::Jif(address));
+    }
+
+    pub fn call(&mut self, address: u32) {
+        self.add_instruction(Instruction::Call(address));
+    }
+
+    pub fn throw(&mut self) {
+        self.add_instruction(Instruction::Throw);
+    }
+
+    pub fn patch_jump_address(&mut self, instruction_address: u32, jump_target_address: u32) {
+        let current_pos = self.writer.position();
+        self.writer.set_position(instruction_address as u64 + 1);
+        self.writer.write_all(&jump_target_address.to_le_bytes()).unwrap();
+        self.writer.set_position(current_pos);
+    }
+
+    pub fn ret(&mut self) {
+        self.add_instruction(Instruction::Ret);
+    }
+
+    pub fn pop(&mut self) {
+        self.add_instruction(Instruction::Pop);
+    }
+
+    pub fn get_bytecode(&self) -> Vec<u8> {
+        self.writer.get_ref().clone()
+    }
+}

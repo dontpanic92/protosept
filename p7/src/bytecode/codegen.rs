@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use crate::{
-    bytecode::{builder::ByteCodeBuilder, OpCode},
+    bytecode::builder::ByteCodeBuilder,
     lexer::TokenType,
     parser::{Expression, FunctionCall, Statement, StructInitiation},
     semantic::{
@@ -145,7 +145,7 @@ impl Generator {
             }
             Statement::Throw(expression) => {
                 self.generate_expression(expression)?;
-                self.builder.add_instruction(OpCode::THROW);
+                self.builder.throw();
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
             Statement::EnumDeclaration { name, values } => {
@@ -198,11 +198,11 @@ impl Generator {
                 }
             }
             Expression::IntegerLiteral(value) => {
-                self.builder.ldi(value as i32);
+                self.builder.ldi(value as u32);
                 Ok(Type::Primitive(PrimitiveType::Int))
             }
             Expression::FloatLiteral(value) => {
-                self.builder.ldf(value as f32);
+                self.builder.ldf(value);
                 Ok(Type::Primitive(PrimitiveType::Float))
             }
             Expression::StringLiteral(value) => {
