@@ -9,8 +9,8 @@ fn sub(a: float, b: float) -> float {
 fn test() -> float {
     let a = 1.1;
     let b = 2.3;
-    // let c = add(a, b);
-    // let d = sub(c, b);
+    let c = add(a, b);
+    let d = sub(c, b);
 
     a + b
 }

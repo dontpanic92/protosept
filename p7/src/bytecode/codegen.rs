@@ -355,15 +355,16 @@ impl Generator {
             self.generate_expression(arg)?;
         }
 
-        if let Some(symbol) = self.symbol_table.find_symbol_in_scope(&call.name) {
-            let (address, type_id) = match symbol.kind {
+        if let Some(symbol_id) = self.symbol_table.find_symbol_in_scope(&call.name) {
+            let symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
+            let (_, type_id) = match symbol.kind {
                 SymbolKind::Function { address, type_id } => (address, type_id),
                 _ => {
                     return Err(SemanticError::FunctionNotFound(call.name));
                 }
             };
 
-            self.builder.call(address);
+            self.builder.call(symbol_id);
 
             let ty = self.symbol_table.get_udt(type_id);
             match ty {

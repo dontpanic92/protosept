@@ -43,6 +43,15 @@ impl Symbol {
             _ => None,
         }
     }
+
+    pub fn get_type_id(&self) -> Option<TypeId> {
+        match &self.kind {
+            SymbolKind::Function { type_id, .. } => Some(*type_id),
+            SymbolKind::Enum(type_id) => Some(*type_id),
+            SymbolKind::Struct(type_id) => Some(*type_id),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -169,20 +178,23 @@ impl SymbolTable {
         self.symbol_chain.push(symbol_id);
     }
 
-    pub fn find_symbol_in_scope(&self, name: &str) -> Option<&Symbol> {
+    pub fn find_symbol_in_scope(&self, name: &str) -> Option<SymbolId> {
         for symbol_id in self.symbol_chain.iter().rev() {
             let symbol = &self.symbols[*symbol_id as usize];
             if symbol.name == name {
-                return Some(symbol);
+                return Some(*symbol_id);
             }
 
             if let Some(child_id) = symbol.children.get(name) {
-                let child_symbol = &self.symbols[*child_id as usize];
-                return Some(child_symbol);
+                return Some(*child_id);
             }
         }
 
         None
+    }
+
+    pub fn get_symbol(&self, symbol_id: SymbolId) -> Option<&Symbol> {
+        self.symbols.get(symbol_id as usize)
     }
 
     pub fn to_primitive_type(name: &str) -> Option<Type> {
@@ -202,7 +214,8 @@ impl SymbolTable {
             return primitive_type;
         }
 
-        let symbol = self.find_symbol_in_scope(name)?;
+        let symbol_id = self.find_symbol_in_scope(name)?;
+        let symbol = self.get_symbol(symbol_id)?;
         match symbol.kind {
             SymbolKind::Enum(id) => Some(Type::Enum(id)),
             SymbolKind::Struct(id) => Some(Type::Struct(id)),

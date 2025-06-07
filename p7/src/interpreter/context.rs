@@ -8,7 +8,10 @@ use crate::bytecode::{Instruction, Module};
 #[derive(Debug)]
 pub enum ContextError {
     NoStackFrame,
+    EntryPointNotFound,
     StackUnderflow,
+    FunctionNotFound,
+    VariableNotFound,
 }
 
 pub type ContextResult<T> = std::result::Result<T, ContextError>;
@@ -61,6 +64,7 @@ pub struct StackFrame {
     pub params: Vec<Data>,
     pub locals: Vec<Data>,
     pub stack: Vec<Data>,
+    pub pc: usize,
 }
 
 impl StackFrame {
@@ -69,13 +73,13 @@ impl StackFrame {
             params: Vec::new(),
             locals: Vec::new(),
             stack: Vec::new(),
+            pc: std::usize::MAX,
         }
     }
 }
 
 pub struct Context {
     pub stack: Vec<StackFrame>,
-    pc: usize,
     modules: Vec<Module>,
 }
 
@@ -83,7 +87,6 @@ impl Context {
     pub fn new() -> Self {
         Self {
             stack: vec![StackFrame::new()],
-            pc: 0,
             modules: Vec::new(),
         }
     }
@@ -97,25 +100,31 @@ impl Context {
             panic!();
         }
 
-        let mut stack_frame = StackFrame::new();
-        stack_frame.params = params;
-        self.stack.push(stack_frame);
-
         let addr = self.modules[0]
             .get_function(name)
             .unwrap()
             .get_function_address()
             .unwrap();
 
-        self.pc = addr as usize;
+        let mut stack_frame = StackFrame::new();
+        stack_frame.params = params;
+        stack_frame.pc = addr as usize;
+
+        self.stack.push(stack_frame);
     }
 
     pub fn resume(&mut self) -> ContextResult<()> {
-        while self.pc < self.modules[0].instructions.len() {
-            let mut reader = Cursor::new(&self.modules[0].instructions[self.pc..]);
+        if self.stack_frame()?.pc == std::usize::MAX {
+            return Err(ContextError::EntryPointNotFound);
+        }
+
+        while self.stack_frame()?.pc < self.modules[0].instructions.len() {
+            println!("pc: {}", self.stack_frame()?.pc);
+
+            let mut reader = Cursor::new(&self.modules[0].instructions[self.stack_frame()?.pc..]);
             let instruction = Instruction::read(&mut reader).unwrap();
 
-            self.pc += reader.position() as usize;
+            self.stack_frame_mut()?.pc += reader.position() as usize;
 
             match instruction {
                 Instruction::Ldi(val) => self.stack_frame_mut()?.stack.push(Data::Int(val)),
@@ -125,7 +134,7 @@ impl Context {
                         let local = self.stack_frame_mut()?.locals[idx as usize].clone();
                         self.stack_frame_mut()?.stack.push(local);
                     } else {
-                        // Handle error: variable index out of bounds
+                        return Err(ContextError::VariableNotFound);
                     }
                 }
                 Instruction::Stvar(idx) => {
@@ -137,19 +146,19 @@ impl Context {
                         }
                         self.stack_frame_mut()?.locals[idx as usize] = data;
                     } else {
-                        unimplemented!();
+                        return Err(ContextError::StackUnderflow);
                     }
                 }
-                Instruction::Addi => {
+                Instruction::Add => {
                     arithmetic_op!(self, +);
                 }
-                Instruction::Subi => {
+                Instruction::Sub => {
                     arithmetic_op!(self, -);
                 }
-                Instruction::Muli => {
+                Instruction::Mul => {
                     arithmetic_op!(self, *);
                 }
-                Instruction::Divi => {
+                Instruction::Div => {
                     arithmetic_op!(self, /);
                 }
                 Instruction::Mod => {
@@ -188,18 +197,51 @@ impl Context {
                 Instruction::Gte => {
                     comparison_op!(self, >=);
                 }
-                Instruction::Jmp(addr) => self.pc = addr as usize,
+                Instruction::Jmp(addr) => self.stack_frame_mut()?.pc = addr as usize,
                 Instruction::Jif(addr) => {
                     if let Some(Data::Int(condition)) = self.stack_frame_mut()?.stack.pop() {
                         if condition != 0 {
-                            self.pc = addr as usize;
+                            self.stack_frame_mut()?.pc = addr as usize;
                         }
                     } else {
                         unimplemented!();
                     }
                 }
-                Instruction::Call(_) => {
-                    unimplemented!();
+                Instruction::Call(symbol_id) => {
+                    let (address, args_len) = {
+                        let function = self.modules[0]
+                            .symbols
+                            .get(symbol_id as usize)
+                            .ok_or(ContextError::FunctionNotFound)?;
+
+                        let address = function
+                            .get_function_address()
+                            .ok_or(ContextError::FunctionNotFound)?;
+
+                        let udt = function
+                            .get_type_id()
+                            .and_then(|function_type_id| {
+                                self.modules[0].types.get(function_type_id as usize)
+                            })
+                            .ok_or(ContextError::FunctionNotFound)?;
+
+                        let function_type = match udt {
+                            crate::semantic::UserDefinedType::Function(function_type) => {
+                                function_type
+                            }
+                            _ => return Err(ContextError::FunctionNotFound),
+                        };
+
+                        let args_len = function_type.args.len();
+                        (address, args_len)
+                    };
+
+                    let mut new_frame = StackFrame::new();
+                    let stack = &mut self.stack_frame_mut()?.stack;
+                    new_frame.params = stack.split_off(stack.len() - args_len);
+                    new_frame.pc = address as usize;
+
+                    self.stack.push(new_frame);
                 }
                 Instruction::Ret => {
                     if self.stack_frame()?.stack.len() > 0 {
@@ -211,7 +253,7 @@ impl Context {
                     }
                 }
                 Instruction::Pop => {
-                    self.stack.pop();
+                    self.stack_frame_mut()?.stack.pop();
                 }
                 Instruction::Throw => {
                     unimplemented!();

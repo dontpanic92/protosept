@@ -40,19 +40,19 @@ impl ByteCodeBuilder {
     }
 
     pub fn addi(&mut self) {
-        self.add_instruction(Instruction::Addi);
+        self.add_instruction(Instruction::Add);
     }
 
     pub fn subi(&mut self) {
-        self.add_instruction(Instruction::Subi);
+        self.add_instruction(Instruction::Sub);
     }
 
     pub fn muli(&mut self) {
-        self.add_instruction(Instruction::Muli);
+        self.add_instruction(Instruction::Mul);
     }
 
     pub fn divi(&mut self) {
-        self.add_instruction(Instruction::Divi);
+        self.add_instruction(Instruction::Div);
     }
 
     pub fn modi(&mut self) {
@@ -123,8 +123,8 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::Jif(address));
     }
 
-    pub fn call(&mut self, address: u32) {
-        self.add_instruction(Instruction::Call(address));
+    pub fn call(&mut self, symbol_id: u32) {
+        self.add_instruction(Instruction::Call(symbol_id));
     }
 
     pub fn throw(&mut self) {
