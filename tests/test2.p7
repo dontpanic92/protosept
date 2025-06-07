@@ -12,5 +12,5 @@ fn test() -> float {
     let c = add(a, b);
     let d = sub(c, b);
 
-    a + b
+    a * d
 }

@@ -39,6 +39,10 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::Stvar(var_id));
     }
 
+    pub fn ldpar(&mut self, param_id: u32) {
+        self.add_instruction(Instruction::Ldpar(param_id));
+    }
+
     pub fn addi(&mut self) {
         self.add_instruction(Instruction::Add);
     }

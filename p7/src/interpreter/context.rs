@@ -36,8 +36,8 @@ impl From<f64> for Data {
 
 macro_rules! binary_op {
     ($self: ident, $op:tt, $int_res_ty:ident, $float_res_ty:ident) => {
-        let a = $self.stack_frame_mut()?.stack.pop().ok_or(ContextError::StackUnderflow)?;
         let b = $self.stack_frame_mut()?.stack.pop().ok_or(ContextError::StackUnderflow)?;
+        let a = $self.stack_frame_mut()?.stack.pop().ok_or(ContextError::StackUnderflow)?;
         match (a, b) {
             (Data::Int(a), Data::Int(b)) => $self.stack_frame_mut()?.stack.push(Data::from((a $op b) as $int_res_ty)),
             (Data::Float(a), Data::Float(b)) => $self.stack_frame_mut()?.stack.push(Data::from((a $op b) as $float_res_ty)),
@@ -119,8 +119,6 @@ impl Context {
         }
 
         while self.stack_frame()?.pc < self.modules[0].instructions.len() {
-            println!("pc: {}", self.stack_frame()?.pc);
-
             let mut reader = Cursor::new(&self.modules[0].instructions[self.stack_frame()?.pc..]);
             let instruction = Instruction::read(&mut reader).unwrap();
 
@@ -147,6 +145,14 @@ impl Context {
                         self.stack_frame_mut()?.locals[idx as usize] = data;
                     } else {
                         return Err(ContextError::StackUnderflow);
+                    }
+                }
+                Instruction::Ldpar(param_id) => {
+                    if (param_id as usize) < self.stack_frame_mut()?.params.len() {
+                        let param = self.stack_frame_mut()?.params[param_id as usize].clone();
+                        self.stack_frame_mut()?.stack.push(param);
+                    } else {
+                        return Err(ContextError::VariableNotFound);
                     }
                 }
                 Instruction::Add => {

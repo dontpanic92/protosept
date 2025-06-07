@@ -22,66 +22,69 @@ pub enum Instruction {
     Stvar(u32),
 
     #[brw(magic = 4u8)]
-    Add,
+    Ldpar(u32),
 
     #[brw(magic = 5u8)]
-    Sub,
+    Add,
 
     #[brw(magic = 6u8)]
-    Mul,
+    Sub,
 
     #[brw(magic = 7u8)]
-    Div,
+    Mul,
 
     #[brw(magic = 8u8)]
-    Mod,
+    Div,
 
     #[brw(magic = 9u8)]
-    Neg,
+    Mod,
 
     #[brw(magic = 10u8)]
-    And,
+    Neg,
 
     #[brw(magic = 11u8)]
-    Or,
+    And,
 
     #[brw(magic = 12u8)]
-    Not,
+    Or,
 
     #[brw(magic = 13u8)]
-    Eq,
+    Not,
 
     #[brw(magic = 14u8)]
-    Neq,
+    Eq,
 
     #[brw(magic = 15u8)]
-    Lt,
+    Neq,
 
     #[brw(magic = 16u8)]
-    Gt,
+    Lt,
 
     #[brw(magic = 17u8)]
-    Lte,
+    Gt,
 
     #[brw(magic = 18u8)]
-    Gte,
+    Lte,
 
     #[brw(magic = 19u8)]
-    Jmp(u32),
+    Gte,
 
     #[brw(magic = 20u8)]
-    Jif(u32),
+    Jmp(u32),
 
     #[brw(magic = 21u8)]
-    Call(u32),
+    Jif(u32),
 
     #[brw(magic = 22u8)]
-    Ret,
+    Call(u32),
 
     #[brw(magic = 23u8)]
-    Pop,
+    Ret,
 
     #[brw(magic = 24u8)]
+    Pop,
+
+    #[brw(magic = 25u8)]
     Throw,
 }
 

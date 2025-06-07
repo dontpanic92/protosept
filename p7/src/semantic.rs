@@ -266,27 +266,36 @@ pub enum LocalSymbolScopeError {
 
 pub type LocalSymbolScopeResult<T> = Result<T, LocalSymbolScopeError>;
 
+#[derive(Debug, Clone)]
 pub struct Variable {
     pub name: String,
     pub ty: Type,
 }
 
+#[derive(Debug)]
 pub struct LexicalScope {
     symbols: Vec<Symbol>,
     var_ids: Vec<u32>,
 }
 
+#[derive(Debug)]
 pub struct LocalSymbolScope {
     pub scopes: Vec<LexicalScope>,
     pub locals: Vec<Variable>,
+    pub params: Vec<Variable>,
 }
 
 impl LocalSymbolScope {
-    pub fn new() -> Self {
+    pub fn new(params: Vec<Variable>) -> Self {
         LocalSymbolScope {
             scopes: Vec::new(),
             locals: Vec::new(),
+            params,
         }
+    }
+
+    pub fn set_params(&mut self, params: Vec<Variable>) {
+        self.params = params;
     }
 
     pub fn add_variable(&mut self, name: String, var_type: Type) -> LocalSymbolScopeResult<u32> {
@@ -312,8 +321,22 @@ impl LocalSymbolScope {
         None
     }
 
+    pub fn find_param(&self, name: &str) -> Option<u32> {
+        for (id, param) in self.params.iter().enumerate() {
+            if param.name == name {
+                return Some(id as u32);
+            }
+        }
+
+        None
+    }
+
     pub fn get_variable_type(&self, var_id: u32) -> Type {
         self.locals[var_id as usize].ty.clone()
+    }
+
+    pub fn get_param_type(&self, param_id: u32) -> Type {
+        self.params[param_id as usize].ty.clone()
     }
 
     pub fn push_scope(&mut self) {

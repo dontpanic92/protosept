@@ -150,8 +150,9 @@ impl Generator {
                 );
 
                 self.symbol_table.push_symbol(symbol);
-                self.local_scope = Some(LocalSymbolScope::new());
-                let ty = self.generate_block(declaration.body, args)?;
+
+                self.local_scope = Some(LocalSymbolScope::new(args.clone()));
+                let ty = self.generate_block(declaration.body, vec![])?;
                 if ty != Type::Primitive(PrimitiveType::Unit) {
                     self.builder.ret();
                 }
@@ -220,6 +221,15 @@ impl Generator {
                 {
                     self.builder.ldvar(var_id);
                     let ty = self.local_scope.as_mut().unwrap().get_variable_type(var_id);
+                    Ok(ty)
+                } else if let Some(param_id) = self
+                    .local_scope
+                    .as_mut()
+                    .unwrap()
+                    .find_param(&identifier.name)
+                {
+                    self.builder.ldpar(param_id);
+                    let ty = self.local_scope.as_mut().unwrap().get_param_type(param_id);
                     Ok(ty)
                 } else {
                     Err(SemanticError::VariableNotFound(identifier.name))
