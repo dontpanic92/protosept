@@ -1,3 +1,4 @@
+use core::panic;
 use std::io::Cursor;
 
 use binrw::BinRead;
@@ -7,14 +8,53 @@ use crate::bytecode::{Instruction, Module};
 #[derive(Debug)]
 pub enum ContextError {
     NoStackFrame,
+    StackUnderflow,
 }
 
 pub type ContextResult<T> = std::result::Result<T, ContextError>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Data {
     Int(i32),
     Float(f64),
+}
+
+impl From<i32> for Data {
+    fn from(value: i32) -> Self {
+        Data::Int(value)
+    }
+}
+
+impl From<f64> for Data {
+    fn from(value: f64) -> Self {
+        Data::Float(value)
+    }
+}
+
+macro_rules! binary_op {
+    ($self: ident, $op:tt, $int_res_ty:ident, $float_res_ty:ident) => {
+        let a = $self.stack_frame_mut()?.stack.pop().ok_or(ContextError::StackUnderflow)?;
+        let b = $self.stack_frame_mut()?.stack.pop().ok_or(ContextError::StackUnderflow)?;
+        match (a, b) {
+            (Data::Int(a), Data::Int(b)) => $self.stack_frame_mut()?.stack.push(Data::from((a $op b) as $int_res_ty)),
+            (Data::Float(a), Data::Float(b)) => $self.stack_frame_mut()?.stack.push(Data::from((a $op b) as $float_res_ty)),
+            _ => {
+                panic!("Invalid types for binary operation");
+            }
+        }
+    };
+}
+
+macro_rules! arithmetic_op {
+    ($self: ident, $op:tt) => {
+        binary_op!($self, $op, i32, f64);
+    };
+}
+
+macro_rules! comparison_op {
+    ($self: ident, $op:tt) => {
+        binary_op!($self, $op, i32, i32);
+    };
 }
 
 pub struct StackFrame {
@@ -42,7 +82,7 @@ pub struct Context {
 impl Context {
     pub fn new() -> Self {
         Self {
-            stack: Vec::new(),
+            stack: vec![StackFrame::new()],
             pc: 0,
             modules: Vec::new(),
         }
@@ -83,9 +123,7 @@ impl Context {
                 Instruction::Ldvar(idx) => {
                     if (idx as usize) < self.stack_frame_mut()?.locals.len() {
                         let local = self.stack_frame_mut()?.locals[idx as usize].clone();
-                        self.stack_frame_mut()?
-                            .stack
-                            .push(local);
+                        self.stack_frame_mut()?.stack.push(local);
                     } else {
                         // Handle error: variable index out of bounds
                     }
@@ -102,15 +140,21 @@ impl Context {
                         unimplemented!();
                     }
                 }
-                Instruction::Addi => self.binary_op_int(|a, b| a + b)?,
-                Instruction::Subi => self.binary_op_int(|a, b| a - b)?,
-                Instruction::Muli => self.binary_op_int(|a, b| a * b)?,
-                Instruction::Divi => self.binary_op_int(|a, b| a / b)?,
-                Instruction::Mod => self.binary_op_int(|a, b| a % b)?,
-                Instruction::Addf => self.binary_op_float(|a, b| a + b)?,
-                Instruction::Subf => self.binary_op_float(|a, b| a - b)?,
-                Instruction::Mulf => self.binary_op_float(|a, b| a * b)?,
-                Instruction::Divf => self.binary_op_float(|a, b| a / b)?,
+                Instruction::Addi => {
+                    arithmetic_op!(self, +);
+                }
+                Instruction::Subi => {
+                    arithmetic_op!(self, -);
+                }
+                Instruction::Muli => {
+                    arithmetic_op!(self, *);
+                }
+                Instruction::Divi => {
+                    arithmetic_op!(self, /);
+                }
+                Instruction::Mod => {
+                    arithmetic_op!(self, %);
+                }
                 Instruction::Neg => {
                     if let Some(data) = self.stack_frame_mut()?.stack.pop() {
                         match data {
@@ -126,12 +170,24 @@ impl Context {
                 Instruction::Not => {
                     unimplemented!();
                 }
-                Instruction::Eq => self.comparison_op(|a, b| a == b)?,
-                Instruction::Neq => self.comparison_op(|a, b| a != b)?,
-                Instruction::Lt => self.comparison_op(|a, b| a < b)?,
-                Instruction::Gt => self.comparison_op(|a, b| a > b)?,
-                Instruction::Lte => self.comparison_op(|a, b| a <= b)?,
-                Instruction::Gte => self.comparison_op(|a, b| a >= b)?,
+                Instruction::Eq => {
+                    comparison_op!(self, ==);
+                }
+                Instruction::Neq => {
+                    comparison_op!(self, !=);
+                }
+                Instruction::Lt => {
+                    comparison_op!(self, <);
+                }
+                Instruction::Gt => {
+                    comparison_op!(self, >);
+                }
+                Instruction::Lte => {
+                    comparison_op!(self, <=);
+                }
+                Instruction::Gte => {
+                    comparison_op!(self, >=);
+                }
                 Instruction::Jmp(addr) => self.pc = addr as usize,
                 Instruction::Jif(addr) => {
                     if let Some(Data::Int(condition)) = self.stack_frame_mut()?.stack.pop() {
@@ -146,7 +202,13 @@ impl Context {
                     unimplemented!();
                 }
                 Instruction::Ret => {
-                    unimplemented!();
+                    if self.stack_frame()?.stack.len() > 0 {
+                        let return_value = self.stack_frame_mut()?.stack.pop();
+                        self.stack.pop();
+                        if let Some(value) = return_value {
+                            self.stack_frame_mut()?.stack.push(value);
+                        }
+                    }
                 }
                 Instruction::Pop => {
                     self.stack.pop();
@@ -182,91 +244,5 @@ impl Context {
         }
 
         Ok(())
-    }
-
-    fn binary_op_float<F>(&mut self, op: F) -> ContextResult<()>
-    where
-        F: Fn(f64, f64) -> f64,
-    {
-        if let (Some(Data::Float(b)), Some(Data::Float(a))) = (
-            self.stack_frame_mut()?.stack.pop(),
-            self.stack_frame_mut()?.stack.pop(),
-        ) {
-            self.stack_frame_mut()?.stack.push(Data::Float(op(a, b)));
-        } else {
-            // Handle error: stack underflow or invalid types
-        }
-        
-        Ok(())
-    }
-
-    fn comparison_op<F>(&mut self, op: F) -> ContextResult<()>
-    where
-        F: Fn(Data, Data) -> bool,
-    {
-        if let (Some(b), Some(a)) = (
-            self.stack_frame_mut()?.stack.pop(),
-            self.stack_frame_mut()?.stack.pop(),
-        ) {
-            match (a, b) {
-                (Data::Int(a_i), Data::Int(b_i)) => self
-                    .stack_frame_mut()?
-                    .stack
-                    .push(Data::Int(op(Data::Int(a_i), Data::Int(b_i)) as i32)),
-                (Data::Float(a_f), Data::Float(b_f)) => self
-                    .stack_frame_mut()?
-                    .stack
-                    .push(Data::Int(op(Data::Float(a_f), Data::Float(b_f)) as i32)),
-                (Data::Int(a_i), Data::Float(b_f)) => {
-                    self.stack_frame_mut()?
-                        .stack
-                        .push(Data::Int(
-                            op(Data::Float(a_i as f64), Data::Float(b_f)) as i32
-                        ))
-                }
-                (Data::Float(a_f), Data::Int(b_i)) => {
-                    self.stack_frame_mut()?
-                        .stack
-                        .push(Data::Int(
-                            op(Data::Float(a_f), Data::Float(b_i as f64)) as i32
-                        ))
-                }
-            }
-        } else {
-            unimplemented!();
-        }
-
-        Ok(())
-    }
-}
-
-impl Clone for Data {
-    fn clone(&self) -> Self {
-        match self {
-            Data::Int(i) => Data::Int(*i),
-            Data::Float(f) => Data::Float(*f),
-        }
-    }
-}
-
-impl PartialEq for Data {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Data::Int(a), Data::Int(b)) => a == b,
-            (Data::Float(a), Data::Float(b)) => a == b,
-            (Data::Int(a), Data::Float(b)) => (*a as f64) == *b,
-            (Data::Float(a), Data::Int(b)) => *a == (*b as f64),
-        }
-    }
-}
-
-impl PartialOrd for Data {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match (self, other) {
-            (Data::Int(a), Data::Int(b)) => a.partial_cmp(b),
-            (Data::Float(a), Data::Float(b)) => a.partial_cmp(b),
-            (Data::Int(a), Data::Float(b)) => (*a as f64).partial_cmp(b),
-            (Data::Float(a), Data::Int(b)) => a.partial_cmp(&(*b as f64)),
-        }
     }
 }

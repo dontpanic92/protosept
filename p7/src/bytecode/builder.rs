@@ -59,21 +59,21 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::Mod);
     }
 
-    pub fn addf(&mut self) {
-        self.add_instruction(Instruction::Addf);
-    }
+    // pub fn addf(&mut self) {
+    //     self.add_instruction(Instruction::Addf);
+    // }
 
-    pub fn subf(&mut self) {
-        self.add_instruction(Instruction::Subf);
-    }
+    // pub fn subf(&mut self) {
+    //     self.add_instruction(Instruction::Subf);
+    // }
 
-    pub fn mulf(&mut self) {
-        self.add_instruction(Instruction::Mulf);
-    }
+    // pub fn mulf(&mut self) {
+    //     self.add_instruction(Instruction::Mulf);
+    // }
 
-    pub fn divf(&mut self) {
-        self.add_instruction(Instruction::Divf);
-    }
+    // pub fn divf(&mut self) {
+    //     self.add_instruction(Instruction::Divf);
+    // }
 
     pub fn neg(&mut self) {
         self.add_instruction(Instruction::Neg);

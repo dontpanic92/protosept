@@ -1,7 +1,7 @@
 pub mod builder;
 pub mod codegen;
 
-use binrw::binrw;
+use binrw::{binrw, BinRead};
 
 use crate::semantic::{Symbol, SymbolKind};
 
@@ -35,18 +35,6 @@ pub enum Instruction {
 
     #[brw(magic = 8u8)]
     Mod,
-
-    #[brw(magic = 9u8)]
-    Addf,
-
-    #[brw(magic = 10u8)]
-    Subf,
-
-    #[brw(magic = 11u8)]
-    Mulf,
-
-    #[brw(magic = 12u8)]
-    Divf,
 
     #[brw(magic = 13u8)]
     Neg,
@@ -95,6 +83,23 @@ pub enum Instruction {
 
     #[brw(magic = 28u8)]
     Throw,
+}
+
+pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {
+    let mut cursor = std::io::Cursor::new(instructions);
+    let mut insts = Vec::new();
+
+    while cursor.position() < instructions.len() as u64 {
+        match Instruction::read(&mut cursor) {
+            Ok(inst) => insts.push(inst),
+            Err(e) => {
+                eprintln!("Error reading instruction: {}", e);
+                break;
+            }
+        }
+    }
+
+    insts
 }
 
 #[derive(Debug)]

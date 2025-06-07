@@ -92,7 +92,6 @@ pub enum Expression {
         else_branch: Option<Box<Expression>>,
     },
     FunctionCall(FunctionCall),
-    Return(Box<Expression>),
     FieldAccess {
         object: Box<Expression>,
         field: Identifier,
@@ -176,6 +175,7 @@ pub enum Statement {
         named_pattern: NamedPattern,
         expression: Expression,
     },
+    Return(Box<Expression>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -791,7 +791,7 @@ impl Parser {
                 self.consume();
                 let expr = self.parse_expression()?;
                 self.consume_match(TokenType::Semicolon)?;
-                Ok(Statement::Expression(Expression::Return(Box::new(expr))))
+                Ok(Statement::Return(Box::new(expr)))
             }
             Some(TokenType::Throw) => {
                 self.consume();

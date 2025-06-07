@@ -163,7 +163,9 @@ impl SymbolTable {
         let symbol_name = symbol.name.clone();
         self.symbols.push(symbol);
 
-        self.symbols[current_id as usize].children.insert(symbol_name, symbol_id);
+        self.symbols[current_id as usize]
+            .children
+            .insert(symbol_name, symbol_id);
         self.symbol_chain.push(symbol_id);
     }
 
@@ -256,53 +258,64 @@ pub struct Variable {
     pub ty: Type,
 }
 
+pub struct LexicalScope {
+    symbols: Vec<Symbol>,
+    var_ids: Vec<u32>,
+}
+
 pub struct LocalSymbolScope {
-    pub symbols: Vec<Variable>,
-    pub scope_stack: Vec<usize>,
+    pub scopes: Vec<LexicalScope>,
+    pub locals: Vec<Variable>,
 }
 
 impl LocalSymbolScope {
     pub fn new() -> Self {
         LocalSymbolScope {
-            symbols: Vec::new(),
-            scope_stack: Vec::new(),
+            scopes: Vec::new(),
+            locals: Vec::new(),
         }
     }
 
-    pub fn add_variable(
-        &mut self,
-        name: String,
-        var_type: Type,
-    ) -> LocalSymbolScopeResult<SymbolId> {
-        if self.scope_stack.is_empty() {
+    pub fn add_variable(&mut self, name: String, var_type: Type) -> LocalSymbolScopeResult<u32> {
+        if self.scopes.is_empty() {
             Err(LocalSymbolScopeError::NoScopePushed)
         } else {
-            let symbol_id = self.symbols.len() as SymbolId;
-            self.symbols.push(Variable { name, ty: var_type });
-            Ok(symbol_id)
+            let var_id = self.locals.len() as u32;
+            self.locals.push(Variable { name, ty: var_type });
+            self.scopes.last_mut().unwrap().var_ids.push(var_id);
+            Ok(var_id)
         }
     }
 
-    pub fn find_variable(&self, name: &str) -> Option<SymbolId> {
-        for (i, symbol) in self.symbols.iter().rev().enumerate() {
-            if symbol.name == name {
-                return Some(i as SymbolId);
+    pub fn find_variable(&self, name: &str) -> Option<u32> {
+        for scope in self.scopes.iter().rev() {
+            for var in scope.var_ids.iter() {
+                if self.locals[*var as usize].name == name {
+                    return Some(*var);
+                }
             }
         }
 
         None
     }
 
-    pub fn get_variable_type(&self, symbol_id: SymbolId) -> Type {
-        self.symbols[symbol_id as usize].ty.clone()
+    pub fn get_variable_type(&self, var_id: u32) -> Type {
+        self.locals[var_id as usize].ty.clone()
     }
 
     pub fn push_scope(&mut self) {
-        self.scope_stack.push(self.symbols.len());
+        let scope = LexicalScope {
+            symbols: Vec::new(),
+            var_ids: Vec::new(),
+        };
+        self.scopes.push(scope);
     }
 
     pub fn pop_scope(&mut self) {
-        let start_index = self.scope_stack.pop().unwrap();
-        self.symbols.truncate(start_index);
+        if !self.scopes.is_empty() {
+            self.scopes.pop();
+        } else {
+            panic!("No scope to pop");
+        }
     }
 }

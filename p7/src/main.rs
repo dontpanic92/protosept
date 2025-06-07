@@ -22,7 +22,10 @@ fn test_parser_with_file() -> Result<(), Box<dyn Error>> {
     let mut codegen = p7::bytecode::codegen::Generator::new();
     let module = codegen.generate(statements)?;
 
-    println!("statements: {:?}", module);
+    println!("module: {:?}", module);
+
+    let insts = p7::bytecode::disassemble(&module.instructions);
+    println!("instructions: {:?}", insts);
 
     let mut context = p7::interpreter::context::Context::new();
     context.load_module(module);

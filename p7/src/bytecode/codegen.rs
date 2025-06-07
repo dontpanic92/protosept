@@ -44,7 +44,7 @@ pub type SaResult<T> = Result<T, SemanticError>;
 pub struct Generator {
     builder: ByteCodeBuilder,
     symbol_table: SymbolTable,
-    local_scope: LocalSymbolScope,
+    local_scope: Option<LocalSymbolScope>,
 }
 
 impl Generator {
@@ -52,7 +52,7 @@ impl Generator {
         Generator {
             builder: ByteCodeBuilder::new(),
             symbol_table: SymbolTable::new(),
-            local_scope: LocalSymbolScope::new(),
+            local_scope: None,
         }
     }
 
@@ -73,9 +73,13 @@ impl Generator {
         statements: Vec<Statement>,
         variables: Vec<Variable>,
     ) -> SaResult<Type> {
-        self.local_scope.push_scope();
+        self.local_scope.as_mut().unwrap().push_scope();
         for var in variables {
-            self.local_scope.add_variable(var.name, var.ty).unwrap();
+            self.local_scope
+                .as_mut()
+                .unwrap()
+                .add_variable(var.name, var.ty)
+                .unwrap();
         }
 
         let mut ty = Type::Primitive(PrimitiveType::Unit);
@@ -83,7 +87,7 @@ impl Generator {
             ty = self.generate_statement(statement)?;
         }
 
-        self.local_scope.pop_scope();
+        self.local_scope.as_mut().unwrap().pop_scope();
 
         Ok(ty)
     }
@@ -97,6 +101,8 @@ impl Generator {
                 let ty = self.generate_expression(expression)?;
                 let var_id = self
                     .local_scope
+                    .as_mut()
+                    .unwrap()
                     .add_variable(identifier.name.clone(), ty)
                     .map_err(|_| SemanticError::VariableOutsideFunction(identifier.name))?;
 
@@ -144,7 +150,13 @@ impl Generator {
                 );
 
                 self.symbol_table.push_symbol(symbol);
-                self.generate_block(declaration.body, args)?;
+                self.local_scope = Some(LocalSymbolScope::new());
+                let ty = self.generate_block(declaration.body, args)?;
+                if ty != Type::Primitive(PrimitiveType::Unit) {
+                    self.builder.ret();
+                }
+
+                self.local_scope = None;
                 self.symbol_table.pop_symbol();
 
                 Ok(Type::Primitive(PrimitiveType::Unit))
@@ -189,15 +201,25 @@ impl Generator {
             } => {
                 unimplemented!("branching not implemented");
             }
+            Statement::Return(expression) => {
+                self.generate_expression(*expression)?;
+                self.builder.ret();
+                Ok(Type::Primitive(PrimitiveType::Unit))
+            }
         }
     }
 
     fn generate_expression(&mut self, expression: Expression) -> SaResult<Type> {
         match expression {
             Expression::Identifier(identifier) => {
-                if let Some(var_id) = self.local_scope.find_variable(&identifier.name) {
+                if let Some(var_id) = self
+                    .local_scope
+                    .as_mut()
+                    .unwrap()
+                    .find_variable(&identifier.name)
+                {
                     self.builder.ldvar(var_id);
-                    let ty = self.local_scope.get_variable_type(var_id);
+                    let ty = self.local_scope.as_mut().unwrap().get_variable_type(var_id);
                     Ok(ty)
                 } else {
                     Err(SemanticError::VariableNotFound(identifier.name))
@@ -304,11 +326,6 @@ impl Generator {
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
             Expression::FunctionCall(call) => self.generate_function_call(call),
-            Expression::Return(expression) => {
-                self.generate_expression(*expression)?;
-                self.builder.ret();
-                Ok(Type::Primitive(PrimitiveType::Unit))
-            }
             Expression::FieldAccess { object, field } => {
                 self.generate_expression(*object)?;
                 unimplemented!("field access not implemented");
