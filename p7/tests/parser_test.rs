@@ -26,14 +26,14 @@ fn test_parser_with_file() -> Result<(), Box<dyn Error>> {
     let statements = parser.parse()?;
 
     let mut codegen = p7::bytecode::codegen::Generator::new();
-    let bytecode = codegen.generate(statements)?;
+    let module = codegen.generate(statements)?;
 
-    println!("bytecode: {:?}", bytecode);
+    println!("module: {:?}", module);
 
     let mut insts = vec![];
-    let mut cursor = std::io::Cursor::new(&bytecode);
+    let mut cursor = std::io::Cursor::new(&module.instructions);
 
-    while cursor.position() < bytecode.len() as u64 {
+    while cursor.position() < module.instructions.len() as u64 {
         let inst = Instruction::read(&mut cursor)?;
         insts.push(inst);
     }

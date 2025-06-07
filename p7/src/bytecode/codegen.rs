@@ -10,6 +10,8 @@ use crate::{
     },
 };
 
+use super::Module;
+
 #[derive(Debug, PartialEq)]
 pub enum SemanticError {
     TypeNotFound(String),
@@ -54,12 +56,16 @@ impl Generator {
         }
     }
 
-    pub fn generate(&mut self, statements: Vec<Statement>) -> SaResult<Vec<u8>> {
+    pub fn generate(&mut self, statements: Vec<Statement>) -> SaResult<Module> {
         for statement in statements {
             self.generate_statement(statement)?;
         }
 
-        Ok(self.builder.get_bytecode())
+        Ok(Module {
+            instructions: self.builder.get_bytecode(),
+            symbols: self.symbol_table.symbols.clone(),
+            types: self.symbol_table.types.clone(),
+        })
     }
 
     fn generate_block(
@@ -198,7 +204,7 @@ impl Generator {
                 }
             }
             Expression::IntegerLiteral(value) => {
-                self.builder.ldi(value as u32);
+                self.builder.ldi(value as i32);
                 Ok(Type::Primitive(PrimitiveType::Int))
             }
             Expression::FloatLiteral(value) => {

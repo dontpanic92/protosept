@@ -3,12 +3,14 @@ pub mod codegen;
 
 use binrw::binrw;
 
+use crate::semantic::{Symbol, SymbolKind};
+
 #[binrw]
 #[brw(little)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Instruction {
     #[brw(magic = 0u8)]
-    Ldi(u32),
+    Ldi(i32),
 
     #[brw(magic = 1u8)]
     Ldf(f64),
@@ -93,4 +95,23 @@ pub enum Instruction {
 
     #[brw(magic = 28u8)]
     Throw,
+}
+
+#[derive(Debug)]
+pub struct Module {
+    pub instructions: Vec<u8>,
+    pub symbols: Vec<Symbol>,
+    pub types: Vec<crate::semantic::UserDefinedType>,
+}
+
+impl Module {
+    pub fn get_function(&self, name: &str) -> Option<&Symbol> {
+        self.symbols.iter().find(|sym| {
+            sym.name == name
+                && matches!(
+                    sym.kind,
+                    SymbolKind::Function { .. }
+                )
+        })
+    }
 }

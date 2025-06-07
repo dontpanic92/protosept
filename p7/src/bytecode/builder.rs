@@ -23,7 +23,7 @@ impl ByteCodeBuilder {
         inst.write(&mut self.writer).unwrap();
     }
 
-    pub fn ldi(&mut self, value: u32) {
+    pub fn ldi(&mut self, value: i32) {
         self.add_instruction(Instruction::Ldi(value));
     }
 

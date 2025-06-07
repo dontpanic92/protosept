@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Debug};
 
+#[derive(Debug, Clone)]
 pub enum Constant {
     Integer(i64),
     Float(f64),
@@ -7,6 +8,7 @@ pub enum Constant {
     Boolean(bool),
 }
 
+#[derive(Debug, Clone)]
 pub enum SymbolKind {
     Constant(Constant),
     Function { type_id: TypeId, address: u32 },
@@ -17,6 +19,7 @@ pub enum SymbolKind {
 
 pub type SymbolId = u32;
 
+#[derive(Debug, Clone)]
 pub struct Symbol {
     pub name: String,
     pub qualified_name: String,
@@ -34,29 +37,33 @@ impl Symbol {
         }
     }
 
-    pub fn is_function(&self) -> bool {
+    pub fn get_function_address(&self) -> Option<u32> {
         match &self.kind {
-            SymbolKind::Function { .. } => true,
-            _ => false,
+            SymbolKind::Function { address, .. } => Some(*address),
+            _ => None,
         }
     }
 }
+
+#[derive(Debug, Clone)]
 pub struct Function {
     pub qualified_name: String,
     pub args: Vec<Type>,
     pub return_type: Type,
 }
 
+#[derive(Debug, Clone)]
 pub struct Enum {
     pub qualified_name: String,
     pub values: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
 pub struct Struct {
     pub qualified_name: String,
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum PrimitiveType {
     Int,
     Float,
@@ -68,6 +75,7 @@ pub enum PrimitiveType {
 
 pub type TypeId = u32;
 
+#[derive(Debug)]
 pub enum Type {
     Primitive(PrimitiveType),
     Reference(Box<Type>),
@@ -124,6 +132,7 @@ impl ToString for Type {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum UserDefinedType {
     Function(Function),
     Enum(Enum),

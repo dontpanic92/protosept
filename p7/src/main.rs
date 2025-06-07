@@ -20,9 +20,17 @@ fn test_parser_with_file() -> Result<(), Box<dyn Error>> {
     let statements = parser.parse()?;
 
     let mut codegen = p7::bytecode::codegen::Generator::new();
-    let bytecode = codegen.generate(statements)?;
+    let module = codegen.generate(statements)?;
 
-    println!("statements: {:?}", bytecode);
+    println!("statements: {:?}", module);
+
+    let mut context = p7::interpreter::context::Context::new();
+    context.load_module(module);
+    context.push_function("test", Vec::new());
+    context.resume().unwrap();
+
+    println!("stacklen: {}", context.stack[0].stack.len());
+    println!("stack 0: {:?}", context.stack[0].stack[0]);
 
     Ok(())
 }
