@@ -6,6 +6,12 @@ fn sub(a: float, b: float) -> float {
     return a - b;
 }
 
+struct Vec2(
+    secret: int = 42,
+    pub x: float = 0,
+    pub y: float = 0,
+);
+
 fn test() -> float {
     let a = 1.1;
     let b = 2.3;

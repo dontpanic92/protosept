@@ -50,7 +50,8 @@ fn test() -> int {
         err: SomeErrors.NumberIsNot42 => 0,
     };
 
-    let f = try test42(e) else 0;
+    let f = try test42(d) else 0;
+    let g = try test42(d);
 
     assign42(&f);
 

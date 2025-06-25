@@ -3,7 +3,7 @@ use std::error::Error;
 use crate::{
     bytecode::builder::ByteCodeBuilder,
     lexer::TokenType,
-    parser::{Expression, FunctionCall, Statement, StructInitiation},
+    parser::{Expression, FunctionCall, FunctionDeclaration, Statement, StructInitiation},
     semantic::{
         Enum, Function, LocalSymbolScope, PrimitiveType, Struct, Symbol, SymbolKind, SymbolTable,
         Type, UserDefinedType, Variable,
@@ -111,54 +111,7 @@ impl Generator {
             }
             Statement::Expression(expression) => self.generate_expression(expression),
             Statement::FunctionDeclaration(declaration) => {
-                let qualified_name = self
-                    .symbol_table
-                    .get_new_symbol_qualified_name(declaration.name.name.clone());
-                let args = declaration
-                    .parameters
-                    .iter()
-                    .map(|arg| {
-                        self.get_semantic_type(&arg.arg_type).and_then(|ty| {
-                            Ok(Variable {
-                                name: arg.name.name.clone(),
-                                ty,
-                            })
-                        })
-                    })
-                    .collect::<SaResult<Vec<Variable>>>()?;
-
-                let return_type = if let Some(ret) = declaration.return_type {
-                    self.get_semantic_type(&ret)?
-                } else {
-                    Type::Primitive(PrimitiveType::Unit)
-                };
-
-                let ty = Function {
-                    qualified_name: qualified_name.clone(),
-                    args: args.iter().map(|var| var.ty.clone()).collect(),
-                    return_type,
-                };
-
-                let type_id = self.symbol_table.add_udt(UserDefinedType::Function(ty));
-                let symbol = Symbol::new(
-                    declaration.name.name,
-                    qualified_name,
-                    SymbolKind::Function {
-                        type_id,
-                        address: self.builder.next_address() as u32,
-                    },
-                );
-
-                self.symbol_table.push_symbol(symbol);
-
-                self.local_scope = Some(LocalSymbolScope::new(args.clone()));
-                let ty = self.generate_block(declaration.body, vec![])?;
-                if ty != Type::Primitive(PrimitiveType::Unit) {
-                    self.builder.ret();
-                }
-
-                self.local_scope = None;
-                self.symbol_table.pop_symbol();
+                self.process_function_declaration(declaration)?;
 
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
@@ -182,7 +135,11 @@ impl Generator {
                 self.symbol_table.pop_symbol();
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
-            Statement::StructDeclaration { name, fields } => {
+            Statement::StructDeclaration {
+                name,
+                fields,
+                methods,
+            } => {
                 let qualified_name = self
                     .symbol_table
                     .get_new_symbol_qualified_name(name.name.clone());
@@ -191,8 +148,13 @@ impl Generator {
                 };
                 let type_id = self.symbol_table.add_udt(UserDefinedType::Struct(ty));
 
-                let symbol = Symbol::new(name.name, qualified_name, SymbolKind::Enum(type_id));
+                let symbol = Symbol::new(name.name, qualified_name, SymbolKind::Struct(type_id));
                 self.symbol_table.push_symbol(symbol);
+
+                for method in methods {
+                    self.process_function_declaration(method.function)?;
+                }
+
                 self.symbol_table.pop_symbol();
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
@@ -358,6 +320,59 @@ impl Generator {
                 Ok(ty)
             }
         }
+    }
+
+    fn process_function_declaration(&mut self, declaration: FunctionDeclaration) -> SaResult<()> {
+        let qualified_name = self
+            .symbol_table
+            .get_new_symbol_qualified_name(declaration.name.name.clone());
+        let args = declaration
+            .parameters
+            .iter()
+            .map(|arg| {
+                self.get_semantic_type(&arg.arg_type).and_then(|ty| {
+                    Ok(Variable {
+                        name: arg.name.name.clone(),
+                        ty,
+                    })
+                })
+            })
+            .collect::<SaResult<Vec<Variable>>>()?;
+
+        let return_type = if let Some(ret) = declaration.return_type {
+            self.get_semantic_type(&ret)?
+        } else {
+            Type::Primitive(PrimitiveType::Unit)
+        };
+
+        let ty = Function {
+            qualified_name: qualified_name.clone(),
+            args: args.iter().map(|var| var.ty.clone()).collect(),
+            return_type,
+        };
+
+        let type_id = self.symbol_table.add_udt(UserDefinedType::Function(ty));
+        let symbol = Symbol::new(
+            declaration.name.name,
+            qualified_name,
+            SymbolKind::Function {
+                type_id,
+                address: self.builder.next_address() as u32,
+            },
+        );
+
+        self.symbol_table.push_symbol(symbol);
+
+        self.local_scope = Some(LocalSymbolScope::new(args.clone()));
+        let ty = self.generate_block(declaration.body, vec![])?;
+        if ty != Type::Primitive(PrimitiveType::Unit) {
+            self.builder.ret();
+        }
+
+        self.local_scope = None;
+        self.symbol_table.pop_symbol();
+
+        Ok(())
     }
 
     fn generate_function_call(&mut self, call: FunctionCall) -> SaResult<Type> {

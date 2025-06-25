@@ -170,6 +170,7 @@ pub enum Statement {
     StructDeclaration {
         name: Identifier,
         fields: Vec<StructField>,
+        methods: Vec<StructMethod>,
     },
     Branch {
         named_pattern: NamedPattern,
@@ -666,7 +667,9 @@ impl Parser {
         Ok(Statement::EnumDeclaration { name, values })
     }
 
-    fn parse_struct_field(&mut self, is_pub: bool) -> ParseResult<StructField> {
+    fn parse_struct_field(&mut self) -> ParseResult<StructField> {
+        let is_pub = self.consume_match(TokenType::Pub).is_ok();
+
         let field_name = self.parse_identifier()?;
         self.consume_match(TokenType::Colon)?;
         let field_type = self.parse_type()?;
@@ -676,8 +679,6 @@ impl Parser {
             None
         };
 
-        self.consume_match(TokenType::Semicolon)?;
-
         Ok(StructField {
             is_pub,
             name: field_name,
@@ -686,42 +687,77 @@ impl Parser {
         })
     }
 
-    fn parse_struct_method(&mut self, is_pub: bool) -> ParseResult<StructMethod> {
+    fn parse_comma_separated_list<T, F>(&mut self, parse_item: F) -> ParseResult<Vec<T>>
+    where
+        F: Fn(&mut Self) -> ParseResult<T>,
+    {
+        self.consume_match(TokenType::OpenParen)?;
+        let mut items = Vec::new();
+
+        while let Some(token) = self.peek().cloned() {
+            if !items.is_empty() && token.token_type == TokenType::Comma {
+                self.consume();
+            }
+
+            if let Some(TokenType::CloseParen) = self.peek().map(|t| &t.token_type) {
+                self.consume();
+                break;
+            }
+
+            items.push(parse_item(self)?);
+        }
+
+        Ok(items)
+    }
+
+    fn parse_struct_method(&mut self) -> ParseResult<StructMethod> {
+        let is_pub = self.consume_match(TokenType::Pub).is_ok();
         let function = self.parse_function_declaration()?;
 
         Ok(StructMethod { is_pub, function })
     }
 
-    fn parse_struct_declaration(&mut self) -> ParseResult<Statement> {
-        self.consume_match(TokenType::Struct)?;
-        let name = self.parse_identifier()?;
+    fn parse_struct_field_list(&mut self) -> ParseResult<Vec<StructField>> {
+        self.parse_comma_separated_list(|s| s.parse_struct_field())
+    }
+
+    fn parse_struct_method_list(&mut self) -> ParseResult<Vec<StructMethod>> {
         self.consume_match(TokenType::OpenBrace)?;
 
-        let mut fields = vec![];
-        let mut methods = vec![];
+        let mut methods = Vec::new();
         while let Some(token) = self.peek() {
             if token.token_type == TokenType::CloseBrace {
                 self.consume();
                 break;
             }
 
-            let is_pub = self.consume_match(TokenType::Pub).is_ok();
-            let res = match_token! {
-                self.peek(),
-                TokenType::Fn => {
-                    methods.push(self.parse_struct_method(is_pub)?);
-                    Ok(())
-                },
-                TokenType::Identifier(_) => {
-                    fields.push(self.parse_struct_field(is_pub)?);
-                    Ok(())
-                },
-            };
-
-            res?;
+            methods.push(self.parse_struct_method()?);
         }
 
-        Ok(Statement::StructDeclaration { name, fields })
+        Ok(methods)
+    }
+
+    fn parse_struct_declaration(&mut self) -> ParseResult<Statement> {
+        self.consume_match(TokenType::Struct)?;
+        let name = self.parse_identifier()?;
+
+        let fields = if self.peek_match(TokenType::OpenParen) {
+            self.parse_struct_field_list()?
+        } else {
+            vec![]
+        };
+
+        match_token! {
+            self.peek(),
+            TokenType::Semicolon => {
+                self.consume();
+                return Ok(Statement::StructDeclaration { name, fields, methods: vec![] });
+            },
+            TokenType::OpenBrace => {
+                let methods = self.parse_struct_method_list()?;
+                return Ok(Statement::StructDeclaration { name, fields, methods });
+            },
+        }
     }
 
     fn parse_function_declaration(&mut self) -> ParseResult<FunctionDeclaration> {
