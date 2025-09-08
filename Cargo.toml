@@ -1,5 +1,3 @@
 [workspace]
 resolver = "3"
-members = [
-    "p7",
-]
+members = ["p7", "test-runner"]

@@ -133,6 +133,10 @@ impl Lexer {
         self.input.chars().nth(self.position)
     }
 
+    fn peek_char2(&self) -> Option<char> {
+        self.input.chars().nth(self.position + 1)
+    }
+
     fn skip_whitespace(&mut self) {
         while let Some(c) = self.peek_char() {
             if !c.is_whitespace() {
@@ -226,6 +230,16 @@ impl Lexer {
                 if self.peek_char() == Some('/') {
                     while let Some(c) = self.peek_char() {
                         if c == '\n' {
+                            break;
+                        }
+                        self.read_char();
+                    }
+                    return self.next_token();
+                } else if self.peek_char() == Some('*') {
+                    while let Some(c) = self.peek_char() {
+                        if c == '*' && self.peek_char2() == Some('/') {
+                            self.read_char();
+                            self.read_char();
                             break;
                         }
                         self.read_char();

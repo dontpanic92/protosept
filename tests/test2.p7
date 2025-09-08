@@ -1,3 +1,10 @@
+/*
+[testcase]
+entrypoint = "test"
+expected_type = "float"
+expected_value = "1.21"
+*/
+
 fn add(a: float, b: float) -> int {
     a + b
 }
