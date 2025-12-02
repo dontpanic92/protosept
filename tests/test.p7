@@ -47,7 +47,7 @@ struct Vec2(
     }
 }
 
-fn test() -> int {
+fn test() -> float {
     let a = Vec2(1, 2.5);
     let b = Vec2(3, 4.5);
     let c = a.add(b);

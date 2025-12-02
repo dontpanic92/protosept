@@ -5,6 +5,8 @@ use crate::lexer::{Token, TokenType};
 #[derive(Debug, PartialEq, Clone)]
 pub struct Identifier {
     pub name: String,
+    pub line: usize,
+    pub col: usize,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -36,7 +38,7 @@ pub struct Argument {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct FunctionCall {
-    pub name: String,
+    pub name: Identifier,
     pub arguments: Vec<Expression>,
 }
 
@@ -267,9 +269,13 @@ impl Parser {
         match self.consume() {
             Some(Token {
                 token_type: TokenType::Identifier(literal),
+                line,
+                col,
                 ..
             }) => Ok(Identifier {
                 name: literal.clone(),
+                line: *line,
+                col: *col,
             }),
             Some(t) => Err(ParserError::ExpectedToken(
                 TokenType::Identifier("".to_string()),
@@ -297,13 +303,13 @@ impl Parser {
                 self.consume();
                 break;
             }
-
+    
             arguments.push(self.parse_expression()?);
             let _ = self.consume_match(TokenType::Comma);
         }
-
+    
         Ok(Expression::FunctionCall(FunctionCall {
-            name: identifier.name,
+            name: identifier,
             arguments,
         }))
     }
@@ -311,17 +317,19 @@ impl Parser {
     fn parse_field_access(&mut self, object: Expression) -> ParseResult<Expression> {
         self.consume_match(TokenType::Dot)?;
         let field = self.parse_identifier()?;
-
+    
         if self.peek_match(TokenType::OpenParen) {
-            let call = self.parse_function_call(field)?;
-            return Ok(Expression::FieldAccess {
-                object: Box::new(object),
-                field: Identifier {
-                    name: (call.clone()).get_name(),
-                },
-            });
+            let call_expr = self.parse_function_call(field)?;
+            if let Expression::FunctionCall(FunctionCall { name, .. }) = call_expr {
+                return Ok(Expression::FieldAccess {
+                    object: Box::new(object),
+                    field: name,
+                });
+            } else {
+                unreachable!()
+            }
         }
-
+    
         Ok(Expression::FieldAccess {
             object: Box::new(object),
             field,
@@ -370,40 +378,40 @@ impl Parser {
     }
 
     fn parse_primary_expression(&mut self) -> ParseResult<Expression> {
-        let expression = match_token! {
-            self.consume(),
-            TokenType::Integer(value) => Ok(Expression::IntegerLiteral(value)),
-            TokenType::Float(value) => Ok(Expression::FloatLiteral(value)),
-            TokenType::Identifier(ref literal) => {
-                let identifier = Identifier { name: literal.clone() };
-                if self.peek_match(TokenType::OpenBrace) {
-                    self.parse_struct_initiation(identifier)
-                } else {
-                    Ok(Expression::Identifier(identifier))
+        let expression = if let Some(token) = self.peek().cloned() {
+            match &token.token_type {
+                TokenType::Integer(value) => {
+                    self.consume();
+                    Expression::IntegerLiteral(*value)
                 }
-            },
-            TokenType::OpenBrace => {
-                let mut statements = Vec::new();
-                while let Some(token) = self.peek() {
-                    if token.token_type == TokenType::CloseBrace {
-                        self.consume();
-                        break;
+                TokenType::Float(value) => {
+                    self.consume();
+                    Expression::FloatLiteral(*value)
+                }
+                TokenType::Identifier(_) => {
+                    let identifier = self.parse_identifier()?;
+                    if self.peek_match(TokenType::OpenBrace) {
+                        return self.parse_struct_initiation(identifier);
+                    } else {
+                        Expression::Identifier(identifier)
                     }
-
-                    statements.push(self.parse_statement()?)
                 }
-                Ok(Expression::Block(statements))
-            },
-            TokenType::Try => {
-                self.unconsume();
-                self.parse_try_expression()
-            },
-            TokenType::If => {
-                self.unconsume();
-                self.parse_if_expression()
-            },
-        }?;
-
+                TokenType::OpenBrace => {
+                    let statements = self.parse_block()?;
+                    Expression::Block(statements)
+                }
+                TokenType::Try => {
+                    return self.parse_try_expression();
+                }
+                TokenType::If => {
+                    return self.parse_if_expression();
+                }
+                _ => return Err(ParserError::UnexpectedToken(token.clone())),
+            }
+        } else {
+            return Err(ParserError::UnexpectedEof);
+        };
+    
         self.parse_expression_suffix(expression)
     }
 
@@ -430,17 +438,25 @@ impl Parser {
 
         match identifier.clone() {
             Expression::Identifier(identifier) => Ok(Expression::FunctionCall(FunctionCall {
-                name: identifier.name,
+                name: identifier,
                 arguments,
             })),
             Expression::FieldAccess { object, field } => {
                 Ok(Expression::FunctionCall(FunctionCall {
-                    name: format!("{}.{}", object.clone().get_name(), field.name),
+                    name: Identifier {
+                        name: format!("{}.{}", object.clone().get_name(), field.name),
+                        line: field.line,
+                        col: field.col,
+                    },
                     arguments,
                 }))
             }
             _ => Ok(Expression::FunctionCall(FunctionCall {
-                name: identifier.get_name(),
+                name: Identifier {
+                    name: identifier.get_name(),
+                    line: 0,
+                    col: 0,
+                },
                 arguments,
             })),
         }
@@ -514,20 +530,22 @@ impl Parser {
     }
 
     fn parse_pattern(&mut self) -> ParseResult<Pattern> {
-        let pattern = match_token! {
-            self.consume(),
-            TokenType::Integer(value) => Ok(Pattern::IntegerLiteral(value)),
-            TokenType::Float(value) => Ok(Pattern::FloatLiteral(value)),
-            TokenType::StringLiteral(ref value) => Ok(Pattern::StringLiteral(value.clone())),
-            TokenType::Identifier(ref literal) => {
-                let identifier = Pattern::Identifier(Identifier { name: literal.clone() });
-                let identifier = self.parse_pattern_suffix(identifier)?;
-
-                Ok(identifier)
-            },
-        };
-
-        pattern
+        if let Some(token) = self.peek().cloned() {
+            match &token.token_type {
+                TokenType::Integer(value) => { self.consume(); Ok(Pattern::IntegerLiteral(*value)) },
+                TokenType::Float(value) => { self.consume(); Ok(Pattern::FloatLiteral(*value)) },
+                TokenType::StringLiteral(value) => { self.consume(); Ok(Pattern::StringLiteral(value.clone())) },
+                TokenType::Identifier(_) => {
+                    let identifier = self.parse_identifier()?;
+                    let pattern = Pattern::Identifier(identifier);
+                    let pattern = self.parse_pattern_suffix(pattern)?;
+                    Ok(pattern)
+                },
+                _ => Err(ParserError::UnexpectedToken(token.clone())),
+            }
+        } else {
+            Err(ParserError::UnexpectedEof)
+        }
     }
 
     fn parse_named_pattern(&mut self) -> ParseResult<NamedPattern> {
@@ -614,21 +632,21 @@ impl Parser {
                     self.consume();
                     self.consume_match(TokenType::Identifier("self".to_string()))?;
                     Ok(Argument {
-                        name: Identifier {name: "self".to_string()},
-                        arg_type: Type::Reference(Box::new(Type::Identifier(Identifier {name: "Self".to_string()})))
+                        name: Identifier { name: "self".to_string(), line: 0, col: 0 },
+                        arg_type: Type::Reference(Box::new(Type::Identifier(Identifier { name: "Self".to_string(), line: 0, col: 0 }))),
                      })
                 },
                 TokenType::Identifier(ref ident) if ident == "self" => {
                     self.consume();
                     Ok(Argument {
-                        name: Identifier {name: "self".to_string()},
-                        arg_type: Type::Identifier(Identifier {name: "Self".to_string()})
+                        name: Identifier { name: "self".to_string(), line: 0, col: 0 },
+                        arg_type: Type::Identifier(Identifier { name: "Self".to_string(), line: 0, col: 0 })
                     })
                 },
                 TokenType::Identifier(_) => {
                     let name = self.parse_identifier()?;
                     self.consume_match(TokenType::Colon)?;
-
+    
                     let arg_type = self.parse_type()?;
                     Ok(Argument { name, arg_type })
                 },
@@ -798,20 +816,27 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> ParseResult<Type> {
-        match_token! {
-            self.consume(),
-            TokenType::Ampersand => {
-                let ty = self.parse_type()?;
-                Ok(Type::Reference(Box::new(ty)))
-            },
-            TokenType::OpenBracket => {
-                let ty = self.parse_type()?;
-                self.consume_match(TokenType::CloseBracket)?;
-                Ok(Type::Array(Box::new(ty)))
-            },
-            TokenType::Identifier(ref identifier) => {
-                Ok(Type::Identifier(Identifier { name: identifier.clone() }))
-            },
+        if let Some(token) = self.peek() {
+            match &token.token_type {
+                TokenType::Ampersand => {
+                    self.consume();
+                    let ty = self.parse_type()?;
+                    Ok(Type::Reference(Box::new(ty)))
+                }
+                TokenType::OpenBracket => {
+                    self.consume();
+                    let ty = self.parse_type()?;
+                    self.consume_match(TokenType::CloseBracket)?;
+                    Ok(Type::Array(Box::new(ty)))
+                }
+                TokenType::Identifier(_) => {
+                    let ident = self.parse_identifier()?;
+                    Ok(Type::Identifier(ident))
+                }
+                _ => Err(ParserError::UnexpectedToken(token.clone())),
+            }
+        } else {
+            Err(ParserError::UnexpectedEof)
         }
     }
 
@@ -884,7 +909,7 @@ impl Expression {
     pub fn get_name(&self) -> String {
         match self {
             Expression::Identifier(identifier) => identifier.name.clone(),
-            Expression::FunctionCall(function_call) => function_call.name.clone(),
+            Expression::FunctionCall(function_call) => function_call.name.name.clone(),
             Expression::FieldAccess { object, field } => {
                 format!("{}.{}", object.get_name(), field.name)
             }

@@ -14,11 +14,11 @@ use super::Module;
 
 #[derive(Debug, PartialEq)]
 pub enum SemanticError {
-    TypeNotFound(String),
-    FunctionNotFound(String),
-    VariableNotFound(String),
-    TypeMismatch(String, String),
-    VariableOutsideFunction(String),
+    TypeNotFound { name: String, pos: Option<(usize, usize)> },
+    FunctionNotFound { name: String, pos: Option<(usize, usize)> },
+    VariableNotFound { name: String, pos: Option<(usize, usize)> },
+    TypeMismatch { lhs: String, rhs: String, pos: Option<(usize, usize)> },
+    VariableOutsideFunction { name: String, pos: Option<(usize, usize)> },
 }
 
 impl Error for SemanticError {}
@@ -26,14 +26,40 @@ impl Error for SemanticError {}
 impl std::fmt::Display for SemanticError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SemanticError::TypeNotFound(name) => write!(f, "Type not found: {}", name),
-            SemanticError::FunctionNotFound(name) => write!(f, "Function not found: {}", name),
-            SemanticError::VariableNotFound(name) => write!(f, "Variable not found: {}", name),
-            SemanticError::TypeMismatch(lhs, rhs) => {
-                write!(f, "Type mismatch: {} != {}", lhs, rhs)
+            SemanticError::TypeNotFound { name, pos } => {
+                if let Some((line, col)) = pos {
+                    write!(f, "Type not found: {} at line: {} column: {}", name, line, col)
+                } else {
+                    write!(f, "Type not found: {}", name)
+                }
             }
-            SemanticError::VariableOutsideFunction(name) => {
-                write!(f, "Variable cannot be defined outside functions: {}", name)
+            SemanticError::FunctionNotFound { name, pos } => {
+                if let Some((line, col)) = pos {
+                    write!(f, "Function not found: {} at line: {} column: {}", name, line, col)
+                } else {
+                    write!(f, "Function not found: {}", name)
+                }
+            }
+            SemanticError::VariableNotFound { name, pos } => {
+                if let Some((line, col)) = pos {
+                    write!(f, "Variable not found: {} at line: {} column: {}", name, line, col)
+                } else {
+                    write!(f, "Variable not found: {}", name)
+                }
+            }
+            SemanticError::TypeMismatch { lhs, rhs, pos } => {
+                if let Some((line, col)) = pos {
+                    write!(f, "Type mismatch: {} != {} at line: {} column: {}", lhs, rhs, line, col)
+                } else {
+                    write!(f, "Type mismatch: {} != {}", lhs, rhs)
+                }
+            }
+            SemanticError::VariableOutsideFunction { name, pos } => {
+                if let Some((line, col)) = pos {
+                    write!(f, "Variable cannot be defined outside functions: {} at line: {} column: {}", name, line, col)
+                } else {
+                    write!(f, "Variable cannot be defined outside functions: {}", name)
+                }
             }
         }
     }
@@ -104,7 +130,7 @@ impl Generator {
                     .as_mut()
                     .unwrap()
                     .add_variable(identifier.name.clone(), ty)
-                    .map_err(|_| SemanticError::VariableOutsideFunction(identifier.name))?;
+                    .map_err(|_| SemanticError::VariableOutsideFunction { name: identifier.name.clone(), pos: Some((identifier.line, identifier.col)) })?;
 
                 self.builder.stvar(var_id);
                 Ok(Type::Primitive(PrimitiveType::Unit))
@@ -194,7 +220,7 @@ impl Generator {
                     let ty = self.local_scope.as_mut().unwrap().get_param_type(param_id);
                     Ok(ty)
                 } else {
-                    Err(SemanticError::VariableNotFound(identifier.name))
+                    Err(SemanticError::VariableNotFound { name: identifier.name, pos: Some((identifier.line, identifier.col)) })
                 }
             }
             Expression::IntegerLiteral(value) => {
@@ -232,10 +258,7 @@ impl Generator {
                 let lhs_ty = self.generate_expression(*left)?;
                 let rhs_ty = self.generate_expression(*right)?;
                 if lhs_ty != rhs_ty {
-                    Err(SemanticError::TypeMismatch(
-                        lhs_ty.to_string(),
-                        rhs_ty.to_string(),
-                    ))
+                    Err(SemanticError::TypeMismatch { lhs: lhs_ty.to_string(), rhs: rhs_ty.to_string(), pos: Some((operator.line, operator.col)) })
                 } else {
                     match operator.token_type {
                         TokenType::Plus => self.builder.addi(),
@@ -265,10 +288,7 @@ impl Generator {
             } => {
                 let condition_type = self.generate_expression(*condition)?;
                 if condition_type != Type::Primitive(PrimitiveType::Bool) {
-                    return Err(SemanticError::TypeMismatch(
-                        condition_type.to_string(),
-                        "bool".to_string(),
-                    ));
+                    return Err(SemanticError::TypeMismatch { lhs: condition_type.to_string(), rhs: "bool".to_string(), pos: None });
                 }
 
                 let jump_if_false_address_placeholder = self.builder.next_address();
@@ -379,25 +399,27 @@ impl Generator {
         for arg in call.arguments {
             self.generate_expression(arg)?;
         }
-
-        if let Some(symbol_id) = self.symbol_table.find_symbol_in_scope(&call.name) {
+    
+        let call_name = call.name.name.clone();
+    
+        if let Some(symbol_id) = self.symbol_table.find_symbol_in_scope(&call_name) {
             let symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
             let (_, type_id) = match symbol.kind {
                 SymbolKind::Function { address, type_id } => (address, type_id),
                 _ => {
-                    return Err(SemanticError::FunctionNotFound(call.name));
+                    return Err(SemanticError::FunctionNotFound { name: call_name.clone(), pos: Some((call.name.line, call.name.col)) });
                 }
             };
-
+    
             self.builder.call(symbol_id);
-
+    
             let ty = self.symbol_table.get_udt(type_id);
             match ty {
                 UserDefinedType::Function(function) => Ok(function.return_type.clone()),
                 _ => panic!("Function not found"),
             }
         } else {
-            Err(SemanticError::FunctionNotFound(call.name))
+            Err(SemanticError::FunctionNotFound { name: call_name, pos: Some((call.name.line, call.name.col)) })
         }
     }
 
@@ -417,7 +439,7 @@ impl Generator {
                 if let Some(ty) = self.symbol_table.find_type_in_scope(&identifier.name) {
                     Ok(ty)
                 } else {
-                    Err(SemanticError::TypeNotFound(identifier.name.clone()))
+                    Err(SemanticError::TypeNotFound { name: identifier.name.clone(), pos: Some((identifier.line, identifier.col)) })
                 }
             }
             crate::parser::Type::Reference(r) => {
