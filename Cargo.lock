@@ -176,6 +176,7 @@ name = "test-runner"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "p7",
  "serde",
  "toml",
 ]
