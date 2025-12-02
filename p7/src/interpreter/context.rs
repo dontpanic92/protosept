@@ -34,29 +34,45 @@ impl From<f64> for Data {
     }
 }
 
-macro_rules! binary_op {
-    ($self: ident, $op:tt, $int_res_ty:ident, $float_res_ty:ident) => {
+macro_rules! arithmetic_op {
+    ($self: ident, $op:tt) => {
         let b = $self.stack_frame_mut()?.stack.pop().ok_or(ContextError::StackUnderflow)?;
         let a = $self.stack_frame_mut()?.stack.pop().ok_or(ContextError::StackUnderflow)?;
         match (a, b) {
-            (Data::Int(a), Data::Int(b)) => $self.stack_frame_mut()?.stack.push(Data::from((a $op b) as $int_res_ty)),
-            (Data::Float(a), Data::Float(b)) => $self.stack_frame_mut()?.stack.push(Data::from((a $op b) as $float_res_ty)),
-            _ => {
-                panic!("Invalid types for binary operation");
+            (Data::Int(a), Data::Int(b)) => {
+                $self.stack_frame_mut()?.stack.push(Data::Int(a $op b));
+            }
+            (Data::Float(a), Data::Float(b)) => {
+                $self.stack_frame_mut()?.stack.push(Data::Float(a $op b));
+            }
+            (Data::Int(a), Data::Float(b)) => {
+                $self.stack_frame_mut()?.stack.push(Data::Float((a as f64) $op b));
+            }
+            (Data::Float(a), Data::Int(b)) => {
+                $self.stack_frame_mut()?.stack.push(Data::Float(a $op (b as f64)));
             }
         }
     };
 }
-
-macro_rules! arithmetic_op {
-    ($self: ident, $op:tt) => {
-        binary_op!($self, $op, i32, f64);
-    };
-}
-
+ 
 macro_rules! comparison_op {
     ($self: ident, $op:tt) => {
-        binary_op!($self, $op, i32, i32);
+        let b = $self.stack_frame_mut()?.stack.pop().ok_or(ContextError::StackUnderflow)?;
+        let a = $self.stack_frame_mut()?.stack.pop().ok_or(ContextError::StackUnderflow)?;
+        match (a, b) {
+            (Data::Int(a), Data::Int(b)) => {
+                $self.stack_frame_mut()?.stack.push(Data::Int((a $op b) as i32));
+            }
+            (Data::Float(a), Data::Float(b)) => {
+                $self.stack_frame_mut()?.stack.push(Data::Int((a $op b) as i32));
+            }
+            (Data::Int(a), Data::Float(b)) => {
+                $self.stack_frame_mut()?.stack.push(Data::Int(((a as f64) $op b) as i32));
+            }
+            (Data::Float(a), Data::Int(b)) => {
+                $self.stack_frame_mut()?.stack.push(Data::Int((a $op (b as f64)) as i32));
+            }
+        }
     };
 }
 

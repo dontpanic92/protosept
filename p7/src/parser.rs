@@ -92,6 +92,7 @@ pub enum Expression {
         condition: Box<Expression>,
         then_branch: Box<Expression>,
         else_branch: Option<Box<Expression>>,
+        pos: (usize, usize),
     },
     FunctionCall(FunctionCall),
     FieldAccess {
@@ -303,11 +304,11 @@ impl Parser {
                 self.consume();
                 break;
             }
-    
+
             arguments.push(self.parse_expression()?);
             let _ = self.consume_match(TokenType::Comma);
         }
-    
+
         Ok(Expression::FunctionCall(FunctionCall {
             name: identifier,
             arguments,
@@ -317,7 +318,7 @@ impl Parser {
     fn parse_field_access(&mut self, object: Expression) -> ParseResult<Expression> {
         self.consume_match(TokenType::Dot)?;
         let field = self.parse_identifier()?;
-    
+
         if self.peek_match(TokenType::OpenParen) {
             let call_expr = self.parse_function_call(field)?;
             if let Expression::FunctionCall(FunctionCall { name, .. }) = call_expr {
@@ -329,7 +330,7 @@ impl Parser {
                 unreachable!()
             }
         }
-    
+
         Ok(Expression::FieldAccess {
             object: Box::new(object),
             field,
@@ -411,7 +412,7 @@ impl Parser {
         } else {
             return Err(ParserError::UnexpectedEof);
         };
-    
+
         self.parse_expression_suffix(expression)
     }
 
@@ -497,7 +498,14 @@ impl Parser {
     }
 
     fn parse_if_expression(&mut self) -> ParseResult<Expression> {
-        self.consume_match(TokenType::If)?;
+        // consume the 'if' token and capture its position for better error reporting
+        let if_token = match self.consume() {
+            Some(t) if t.token_type == TokenType::If => t.clone(),
+            Some(t) => return Err(ParserError::ExpectedToken(TokenType::If, t.clone())),
+            None => return Err(ParserError::UnexpectedEof),
+        };
+        let if_pos = (if_token.line, if_token.col);
+
         let condition = self.parse_expression()?;
         let then_branch = self.parse_expression()?;
         let else_branch = if self.consume_match(TokenType::Else).is_ok() {
@@ -510,6 +518,7 @@ impl Parser {
             condition: Box::new(condition),
             then_branch: Box::new(then_branch),
             else_branch,
+            pos: if_pos,
         })
     }
 
@@ -532,15 +541,24 @@ impl Parser {
     fn parse_pattern(&mut self) -> ParseResult<Pattern> {
         if let Some(token) = self.peek().cloned() {
             match &token.token_type {
-                TokenType::Integer(value) => { self.consume(); Ok(Pattern::IntegerLiteral(*value)) },
-                TokenType::Float(value) => { self.consume(); Ok(Pattern::FloatLiteral(*value)) },
-                TokenType::StringLiteral(value) => { self.consume(); Ok(Pattern::StringLiteral(value.clone())) },
+                TokenType::Integer(value) => {
+                    self.consume();
+                    Ok(Pattern::IntegerLiteral(*value))
+                }
+                TokenType::Float(value) => {
+                    self.consume();
+                    Ok(Pattern::FloatLiteral(*value))
+                }
+                TokenType::StringLiteral(value) => {
+                    self.consume();
+                    Ok(Pattern::StringLiteral(value.clone()))
+                }
                 TokenType::Identifier(_) => {
                     let identifier = self.parse_identifier()?;
                     let pattern = Pattern::Identifier(identifier);
                     let pattern = self.parse_pattern_suffix(pattern)?;
                     Ok(pattern)
-                },
+                }
                 _ => Err(ParserError::UnexpectedToken(token.clone())),
             }
         } else {
@@ -646,7 +664,7 @@ impl Parser {
                 TokenType::Identifier(_) => {
                     let name = self.parse_identifier()?;
                     self.consume_match(TokenType::Colon)?;
-    
+
                     let arg_type = self.parse_type()?;
                     Ok(Argument { name, arg_type })
                 },
