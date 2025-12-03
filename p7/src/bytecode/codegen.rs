@@ -195,9 +195,17 @@ impl Generator {
                 };
                 let type_id = self.symbol_table.add_udt(UserDefinedType::Enum(ty));
 
-                let symbol = Symbol::new(name.name, qualified_name, SymbolKind::Enum(type_id));
-                self.symbol_table.push_symbol(symbol);
-                self.symbol_table.pop_symbol();
+                let symbol = Symbol::new(
+                    name.name.clone(),
+                    qualified_name,
+                    SymbolKind::Enum(type_id),
+                );
+                
+                let next_symbol_id = self.symbol_table.symbols.len() as u32;
+                let current_symbol = self.symbol_table.get_current_symbol_mut().unwrap();
+                current_symbol.children.insert(name.name, next_symbol_id);
+                self.symbol_table.symbols.push(symbol);
+
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
             Statement::StructDeclaration {
@@ -208,8 +216,17 @@ impl Generator {
                 let qualified_name = self
                     .symbol_table
                     .get_new_symbol_qualified_name(name.name.clone());
+                let fields_with_types = fields
+                    .iter()
+                    .map(|f| {
+                        let field_type = self.get_semantic_type(&f.field_type).unwrap();
+                        (f.name.name.clone(), field_type)
+                    })
+                    .collect();
+
                 let ty = Struct {
                     qualified_name: qualified_name.clone(),
+                    fields: fields_with_types,
                 };
                 let type_id = self.symbol_table.add_udt(UserDefinedType::Struct(ty));
 
@@ -399,8 +416,82 @@ impl Generator {
             }
             Expression::FunctionCall(call) => self.generate_function_call(call),
             Expression::FieldAccess { object, field } => {
-                self.generate_expression(*object)?;
-                unimplemented!("field access not implemented");
+                let (object_ty, is_static_access) = if let Expression::Identifier(ref identifier) = *object {
+                    if let Some(ty) = self.symbol_table.find_type_in_scope(&identifier.name) {
+                        (ty, true) // It's a type (static) access
+                    } else {
+                        // Not a type, so it must be a variable/expression
+                        (self.generate_expression(*object)?, false)
+                    }
+                } else {
+                    // Not an identifier, so definitely an expression
+                    (self.generate_expression(*object)?, false)
+                };
+
+                match object_ty {
+                    Type::Enum(type_id) => {
+                        let udt = self.symbol_table.get_udt(type_id);
+                        if let UserDefinedType::Enum(enum_def) = udt {
+                            if is_static_access {
+                                if enum_def.values.contains(&field.name) {
+                                    let variant_index = enum_def
+                                        .values
+                                        .iter()
+                                        .position(|v| v == &field.name)
+                                        .unwrap() as i32;
+                                    self.builder.ldi(variant_index); // Load the enum variant's index
+                                    Ok(object_ty) // The type of the field access is the enum itself
+                                } else {
+                                    return Err(SemanticError::TypeMismatch {
+                                        lhs: format!("Enum '{}'", enum_def.qualified_name),
+                                        rhs: format!("Unknown Enum variant '{}'", field.name),
+                                        pos: Some((field.line, field.col)),
+                                    });
+                                }
+                            } else {
+                                // Field access on an enum instance (e.g., my_enum_var.Variant) is not supported for simple enums.
+                                return Err(SemanticError::TypeMismatch {
+                                    lhs: format!("Enum instance '{}'", enum_def.qualified_name),
+                                    rhs: format!("Field access on Enum instance via variant '{}'", field.name),
+                                    pos: Some((field.line, field.col)),
+                                });
+                            }
+                        } else {
+                            unimplemented!("Internal error: Type ID resolved to non-Enum UDT");
+                        }
+                    }
+                    Type::Struct(type_id) => {
+                        // Per instructions, Struct field access is not implemented.
+                        let udt = self.symbol_table.get_udt(type_id);
+                        if let UserDefinedType::Struct(struct_def) = udt {
+                            if is_static_access {
+                                // Static field access on Structs not yet supported.
+                                return Err(SemanticError::TypeMismatch {
+                                    lhs: format!("Struct type '{}'", struct_def.qualified_name),
+                                    rhs: format!("Static field access on Struct type '{}' (not supported)", field.name),
+                                    pos: Some((field.line, field.col)),
+                                });
+                            } else {
+                                // Instance field access on Structs not yet implemented, but identified correctly.
+                                return Err(SemanticError::TypeMismatch {
+                                    lhs: format!("Struct instance '{}'", struct_def.qualified_name),
+                                    rhs: "Field access requested (not implemented)".to_string(),
+                                    pos: Some((field.line, field.col)),
+                                });
+                            }
+                        } else {
+                            unimplemented!("Internal error: Type ID resolved to non-Struct UDT");
+                        }
+                    }
+                    _ => {
+                        // Primitives, Arrays, References cannot be field accessed via '.' syntax
+                        return Err(SemanticError::TypeMismatch {
+                            lhs: object_ty.to_string(),
+                            rhs: "Struct or Enum type/instance".to_string(),
+                            pos: Some((field.line, field.col)),
+                        });
+                    }
+                }
             }
             Expression::StructInitiation(initiation) => self.generate_struct_initiation(initiation),
             Expression::Block(statements) => self.generate_block(statements, vec![]),

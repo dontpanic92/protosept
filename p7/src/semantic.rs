@@ -70,6 +70,7 @@ pub struct Enum {
 #[derive(Debug, Clone)]
 pub struct Struct {
     pub qualified_name: String,
+    pub fields: Vec<(String, Type)>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

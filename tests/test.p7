@@ -19,7 +19,7 @@ fn sub(a: float, b: float) -> float {
 
 fn[throws] test42(a: float) -> float {
     if a != 42 {
-        throw NumberIsNot42;
+        throw SomeErrors.NumberIsNot42;
     }
 
     a
