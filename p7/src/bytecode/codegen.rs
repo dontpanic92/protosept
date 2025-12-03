@@ -322,6 +322,16 @@ impl Generator {
                     }
                 };
 
+                let is_comparison = matches!(
+                    operator.token_type,
+                    TokenType::Equals
+                        | TokenType::NotEquals
+                        | TokenType::GreaterThan
+                        | TokenType::GreaterThanOrEqual
+                        | TokenType::LessThan
+                        | TokenType::LessThanOrEqual
+                );
+
                 match operator.token_type {
                     TokenType::Plus => self.builder.addi(),
                     TokenType::Minus => self.builder.subi(),
@@ -340,7 +350,11 @@ impl Generator {
                         unimplemented!();
                     }
                 };
-                Ok(result_ty)
+                if is_comparison {
+                    Ok(Type::Primitive(PrimitiveType::Bool))
+                } else {
+                    Ok(result_ty)
+                }
             }
             Expression::If {
                 condition,
