@@ -210,6 +210,16 @@ impl SymbolTable {
     }
 
     pub fn find_type_in_scope(&self, name: &str) -> Option<Type> {
+        // Special handling: inside a struct's scope, `Self` refers to the enclosing struct type.
+        if name == "Self" {
+            if let Some(current) = self.get_current_symbol() {
+                match current.kind {
+                    SymbolKind::Struct(id) => return Some(Type::Struct(id)),
+                    _ => {}
+                }
+            }
+        }
+
         let primitive_type = Self::to_primitive_type(name);
         if primitive_type.is_some() {
             return primitive_type;

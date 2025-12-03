@@ -43,6 +43,16 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::Ldpar(param_id));
     }
 
+    /// Load a field from a struct value (by field index).
+    pub fn ldfield(&mut self, field_index: u32) {
+        self.add_instruction(Instruction::Ldfield(field_index));
+    }
+
+    /// Store a field into a struct value (by field index).
+    pub fn stfield(&mut self, field_index: u32) {
+        self.add_instruction(Instruction::Stfield(field_index));
+    }
+
     pub fn addi(&mut self) {
         self.add_instruction(Instruction::Add);
     }

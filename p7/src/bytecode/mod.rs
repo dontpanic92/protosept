@@ -86,6 +86,16 @@ pub enum Instruction {
 
     #[brw(magic = 25u8)]
     Throw,
+
+    // Load a field from a struct value on the stack.
+    // Expects: [..., struct_value] -> pops struct_value and pushes the requested field value.
+    #[brw(magic = 26u8)]
+    Ldfield(u32),
+
+    // Store a field into a struct value on the stack.
+    // Expects: [..., struct_value, field_value] -> pops both and pushes updated struct_value.
+    #[brw(magic = 27u8)]
+    Stfield(u32),
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {

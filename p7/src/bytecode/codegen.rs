@@ -466,6 +466,7 @@ impl Generator {
             }
             Expression::FunctionCall(call) => self.generate_function_call(call),
             Expression::FieldAccess { object, field } => {
+                let object_name = object.get_name();
                 let (object_ty, is_static_access) = if let Expression::Identifier(ref identifier) = *object {
                     if let Some(ty) = self.symbol_table.find_type_in_scope(&identifier.name) {
                         (ty, true) // It's a type (static) access
@@ -511,7 +512,6 @@ impl Generator {
                         }
                     }
                     Type::Struct(type_id) => {
-                        // Per instructions, Struct field access is not implemented.
                         let udt = self.symbol_table.get_udt(type_id);
                         if let UserDefinedType::Struct(struct_def) = udt {
                             if is_static_access {
@@ -522,12 +522,25 @@ impl Generator {
                                     pos: Some((field.line, field.col)),
                                 });
                             } else {
-                                // Instance field access on Structs not yet implemented, but identified correctly.
-                                return Err(SemanticError::TypeMismatch {
-                                    lhs: format!("Struct instance '{}'", struct_def.qualified_name),
-                                    rhs: "Field access requested (not implemented)".to_string(),
-                                    pos: Some((field.line, field.col)),
-                                });
+                                // Instance field access: generate code to load the requested field.
+                                // First find the field index and type in the struct definition.
+                                if let Some((idx, (_fname, ftype))) = struct_def
+                                    .fields
+                                    .iter()
+                                    .enumerate()
+                                    .find(|(_i, (fname, _))| fname == &field.name)
+                                {
+                                    // At runtime, the object expression will push the struct value onto the stack.
+                                    // Emit instruction to load the field by index.
+                                    self.builder.ldfield(idx as u32);
+                                    return Ok(ftype.clone());
+                                } else {
+                                    return Err(SemanticError::TypeMismatch {
+                                        lhs: format!("Struct instance '{}: {}'", object_name, struct_def.qualified_name),
+                                        rhs: format!("Unknown field '.{}' on struct", field.name),
+                                        pos: Some((field.line, field.col)),
+                                    });
+                                }
                             }
                         } else {
                             unimplemented!("Internal error: Type ID resolved to non-Struct UDT");

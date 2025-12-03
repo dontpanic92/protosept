@@ -10,6 +10,7 @@ pub enum ContextError {
     NoStackFrame,
     EntryPointNotFound,
     StackUnderflow,
+    UnexpectedStructRef,
     FunctionNotFound,
     VariableNotFound,
 }
@@ -20,6 +21,8 @@ pub type ContextResult<T> = std::result::Result<T, ContextError>;
 pub enum Data {
     Int(i32),
     Float(f64),
+    /// Reference to a heap-allocated struct (index into Context.heap).
+    StructRef(u32),
 }
 
 impl From<i32> for Data {
@@ -51,6 +54,10 @@ macro_rules! arithmetic_op {
             (Data::Float(a), Data::Int(b)) => {
                 $self.stack_frame_mut()?.stack.push(Data::Float(a $op (b as f64)));
             }
+            (Data::StructRef(_), _) | (_, Data::StructRef(_)) => {
+                // Arithmetic on struct references is invalid.
+                return Err(ContextError::UnexpectedStructRef);
+            }
         }
     };
 }
@@ -71,6 +78,10 @@ macro_rules! comparison_op {
             }
             (Data::Float(a), Data::Int(b)) => {
                 $self.stack_frame_mut()?.stack.push(Data::Int((a $op (b as f64)) as i32));
+            }
+            (Data::StructRef(_), _) | (_, Data::StructRef(_)) => {
+                // Comparison with struct refs not supported
+                return Err(ContextError::UnexpectedStructRef);
             }
         }
     };
@@ -94,9 +105,14 @@ impl StackFrame {
     }
 }
 
+pub struct Struct {
+    pub fields: Vec<Data>,
+}
+
 pub struct Context {
     pub stack: Vec<StackFrame>,
     modules: Vec<Module>,
+    pub heap: Vec<Struct>,
 }
 
 impl Context {
@@ -104,6 +120,7 @@ impl Context {
         Self {
             stack: vec![StackFrame::new()],
             modules: Vec::new(),
+            heap: Vec::new(),
         }
     }
 
@@ -191,6 +208,9 @@ impl Context {
                         match data {
                             Data::Int(i) => self.stack_frame_mut()?.stack.push(Data::Int(-i)),
                             Data::Float(f) => self.stack_frame_mut()?.stack.push(Data::Float(-f)),
+                            Data::StructRef(_) => {
+                                return Err(ContextError::VariableNotFound);
+                            }
                         }
                     } else {
                         unimplemented!();
@@ -235,35 +255,84 @@ impl Context {
                             .symbols
                             .get(symbol_id as usize)
                             .ok_or(ContextError::FunctionNotFound)?;
-
+ 
                         let address = function
                             .get_function_address()
                             .ok_or(ContextError::FunctionNotFound)?;
-
+ 
                         let udt = function
                             .get_type_id()
                             .and_then(|function_type_id| {
                                 self.modules[0].types.get(function_type_id as usize)
                             })
                             .ok_or(ContextError::FunctionNotFound)?;
-
+ 
                         let function_type = match udt {
                             crate::semantic::UserDefinedType::Function(function_type) => {
                                 function_type
                             }
                             _ => return Err(ContextError::FunctionNotFound),
                         };
-
+ 
                         let args_len = function_type.args.len();
                         (address, args_len)
                     };
-
+ 
                     let mut new_frame = StackFrame::new();
                     let stack = &mut self.stack_frame_mut()?.stack;
                     new_frame.params = stack.split_off(stack.len() - args_len);
                     new_frame.pc = address as usize;
-
+ 
                     self.stack.push(new_frame);
+                }
+                Instruction::Ldfield(field_idx) => {
+                    // Expect a StructRef on the stack; pop it and push the requested field value.
+                    if let Some(data) = self.stack_frame_mut()?.stack.pop() {
+                        match data {
+                            Data::StructRef(ref_id) => {
+                                let ref_usize = ref_id as usize;
+                                if ref_usize >= self.heap.len() {
+                                    return Err(ContextError::VariableNotFound);
+                                }
+                                let struct_fields = &self.heap[ref_usize].fields;
+                                if (field_idx as usize) >= struct_fields.len() {
+                                    return Err(ContextError::VariableNotFound);
+                                }
+                                let field_value = struct_fields[field_idx as usize].clone();
+                                self.stack_frame_mut()?.stack.push(field_value);
+                            }
+                            _ => {
+                                return Err(ContextError::VariableNotFound);
+                            }
+                        }
+                    } else {
+                        return Err(ContextError::StackUnderflow);
+                    }
+                }
+                Instruction::Stfield(field_idx) => {
+                    // Expect: [..., struct_ref, field_value] (field_value on top).
+                    // Pop field_value then struct_ref, update heap, do not push a value (assignment yields unit).
+                    let field_value_opt = self.stack_frame_mut()?.stack.pop();
+                    let struct_ref_opt = self.stack_frame_mut()?.stack.pop();
+                    if field_value_opt.is_none() || struct_ref_opt.is_none() {
+                        return Err(ContextError::StackUnderflow);
+                    }
+                    let field_value = field_value_opt.unwrap();
+                    match struct_ref_opt.unwrap() {
+                        Data::StructRef(ref_id) => {
+                            let ref_usize = ref_id as usize;
+                            if ref_usize >= self.heap.len() {
+                                return Err(ContextError::VariableNotFound);
+                            }
+                            if (field_idx as usize) >= self.heap[ref_usize].fields.len() {
+                                return Err(ContextError::VariableNotFound);
+                            }
+                            self.heap[ref_usize].fields[field_idx as usize] = field_value;
+                        }
+                        _ => {
+                            return Err(ContextError::VariableNotFound);
+                        }
+                    }
                 }
                 Instruction::Ret => {
                     if self.stack_frame()?.stack.len() > 0 {
