@@ -1,9 +1,11 @@
-use std::error::Error;
-
+use crate::errors::SourcePos;
 use crate::{
+    ast::{
+        Expression, FunctionCall, FunctionDeclaration, Statement, StructInitiation,
+        Type as ParsedType,
+    },
     bytecode::builder::ByteCodeBuilder,
     lexer::TokenType,
-    ast::{Expression, FunctionCall, FunctionDeclaration, Statement, StructInitiation, Type as ParsedType},
     semantic::{
         Enum, Function, LocalSymbolScope, PrimitiveType, Struct, Symbol, SymbolKind, SymbolTable,
         Type, UserDefinedType, Variable,
@@ -12,110 +14,7 @@ use crate::{
 
 use super::Module;
 
-#[derive(Debug, PartialEq)]
-pub enum SemanticError {
-    TypeNotFound {
-        name: String,
-        pos: Option<(usize, usize)>,
-    },
-    FunctionNotFound {
-        name: String,
-        pos: Option<(usize, usize)>,
-    },
-    VariableNotFound {
-        name: String,
-        pos: Option<(usize, usize)>,
-    },
-    TypeMismatch {
-        lhs: String,
-        rhs: String,
-        pos: Option<(usize, usize)>,
-    },
-    /// Error raised when a call mixes positional and named arguments.
-    MixedNamedAndPositional {
-        name: String,
-        pos: Option<(usize, usize)>,
-    },
-    VariableOutsideFunction {
-        name: String,
-        pos: Option<(usize, usize)>,
-    },
-}
-
-impl Error for SemanticError {}
-
-impl std::fmt::Display for SemanticError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SemanticError::TypeNotFound { name, pos } => {
-                if let Some((line, col)) = pos {
-                    write!(
-                        f,
-                        "Type not found: {} at line: {} column: {}",
-                        name, line, col
-                    )
-                } else {
-                    write!(f, "Type not found: {}", name)
-                }
-            }
-            SemanticError::FunctionNotFound { name, pos } => {
-                if let Some((line, col)) = pos {
-                    write!(
-                        f,
-                        "Function not found: {} at line: {} column: {}",
-                        name, line, col
-                    )
-                } else {
-                    write!(f, "Function not found: {}", name)
-                }
-            }
-            SemanticError::VariableNotFound { name, pos } => {
-                if let Some((line, col)) = pos {
-                    write!(
-                        f,
-                        "Variable not found: {} at line: {} column: {}",
-                        name, line, col
-                    )
-                } else {
-                    write!(f, "Variable not found: {}", name)
-                }
-            }
-            SemanticError::TypeMismatch { lhs, rhs, pos } => {
-                if let Some((line, col)) = pos {
-                    write!(
-                        f,
-                        "Type mismatch: {} != {} at line: {} column: {}",
-                        lhs, rhs, line, col
-                    )
-                } else {
-                    write!(f, "Type mismatch: {} != {}", lhs, rhs)
-                }
-            }
-            SemanticError::MixedNamedAndPositional { name, pos } => {
-                if let Some((line, col)) = pos {
-                    write!(
-                        f,
-                        "Mixed positional and named arguments in call: {} at line: {} column: {}",
-                        name, line, col
-                    )
-                } else {
-                    write!(f, "Mixed positional and named arguments in call: {}", name)
-                }
-            }
-            SemanticError::VariableOutsideFunction { name, pos } => {
-                if let Some((line, col)) = pos {
-                    write!(
-                        f,
-                        "Variable cannot be defined outside functions: {} at line: {} column: {}",
-                        name, line, col
-                    )
-                } else {
-                    write!(f, "Variable cannot be defined outside functions: {}", name)
-                }
-            }
-        }
-    }
-}
+use crate::errors::SemanticError;
 
 pub type SaResult<T> = Result<T, SemanticError>;
 
@@ -184,7 +83,10 @@ impl Generator {
                     .add_variable(identifier.name.clone(), ty)
                     .map_err(|_| SemanticError::VariableOutsideFunction {
                         name: identifier.name.clone(),
-                        pos: Some((identifier.line, identifier.col)),
+                        pos: Some(SourcePos {
+                            line: identifier.line,
+                            col: identifier.col,
+                        }),
                     })?;
 
                 self.builder.stvar(var_id);
@@ -291,7 +193,10 @@ impl Generator {
                 } else {
                     Err(SemanticError::VariableNotFound {
                         name: identifier.name,
-                        pos: Some((identifier.line, identifier.col)),
+                        pos: Some(SourcePos {
+                            line: identifier.line,
+                            col: identifier.col,
+                        }),
                     })
                 }
             }
@@ -358,7 +263,10 @@ impl Generator {
                             } else {
                                 return Err(SemanticError::VariableNotFound {
                                     name: identifier.name,
-                                    pos: Some((identifier.line, identifier.col)),
+                                    pos: Some(SourcePos {
+                                        line: identifier.line,
+                                        col: identifier.col,
+                                    }),
                                 });
                             }
                         }
@@ -367,7 +275,10 @@ impl Generator {
                             return Err(SemanticError::TypeMismatch {
                                 lhs: object.get_name(),
                                 rhs: format!("Field assignment '{}'", field.name),
-                                pos: Some((field.line, field.col)),
+                                pos: Some(SourcePos {
+                                    line: field.line,
+                                    col: field.col,
+                                }),
                             });
                         }
                         _ => {
@@ -397,7 +308,10 @@ impl Generator {
                             return Err(SemanticError::TypeMismatch {
                                 lhs: lhs_ty.to_string(),
                                 rhs: rhs_ty.to_string(),
-                                pos: Some((operator.line, operator.col)),
+                                pos: Some(SourcePos {
+                                    line: operator.line,
+                                    col: operator.col,
+                                }),
                             });
                         }
                     }
@@ -447,7 +361,10 @@ impl Generator {
                     return Err(SemanticError::TypeMismatch {
                         lhs: condition_type.to_string(),
                         rhs: "bool".to_string(),
-                        pos: Some(pos),
+                        pos: Some(SourcePos {
+                            line: pos.0,
+                            col: pos.1,
+                        }),
                     });
                 }
 
@@ -511,7 +428,10 @@ impl Generator {
                                     return Err(SemanticError::TypeMismatch {
                                         lhs: format!("Enum '{}'", enum_def.qualified_name),
                                         rhs: format!("Unknown Enum variant '{}'", field.name),
-                                        pos: Some((field.line, field.col)),
+                                        pos: Some(SourcePos {
+                                            line: field.line,
+                                            col: field.col,
+                                        }),
                                     });
                                 }
                             } else {
@@ -522,7 +442,10 @@ impl Generator {
                                         "Field access on Enum instance via variant '{}'",
                                         field.name
                                     ),
-                                    pos: Some((field.line, field.col)),
+                                    pos: Some(SourcePos {
+                                        line: field.line,
+                                        col: field.col,
+                                    }),
                                 });
                             }
                         } else {
@@ -540,7 +463,10 @@ impl Generator {
                                         "Static field access on Struct type '{}' (not supported)",
                                         field.name
                                     ),
-                                    pos: Some((field.line, field.col)),
+                                    pos: Some(SourcePos {
+                                        line: field.line,
+                                        col: field.col,
+                                    }),
                                 });
                             } else {
                                 // Instance field access: generate code to load the requested field.
@@ -562,7 +488,10 @@ impl Generator {
                                             object_name, struct_def.qualified_name
                                         ),
                                         rhs: format!("Unknown field '.{}' on struct", field.name),
-                                        pos: Some((field.line, field.col)),
+                                        pos: Some(SourcePos {
+                                            line: field.line,
+                                            col: field.col,
+                                        }),
                                     });
                                 }
                             }
@@ -575,7 +504,10 @@ impl Generator {
                         return Err(SemanticError::TypeMismatch {
                             lhs: object_ty.to_string(),
                             rhs: "Struct or Enum type/instance".to_string(),
-                            pos: Some((field.line, field.col)),
+                            pos: Some(SourcePos {
+                                line: field.line,
+                                col: field.col,
+                            }),
                         });
                     }
                 }
@@ -656,7 +588,7 @@ impl Generator {
 
     fn generate_function_call(&mut self, call: FunctionCall) -> SaResult<Type> {
         let call_name = call.name.name.clone();
-    
+
         if let Some(symbol_id) = self.symbol_table.find_symbol_in_scope(&call_name) {
             let symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
             let (_, type_id) = match symbol.kind {
@@ -664,29 +596,35 @@ impl Generator {
                 _ => {
                     return Err(SemanticError::FunctionNotFound {
                         name: call_name.clone(),
-                        pos: Some((call.name.line, call.name.col)),
+                        pos: Some(SourcePos {
+                            line: call.name.line,
+                            col: call.name.col,
+                        }),
                     });
                 }
             };
-    
+
             let param_names: Vec<String> = match self.symbol_table.get_udt(type_id) {
                 UserDefinedType::Function(function) => function.arg_names.clone(),
                 _ => vec![],
             };
-    
+
             // Determine if this call uses named args, positional args, or a mix.
             let has_named = call.arguments.iter().any(|(n, _)| n.is_some());
             let has_positional = call.arguments.iter().any(|(n, _)| n.is_none());
-    
+
             if has_named && has_positional {
                 return Err(SemanticError::MixedNamedAndPositional {
                     name: call_name.clone(),
-                    pos: Some((call.name.line, call.name.col)),
+                    pos: Some(SourcePos {
+                        line: call.name.line,
+                        col: call.name.col,
+                    }),
                 });
             }
-    
+
             let mut ordered_exprs: Vec<Expression> = Vec::with_capacity(param_names.len());
-    
+
             if has_named {
                 // All arguments are named: build a name->expr map and order by parameters.
                 let mut arg_map = std::collections::HashMap::new();
@@ -695,7 +633,7 @@ impl Generator {
                         arg_map.insert(name.name, expr);
                     }
                 }
-    
+
                 // Ensure every parameter has a named argument.
                 for param_name in &param_names {
                     if let Some(expr) = arg_map.remove(param_name) {
@@ -704,18 +642,24 @@ impl Generator {
                         return Err(SemanticError::TypeMismatch {
                             lhs: param_name.clone(),
                             rhs: "missing argument".to_string(),
-                            pos: Some((call.name.line, call.name.col)),
+                            pos: Some(SourcePos {
+                                line: call.name.line,
+                                col: call.name.col,
+                            }),
                         });
                     }
                 }
-    
+
                 // If there are leftover named args that don't match parameters, that's an error.
                 if !arg_map.is_empty() {
                     let unexpected = arg_map.keys().next().unwrap().clone();
                     return Err(SemanticError::TypeMismatch {
                         lhs: unexpected,
                         rhs: "unexpected argument".to_string(),
-                        pos: Some((call.name.line, call.name.col)),
+                        pos: Some(SourcePos {
+                            line: call.name.line,
+                            col: call.name.col,
+                        }),
                     });
                 }
             } else {
@@ -724,21 +668,24 @@ impl Generator {
                     return Err(SemanticError::TypeMismatch {
                         lhs: format!("{} args expected", param_names.len()),
                         rhs: format!("{} provided", call.arguments.len()),
-                        pos: Some((call.name.line, call.name.col)),
+                        pos: Some(SourcePos {
+                            line: call.name.line,
+                            col: call.name.col,
+                        }),
                     });
                 }
-    
+
                 for (_name_opt, expr) in call.arguments.into_iter() {
                     ordered_exprs.push(expr);
                 }
             }
-    
+
             for expr in ordered_exprs {
                 self.generate_expression(expr)?;
             }
-    
+
             self.builder.call(symbol_id);
-    
+
             let ty = self.symbol_table.get_udt(type_id);
             match ty {
                 UserDefinedType::Function(function) => Ok(function.return_type.clone()),
@@ -747,7 +694,10 @@ impl Generator {
         } else {
             Err(SemanticError::FunctionNotFound {
                 name: call_name,
-                pos: Some((call.name.line, call.name.col)),
+                pos: Some(SourcePos {
+                    line: call.name.line,
+                    col: call.name.col,
+                }),
             })
         }
     }
@@ -770,7 +720,10 @@ impl Generator {
                 } else {
                     Err(SemanticError::TypeNotFound {
                         name: identifier.name.clone(),
-                        pos: Some((identifier.line, identifier.col)),
+                        pos: Some(SourcePos {
+                            line: identifier.line,
+                            col: identifier.col,
+                        }),
                     })
                 }
             }

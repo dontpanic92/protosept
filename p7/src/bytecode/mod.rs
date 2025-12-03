@@ -1,7 +1,7 @@
 pub mod builder;
 pub mod codegen;
 
-use binrw::{binrw, BinRead};
+use binrw::{BinRead, binrw};
 
 use crate::semantic::{Symbol, SymbolKind};
 
@@ -124,12 +124,8 @@ pub struct Module {
 
 impl Module {
     pub fn get_function(&self, name: &str) -> Option<&Symbol> {
-        self.symbols.iter().find(|sym| {
-            sym.name == name
-                && matches!(
-                    sym.kind,
-                    SymbolKind::Function { .. }
-                )
-        })
+        self.symbols
+            .iter()
+            .find(|sym| sym.name == name && matches!(sym.kind, SymbolKind::Function { .. }))
     }
 }

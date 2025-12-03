@@ -148,7 +148,9 @@ impl ByteCodeBuilder {
     pub fn patch_jump_address(&mut self, instruction_address: u32, jump_target_address: u32) {
         let current_pos = self.writer.position();
         self.writer.set_position(instruction_address as u64 + 1);
-        self.writer.write_all(&jump_target_address.to_le_bytes()).unwrap();
+        self.writer
+            .write_all(&jump_target_address.to_le_bytes())
+            .unwrap();
         self.writer.set_position(current_pos);
     }
 

@@ -1,10 +1,9 @@
-use std::{error::Error, fmt::Display};
-
-use crate::lexer::{Token, TokenType};
 use crate::ast::{
-    Identifier, Type, Argument, FunctionCall, FunctionDeclaration, StructField, StructMethod,
-    EnumValue, StatementBlock, Expression, StructInitiation, Pattern, NamedPattern, Statement,
+    Argument, EnumValue, Expression, FunctionCall, FunctionDeclaration, Identifier, NamedPattern,
+    Pattern, Statement, StatementBlock, StructField, StructInitiation, StructMethod, Type,
 };
+use crate::errors::{ParseError, SourcePos};
+use crate::lexer::{Token, TokenType};
 
 const UNARY_OPERATIONS: &[TokenType] = &[
     TokenType::Not,
@@ -29,23 +28,7 @@ const BINARY_OPTERATORS: &[TokenType] = &[
     TokenType::LessThanOrEqual,
 ];
 
-
-#[derive(Debug, PartialEq)]
-pub enum ParserError {
-    UnexpectedToken(Token),
-    ExpectedToken(TokenType, Token),
-    UnexpectedEof,
-}
-
-impl Display for ParserError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl Error for ParserError {}
-
-type ParseResult<T> = Result<T, ParserError>;
+type ParseResult<T> = Result<T, ParseError>;
 pub struct Parser {
     tokens: Vec<Token>,
     position: usize,
@@ -58,8 +41,8 @@ macro_rules! match_token {
                 token_type: $pattern,
                 ..
             }) $(if $guard)? => $body,)*
-            Some(t) => Err(ParserError::UnexpectedToken(t.clone())),
-            _ => Err(ParserError::UnexpectedEof),
+            Some(t) => Err(ParseError::UnexpectedToken { found: format!("{:?}", t.token_type), pos: Some(SourcePos { line: t.line, col: t.col }) }),
+            _ => Err(ParseError::UnexpectedEof { pos: None }),
         }
     };
 }
@@ -109,8 +92,20 @@ impl Parser {
                 self.consume().unwrap();
                 Ok(())
             }
-            Some(t) => Err(ParserError::ExpectedToken(token_type, t.clone())),
-            _ => Err(ParserError::UnexpectedEof),
+            Some(t) => Err(ParseError::ExpectedToken {
+                expected: format!("{:?}", token_type),
+                found: format!("{:?}", t.token_type),
+                pos: Some(SourcePos {
+                    line: t.line,
+                    col: t.col,
+                }),
+            }),
+            _ => Err(ParseError::UnexpectedEof {
+                pos: self.peek_previous().map(|t| SourcePos {
+                    line: t.line,
+                    col: t.col,
+                }),
+            }),
         }
     }
 
@@ -126,11 +121,20 @@ impl Parser {
                 line: *line,
                 col: *col,
             }),
-            Some(t) => Err(ParserError::ExpectedToken(
-                TokenType::Identifier("".to_string()),
-                t.clone(),
-            )),
-            _ => Err(ParserError::UnexpectedEof),
+            Some(t) => Err(ParseError::ExpectedToken {
+                expected: format!("{:?}", TokenType::Identifier("".to_string())),
+                found: format!("{:?}", t.token_type),
+                pos: Some(SourcePos {
+                    line: t.line,
+                    col: t.col,
+                }),
+            }),
+            _ => Err(ParseError::UnexpectedEof {
+                pos: self.peek_previous().map(|t| SourcePos {
+                    line: t.line,
+                    col: t.col,
+                }),
+            }),
         }
     }
 
@@ -152,7 +156,7 @@ impl Parser {
                 self.consume();
                 break;
             }
-    
+
             // Check for named argument: identifier '=' expr
             let arg = if self.peek_match(TokenType::Identifier("".to_string())) {
                 let ident = self.parse_identifier()?;
@@ -169,7 +173,7 @@ impl Parser {
             arguments.push(arg);
             let _ = self.consume_match(TokenType::Comma);
         }
-    
+
         Ok(Expression::FunctionCall(FunctionCall {
             name: identifier,
             arguments,
@@ -268,10 +272,23 @@ impl Parser {
                 TokenType::If => {
                     return self.parse_if_expression();
                 }
-                _ => return Err(ParserError::UnexpectedToken(token.clone())),
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        found: format!("{:?}", token.token_type),
+                        pos: Some(SourcePos {
+                            line: token.line,
+                            col: token.col,
+                        }),
+                    });
+                }
             }
         } else {
-            return Err(ParserError::UnexpectedEof);
+            return Err(ParseError::UnexpectedEof {
+                pos: self.peek_previous().map(|t| SourcePos {
+                    line: t.line,
+                    col: t.col,
+                }),
+            });
         };
 
         self.parse_expression_suffix(expression)
@@ -282,14 +299,14 @@ impl Parser {
         identifier: Expression,
     ) -> ParseResult<Expression> {
         self.consume_match(TokenType::OpenParen)?;
-    
+
         let mut arguments = Vec::new();
         while let Some(token) = self.peek() {
             if token.token_type == TokenType::CloseParen {
                 self.consume();
                 break;
             }
-    
+
             // Check for named argument: identifier '=' expr
             let arg = if self.peek_match(TokenType::Identifier("".to_string())) {
                 let ident = self.parse_identifier()?;
@@ -304,13 +321,13 @@ impl Parser {
                 (None, self.parse_expression()?)
             };
             arguments.push(arg);
-    
+
             let comma = self.consume_match(TokenType::Comma);
             if !self.peek_match(TokenType::CloseParen) {
                 comma?;
             }
         }
-    
+
         match identifier.clone() {
             Expression::Identifier(identifier) => Ok(Expression::FunctionCall(FunctionCall {
                 name: identifier,
@@ -375,8 +392,24 @@ impl Parser {
         // consume the 'if' token and capture its position for better error reporting
         let if_token = match self.consume() {
             Some(t) if t.token_type == TokenType::If => t.clone(),
-            Some(t) => return Err(ParserError::ExpectedToken(TokenType::If, t.clone())),
-            None => return Err(ParserError::UnexpectedEof),
+            Some(t) => {
+                return Err(ParseError::ExpectedToken {
+                    expected: format!("{:?}", TokenType::If),
+                    found: format!("{:?}", t.token_type),
+                    pos: Some(SourcePos {
+                        line: t.line,
+                        col: t.col,
+                    }),
+                });
+            }
+            None => {
+                return Err(ParseError::UnexpectedEof {
+                    pos: self.peek_previous().map(|t| SourcePos {
+                        line: t.line,
+                        col: t.col,
+                    }),
+                });
+            }
         };
         let if_pos = (if_token.line, if_token.col);
 
@@ -433,10 +466,21 @@ impl Parser {
                     let pattern = self.parse_pattern_suffix(pattern)?;
                     Ok(pattern)
                 }
-                _ => Err(ParserError::UnexpectedToken(token.clone())),
+                _ => Err(ParseError::UnexpectedToken {
+                    found: format!("{:?}", token.token_type),
+                    pos: Some(SourcePos {
+                        line: token.line,
+                        col: token.col,
+                    }),
+                }),
             }
         } else {
-            Err(ParserError::UnexpectedEof)
+            Err(ParseError::UnexpectedEof {
+                pos: self.peek_previous().map(|t| SourcePos {
+                    line: t.line,
+                    col: t.col,
+                }),
+            })
         }
     }
 
@@ -725,10 +769,21 @@ impl Parser {
                     let ident = self.parse_identifier()?;
                     Ok(Type::Identifier(ident))
                 }
-                _ => Err(ParserError::UnexpectedToken(token.clone())),
+                _ => Err(ParseError::UnexpectedToken {
+                    found: format!("{:?}", token.token_type),
+                    pos: Some(SourcePos {
+                        line: token.line,
+                        col: token.col,
+                    }),
+                }),
             }
         } else {
-            Err(ParserError::UnexpectedEof)
+            Err(ParseError::UnexpectedEof {
+                pos: self.peek_previous().map(|t| SourcePos {
+                    line: t.line,
+                    col: t.col,
+                }),
+            })
         }
     }
 
@@ -796,4 +851,3 @@ impl Parser {
         Ok(statements)
     }
 }
-

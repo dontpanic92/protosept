@@ -5,17 +5,8 @@ use binrw::BinRead;
 
 use crate::bytecode::{Instruction, Module};
 
-#[derive(Debug)]
-pub enum ContextError {
-    NoStackFrame,
-    EntryPointNotFound,
-    StackUnderflow,
-    UnexpectedStructRef,
-    FunctionNotFound,
-    VariableNotFound,
-}
-
-pub type ContextResult<T> = std::result::Result<T, ContextError>;
+use crate::errors::RuntimeError;
+pub type ContextResult<T> = std::result::Result<T, RuntimeError>;
 
 #[derive(Debug, Clone)]
 pub enum Data {
@@ -39,8 +30,8 @@ impl From<f64> for Data {
 
 macro_rules! arithmetic_op {
     ($self: ident, $op:tt) => {
-        let b = $self.stack_frame_mut()?.stack.pop().ok_or(ContextError::StackUnderflow)?;
-        let a = $self.stack_frame_mut()?.stack.pop().ok_or(ContextError::StackUnderflow)?;
+        let b = $self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+        let a = $self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
         match (a, b) {
             (Data::Int(a), Data::Int(b)) => {
                 $self.stack_frame_mut()?.stack.push(Data::Int(a $op b));
@@ -56,16 +47,16 @@ macro_rules! arithmetic_op {
             }
             (Data::StructRef(_), _) | (_, Data::StructRef(_)) => {
                 // Arithmetic on struct references is invalid.
-                return Err(ContextError::UnexpectedStructRef);
+                return Err(RuntimeError::UnexpectedStructRef);
             }
         }
     };
 }
- 
+
 macro_rules! comparison_op {
     ($self: ident, $op:tt) => {
-        let b = $self.stack_frame_mut()?.stack.pop().ok_or(ContextError::StackUnderflow)?;
-        let a = $self.stack_frame_mut()?.stack.pop().ok_or(ContextError::StackUnderflow)?;
+        let b = $self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+        let a = $self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
         match (a, b) {
             (Data::Int(a), Data::Int(b)) => {
                 $self.stack_frame_mut()?.stack.push(Data::Int((a $op b) as i32));
@@ -81,7 +72,7 @@ macro_rules! comparison_op {
             }
             (Data::StructRef(_), _) | (_, Data::StructRef(_)) => {
                 // Comparison with struct refs not supported
-                return Err(ContextError::UnexpectedStructRef);
+                return Err(RuntimeError::UnexpectedStructRef);
             }
         }
     };
@@ -148,7 +139,7 @@ impl Context {
 
     pub fn resume(&mut self) -> ContextResult<()> {
         if self.stack_frame()?.pc == std::usize::MAX {
-            return Err(ContextError::EntryPointNotFound);
+            return Err(RuntimeError::EntryPointNotFound);
         }
 
         while self.stack_frame()?.pc < self.modules[0].instructions.len() {
@@ -165,7 +156,7 @@ impl Context {
                         let local = self.stack_frame_mut()?.locals[idx as usize].clone();
                         self.stack_frame_mut()?.stack.push(local);
                     } else {
-                        return Err(ContextError::VariableNotFound);
+                        return Err(RuntimeError::VariableNotFound);
                     }
                 }
                 Instruction::Stvar(idx) => {
@@ -177,7 +168,7 @@ impl Context {
                         }
                         self.stack_frame_mut()?.locals[idx as usize] = data;
                     } else {
-                        return Err(ContextError::StackUnderflow);
+                        return Err(RuntimeError::StackUnderflow);
                     }
                 }
                 Instruction::Ldpar(param_id) => {
@@ -185,7 +176,7 @@ impl Context {
                         let param = self.stack_frame_mut()?.params[param_id as usize].clone();
                         self.stack_frame_mut()?.stack.push(param);
                     } else {
-                        return Err(ContextError::VariableNotFound);
+                        return Err(RuntimeError::VariableNotFound);
                     }
                 }
                 Instruction::Add => {
@@ -209,7 +200,7 @@ impl Context {
                             Data::Int(i) => self.stack_frame_mut()?.stack.push(Data::Int(-i)),
                             Data::Float(f) => self.stack_frame_mut()?.stack.push(Data::Float(-f)),
                             Data::StructRef(_) => {
-                                return Err(ContextError::VariableNotFound);
+                                return Err(RuntimeError::VariableNotFound);
                             }
                         }
                     } else {
@@ -254,35 +245,35 @@ impl Context {
                         let function = self.modules[0]
                             .symbols
                             .get(symbol_id as usize)
-                            .ok_or(ContextError::FunctionNotFound)?;
- 
+                            .ok_or(RuntimeError::FunctionNotFound)?;
+
                         let address = function
                             .get_function_address()
-                            .ok_or(ContextError::FunctionNotFound)?;
- 
+                            .ok_or(RuntimeError::FunctionNotFound)?;
+
                         let udt = function
                             .get_type_id()
                             .and_then(|function_type_id| {
                                 self.modules[0].types.get(function_type_id as usize)
                             })
-                            .ok_or(ContextError::FunctionNotFound)?;
- 
+                            .ok_or(RuntimeError::FunctionNotFound)?;
+
                         let function_type = match udt {
                             crate::semantic::UserDefinedType::Function(function_type) => {
                                 function_type
                             }
-                            _ => return Err(ContextError::FunctionNotFound),
+                            _ => return Err(RuntimeError::FunctionNotFound),
                         };
- 
+
                         let args_len = function_type.args.len();
                         (address, args_len)
                     };
- 
+
                     let mut new_frame = StackFrame::new();
                     let stack = &mut self.stack_frame_mut()?.stack;
                     new_frame.params = stack.split_off(stack.len() - args_len);
                     new_frame.pc = address as usize;
- 
+
                     self.stack.push(new_frame);
                 }
                 Instruction::Ldfield(field_idx) => {
@@ -292,21 +283,21 @@ impl Context {
                             Data::StructRef(ref_id) => {
                                 let ref_usize = ref_id as usize;
                                 if ref_usize >= self.heap.len() {
-                                    return Err(ContextError::VariableNotFound);
+                                    return Err(RuntimeError::VariableNotFound);
                                 }
                                 let struct_fields = &self.heap[ref_usize].fields;
                                 if (field_idx as usize) >= struct_fields.len() {
-                                    return Err(ContextError::VariableNotFound);
+                                    return Err(RuntimeError::VariableNotFound);
                                 }
                                 let field_value = struct_fields[field_idx as usize].clone();
                                 self.stack_frame_mut()?.stack.push(field_value);
                             }
                             _ => {
-                                return Err(ContextError::VariableNotFound);
+                                return Err(RuntimeError::VariableNotFound);
                             }
                         }
                     } else {
-                        return Err(ContextError::StackUnderflow);
+                        return Err(RuntimeError::StackUnderflow);
                     }
                 }
                 Instruction::Stfield(field_idx) => {
@@ -315,22 +306,22 @@ impl Context {
                     let field_value_opt = self.stack_frame_mut()?.stack.pop();
                     let struct_ref_opt = self.stack_frame_mut()?.stack.pop();
                     if field_value_opt.is_none() || struct_ref_opt.is_none() {
-                        return Err(ContextError::StackUnderflow);
+                        return Err(RuntimeError::StackUnderflow);
                     }
                     let field_value = field_value_opt.unwrap();
                     match struct_ref_opt.unwrap() {
                         Data::StructRef(ref_id) => {
                             let ref_usize = ref_id as usize;
                             if ref_usize >= self.heap.len() {
-                                return Err(ContextError::VariableNotFound);
+                                return Err(RuntimeError::VariableNotFound);
                             }
                             if (field_idx as usize) >= self.heap[ref_usize].fields.len() {
-                                return Err(ContextError::VariableNotFound);
+                                return Err(RuntimeError::VariableNotFound);
                             }
                             self.heap[ref_usize].fields[field_idx as usize] = field_value;
                         }
                         _ => {
-                            return Err(ContextError::VariableNotFound);
+                            return Err(RuntimeError::VariableNotFound);
                         }
                     }
                 }
@@ -356,11 +347,11 @@ impl Context {
     }
 
     fn stack_frame(&self) -> ContextResult<&StackFrame> {
-        self.stack.last().ok_or(ContextError::NoStackFrame)
+        self.stack.last().ok_or(RuntimeError::NoStackFrame)
     }
 
     fn stack_frame_mut(&mut self) -> ContextResult<&mut StackFrame> {
-        self.stack.last_mut().ok_or(ContextError::NoStackFrame)
+        self.stack.last_mut().ok_or(RuntimeError::NoStackFrame)
     }
 
     fn binary_op_int<F>(&mut self, op: F) -> ContextResult<()>

@@ -1,13 +1,17 @@
-pub mod lexer;
 pub mod ast;
-pub mod parser;
 pub mod bytecode;
-pub mod semantic;
+pub mod errors;
 pub mod interpreter;
+pub mod lexer;
+pub mod parser;
+pub mod semantic;
 
-use std::error::Error;
+use crate::errors::Proto7Error;
 
-pub fn run_p7_code(contents: String, entrypoint: &str) -> Result<interpreter::context::Data, Box<dyn Error>> {
+pub fn run_p7_code(
+    contents: String,
+    entrypoint: &str,
+) -> Result<interpreter::context::Data, Proto7Error> {
     let mut lexer = lexer::Lexer::new(contents);
     let mut tokens = vec![];
 

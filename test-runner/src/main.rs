@@ -1,22 +1,16 @@
+use p7::{errors::Proto7Error, interpreter::context::Data as P7Value};
+use serde::Deserialize;
 use std::{fs, path::PathBuf};
 use toml::Value;
-use serde::Deserialize;
-use p7::interpreter::context::Data as P7Value;
 
 #[derive(Debug)]
 enum FailureReason {
     NotValidToml,
     InvalidTomlFormat(String),
     NoTestConfig,
-    ExecutionError(String),
-    TypeMismatch {
-        expected: String,
-        found: String,
-    },
-    ValueMismatch {
-        expected: String,
-        found: String,
-    },
+    ExecutionError(Proto7Error),
+    TypeMismatch { expected: String, found: String },
+    ValueMismatch { expected: String, found: String },
 }
 
 #[derive(Debug)]
@@ -43,29 +37,36 @@ fn run_test(file_path: &PathBuf) -> anyhow::Result<TestResult> {
     let first_comment_start = content.find("/*");
     let first_comment_end = content.find("*/");
 
-    let test_config: TestConfig = if let (Some(start), Some(end)) = (first_comment_start, first_comment_end) {
-        if end <= start {
-            return Ok(TestResult::Failure(FailureReason::NotValidToml));
-        }
-        let toml_content = &content[start + 2..end];
-        match toml::from_str::<Value>(toml_content) {
-            Ok(value) => {
-                match value.try_into() {
+    let test_config: TestConfig =
+        if let (Some(start), Some(end)) = (first_comment_start, first_comment_end) {
+            if end <= start {
+                return Ok(TestResult::Failure(FailureReason::NotValidToml));
+            }
+            let toml_content = &content[start + 2..end];
+            match toml::from_str::<Value>(toml_content) {
+                Ok(value) => match value.try_into() {
                     Ok(config) => config,
-                    Err(e) => return Ok(TestResult::Failure(FailureReason::InvalidTomlFormat(e.to_string()))),
+                    Err(e) => {
+                        return Ok(TestResult::Failure(FailureReason::InvalidTomlFormat(
+                            e.to_string(),
+                        )));
+                    }
+                },
+                Err(e) => {
+                    return Ok(TestResult::Failure(FailureReason::InvalidTomlFormat(
+                        e.to_string(),
+                    )));
                 }
             }
-            Err(e) => return Ok(TestResult::Failure(FailureReason::InvalidTomlFormat(e.to_string()))),
-        }
-    } else {
-        return Ok(TestResult::Failure(FailureReason::NoTestConfig));
-    };
+        } else {
+            return Ok(TestResult::Failure(FailureReason::NoTestConfig));
+        };
 
     // Execute the p7 code
     let entrypoint = &test_config.testcase.entrypoint;
     let p7_result = match p7::run_p7_code(content, entrypoint) {
         Ok(value) => value,
-        Err(e) => return Ok(TestResult::Failure(FailureReason::ExecutionError(e.to_string()))),
+        Err(e) => return Ok(TestResult::Failure(FailureReason::ExecutionError(e))),
     };
 
     // Compare results
@@ -95,7 +96,9 @@ fn run_test(file_path: &PathBuf) -> anyhow::Result<TestResult> {
             .map_or(false, |expected_val| actual_val == expected_val),
         P7Value::Float(actual_val) => expected_value_str
             .parse::<f64>()
-            .map_or(false, |expected_val| (actual_val - expected_val).abs() < 1e-9),
+            .map_or(false, |expected_val| {
+                (actual_val - expected_val).abs() < 1e-9
+            }),
         // P7Value::Bool(b) => ("bool".to_string(), b.to_string()),
         // P7Value::String(s) => ("string".to_string(), s),
         // P7Value::Void => ("void".to_string(), "void".to_string()),
@@ -138,22 +141,20 @@ fn main() -> std::io::Result<()> {
                 if file_name.ends_with(".p7") {
                     print!("Running test: {:?} ... ", path);
                     match run_test(&path) {
-                        Ok(result) => {
-                            match result {
-                                TestResult::Success => {
-                                    println!("OK");
-                                    passed_count += 1;
-                                }
-                                TestResult::Failure(reason) => {
-                                    println!("FAILED: {:?}", reason);
-                                    failed_count += 1;
-                                }
-                                TestResult::Error(e) => {
-                                    println!("ERROR: {}", e);
-                                    failed_count += 1;
-                                }
+                        Ok(result) => match result {
+                            TestResult::Success => {
+                                println!("OK");
+                                passed_count += 1;
                             }
-                        }
+                            TestResult::Failure(reason) => {
+                                println!("FAILED: {:?}", reason);
+                                failed_count += 1;
+                            }
+                            TestResult::Error(e) => {
+                                println!("ERROR: {}", e);
+                                failed_count += 1;
+                            }
+                        },
                         Err(err) => {
                             println!("ERROR: {:?}", err);
                             failed_count += 1;
@@ -164,8 +165,11 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    println!("
-Test results: {} passed, {} failed.", passed_count, failed_count);
+    println!(
+        "
+Test results: {} passed, {} failed.",
+        passed_count, failed_count
+    );
 
     Ok(())
 }

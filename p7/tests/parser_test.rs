@@ -12,7 +12,7 @@ fn test_parser_with_file() -> Result<(), Box<dyn Error>> {
 
     let mut lexer = p7::lexer::Lexer::new(contents);
     let mut tokens = vec![];
-    
+
     loop {
         let token = lexer.next_token();
         if token.token_type == p7::lexer::TokenType::EOF {
