@@ -3,7 +3,7 @@ use std::error::Error;
 use crate::{
     bytecode::builder::ByteCodeBuilder,
     lexer::TokenType,
-    parser::{Expression, FunctionCall, FunctionDeclaration, Statement, StructInitiation},
+    ast::{Expression, FunctionCall, FunctionDeclaration, Statement, StructInitiation, Type as ParsedType},
     semantic::{
         Enum, Function, LocalSymbolScope, PrimitiveType, Struct, Symbol, SymbolKind, SymbolTable,
         Type, UserDefinedType, Variable,
@@ -762,9 +762,9 @@ impl Generator {
         // }
     }
 
-    fn get_semantic_type(&self, parsed_type: &crate::parser::Type) -> SaResult<Type> {
+    fn get_semantic_type(&self, parsed_type: &ParsedType) -> SaResult<Type> {
         match parsed_type {
-            crate::parser::Type::Identifier(identifier) => {
+            ParsedType::Identifier(identifier) => {
                 if let Some(ty) = self.symbol_table.find_type_in_scope(&identifier.name) {
                     Ok(ty)
                 } else {
@@ -774,11 +774,11 @@ impl Generator {
                     })
                 }
             }
-            crate::parser::Type::Reference(r) => {
+            ParsedType::Reference(r) => {
                 let ty = self.get_semantic_type(r)?;
                 Ok(Type::Reference(Box::new(ty)))
             }
-            crate::parser::Type::Array(a) => {
+            ParsedType::Array(a) => {
                 let ty = self.get_semantic_type(a)?;
                 Ok(Type::Array(Box::new(ty)))
             }
