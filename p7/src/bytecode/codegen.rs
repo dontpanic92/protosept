@@ -314,6 +314,57 @@ impl Generator {
                 operator,
                 right,
             } => {
+                // Handle assignment specially: generate RHS first and then store into the LHS target
+                if operator.token_type == TokenType::Assignment {
+                    // Generate RHS value
+                    let rhs_ty = self.generate_expression(*right)?;
+    
+                    // Handle LHS without generating its value (we need the target)
+                    match *left {
+                        Expression::Identifier(identifier) => {
+                            // Prefer local variable, fallback to parameter
+                            if let Some(var_id) = self
+                                .local_scope
+                                .as_mut()
+                                .unwrap()
+                                .find_variable(&identifier.name)
+                            {
+                                // Store into local variable
+                                self.builder.stvar(var_id);
+                                return Ok(Type::Primitive(PrimitiveType::Unit));
+                            } else if let Some(param_id) = self
+                                .local_scope
+                                .as_mut()
+                                .unwrap()
+                                .find_param(&identifier.name)
+                            {
+                                // Store into parameter slot (no separate stpar instruction exists;
+                                // emit Stvar to simplify codegen — runtime layout may treat params differently)
+                                self.builder.stvar(param_id);
+                                return Ok(Type::Primitive(PrimitiveType::Unit));
+                            } else {
+                                return Err(SemanticError::VariableNotFound {
+                                    name: identifier.name,
+                                    pos: Some((identifier.line, identifier.col)),
+                                });
+                            }
+                        }
+                        Expression::FieldAccess { object, field } => {
+                            // Field assignment not implemented yet (struct instance field mutation).
+                            return Err(SemanticError::TypeMismatch {
+                                lhs: object.get_name(),
+                                rhs: format!("Field assignment '{}'", field.name),
+                                pos: Some((field.line, field.col)),
+                            });
+                        }
+                        _ => {
+                            // Other lvalues (like indexing, deref) not supported yet.
+                            unimplemented!("assignment to this lvalue is not implemented");
+                        }
+                    }
+                }
+    
+                // Non-assignment binary operations follow the previous ordering: evaluate LHS then RHS.
                 let lhs_ty = self.generate_expression(*left)?;
                 let rhs_ty = self.generate_expression(*right)?;
                 let result_ty = if lhs_ty == rhs_ty {
@@ -338,7 +389,7 @@ impl Generator {
                         }
                     }
                 };
-
+    
                 let is_comparison = matches!(
                     operator.token_type,
                     TokenType::Equals
@@ -348,13 +399,12 @@ impl Generator {
                         | TokenType::LessThan
                         | TokenType::LessThanOrEqual
                 );
-
+    
                 match operator.token_type {
                     TokenType::Plus => self.builder.addi(),
                     TokenType::Minus => self.builder.subi(),
                     TokenType::Multiply => self.builder.muli(),
                     TokenType::Divide => self.builder.divi(),
-                    TokenType::Assignment => unimplemented!(),
                     TokenType::And => self.builder.and(),
                     TokenType::Or => self.builder.or(),
                     TokenType::Equals => self.builder.eq(),
