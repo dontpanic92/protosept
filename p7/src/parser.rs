@@ -39,7 +39,7 @@ pub struct Argument {
 #[derive(Debug, PartialEq, Clone)]
 pub struct FunctionCall {
     pub name: Identifier,
-    pub arguments: Vec<Expression>,
+    pub arguments: Vec<(Option<Identifier>, Expression)>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -304,11 +304,24 @@ impl Parser {
                 self.consume();
                 break;
             }
-
-            arguments.push(self.parse_expression()?);
+    
+            // Check for named argument: identifier '=' expr
+            let arg = if self.peek_match(TokenType::Identifier("".to_string())) {
+                let ident = self.parse_identifier()?;
+                if self.consume_match(TokenType::Assignment).is_ok() {
+                    let expr = self.parse_expression()?;
+                    (Some(ident), expr)
+                } else {
+                    // Not a named argument, treat as positional
+                    (None, Expression::Identifier(ident))
+                }
+            } else {
+                (None, self.parse_expression()?)
+            };
+            arguments.push(arg);
             let _ = self.consume_match(TokenType::Comma);
         }
-
+    
         Ok(Expression::FunctionCall(FunctionCall {
             name: identifier,
             arguments,
@@ -421,22 +434,35 @@ impl Parser {
         identifier: Expression,
     ) -> ParseResult<Expression> {
         self.consume_match(TokenType::OpenParen)?;
-
+    
         let mut arguments = Vec::new();
         while let Some(token) = self.peek() {
             if token.token_type == TokenType::CloseParen {
                 self.consume();
                 break;
             }
-
-            arguments.push(self.parse_expression()?);
-
+    
+            // Check for named argument: identifier '=' expr
+            let arg = if self.peek_match(TokenType::Identifier("".to_string())) {
+                let ident = self.parse_identifier()?;
+                if self.consume_match(TokenType::Assignment).is_ok() {
+                    let expr = self.parse_expression()?;
+                    (Some(ident), expr)
+                } else {
+                    // Not a named argument, treat as positional
+                    (None, Expression::Identifier(ident))
+                }
+            } else {
+                (None, self.parse_expression()?)
+            };
+            arguments.push(arg);
+    
             let comma = self.consume_match(TokenType::Comma);
             if !self.peek_match(TokenType::CloseParen) {
                 comma?;
             }
         }
-
+    
         match identifier.clone() {
             Expression::Identifier(identifier) => Ok(Expression::FunctionCall(FunctionCall {
                 name: identifier,

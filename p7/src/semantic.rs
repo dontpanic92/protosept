@@ -58,6 +58,7 @@ impl Symbol {
 pub struct Function {
     pub qualified_name: String,
     pub args: Vec<Type>,
+    pub arg_names: Vec<String>,
     pub return_type: Type,
 }
 

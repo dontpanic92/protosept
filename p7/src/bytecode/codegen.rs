@@ -31,6 +31,11 @@ pub enum SemanticError {
         rhs: String,
         pos: Option<(usize, usize)>,
     },
+    /// Error raised when a call mixes positional and named arguments.
+    MixedNamedAndPositional {
+        name: String,
+        pos: Option<(usize, usize)>,
+    },
     VariableOutsideFunction {
         name: String,
         pos: Option<(usize, usize)>,
@@ -84,6 +89,17 @@ impl std::fmt::Display for SemanticError {
                     )
                 } else {
                     write!(f, "Type mismatch: {} != {}", lhs, rhs)
+                }
+            }
+            SemanticError::MixedNamedAndPositional { name, pos } => {
+                if let Some((line, col)) = pos {
+                    write!(
+                        f,
+                        "Mixed positional and named arguments in call: {} at line: {} column: {}",
+                        name, line, col
+                    )
+                } else {
+                    write!(f, "Mixed positional and named arguments in call: {}", name)
                 }
             }
             SemanticError::VariableOutsideFunction { name, pos } => {
@@ -195,12 +211,9 @@ impl Generator {
                 };
                 let type_id = self.symbol_table.add_udt(UserDefinedType::Enum(ty));
 
-                let symbol = Symbol::new(
-                    name.name.clone(),
-                    qualified_name,
-                    SymbolKind::Enum(type_id),
-                );
-                
+                let symbol =
+                    Symbol::new(name.name.clone(), qualified_name, SymbolKind::Enum(type_id));
+
                 let next_symbol_id = self.symbol_table.symbols.len() as u32;
                 let current_symbol = self.symbol_table.get_current_symbol_mut().unwrap();
                 current_symbol.children.insert(name.name, next_symbol_id);
@@ -318,7 +331,7 @@ impl Generator {
                 if operator.token_type == TokenType::Assignment {
                     // Generate RHS value
                     let rhs_ty = self.generate_expression(*right)?;
-    
+
                     // Handle LHS without generating its value (we need the target)
                     match *left {
                         Expression::Identifier(identifier) => {
@@ -363,7 +376,7 @@ impl Generator {
                         }
                     }
                 }
-    
+
                 // Non-assignment binary operations follow the previous ordering: evaluate LHS then RHS.
                 let lhs_ty = self.generate_expression(*left)?;
                 let rhs_ty = self.generate_expression(*right)?;
@@ -389,7 +402,7 @@ impl Generator {
                         }
                     }
                 };
-    
+
                 let is_comparison = matches!(
                     operator.token_type,
                     TokenType::Equals
@@ -399,7 +412,7 @@ impl Generator {
                         | TokenType::LessThan
                         | TokenType::LessThanOrEqual
                 );
-    
+
                 match operator.token_type {
                     TokenType::Plus => self.builder.addi(),
                     TokenType::Minus => self.builder.subi(),
@@ -467,17 +480,18 @@ impl Generator {
             Expression::FunctionCall(call) => self.generate_function_call(call),
             Expression::FieldAccess { object, field } => {
                 let object_name = object.get_name();
-                let (object_ty, is_static_access) = if let Expression::Identifier(ref identifier) = *object {
-                    if let Some(ty) = self.symbol_table.find_type_in_scope(&identifier.name) {
-                        (ty, true) // It's a type (static) access
+                let (object_ty, is_static_access) =
+                    if let Expression::Identifier(ref identifier) = *object {
+                        if let Some(ty) = self.symbol_table.find_type_in_scope(&identifier.name) {
+                            (ty, true) // It's a type (static) access
+                        } else {
+                            // Not a type, so it must be a variable/expression
+                            (self.generate_expression(*object)?, false)
+                        }
                     } else {
-                        // Not a type, so it must be a variable/expression
+                        // Not an identifier, so definitely an expression
                         (self.generate_expression(*object)?, false)
-                    }
-                } else {
-                    // Not an identifier, so definitely an expression
-                    (self.generate_expression(*object)?, false)
-                };
+                    };
 
                 match object_ty {
                     Type::Enum(type_id) => {
@@ -489,7 +503,8 @@ impl Generator {
                                         .values
                                         .iter()
                                         .position(|v| v == &field.name)
-                                        .unwrap() as i32;
+                                        .unwrap()
+                                        as i32;
                                     self.builder.ldi(variant_index); // Load the enum variant's index
                                     Ok(object_ty) // The type of the field access is the enum itself
                                 } else {
@@ -503,7 +518,10 @@ impl Generator {
                                 // Field access on an enum instance (e.g., my_enum_var.Variant) is not supported for simple enums.
                                 return Err(SemanticError::TypeMismatch {
                                     lhs: format!("Enum instance '{}'", enum_def.qualified_name),
-                                    rhs: format!("Field access on Enum instance via variant '{}'", field.name),
+                                    rhs: format!(
+                                        "Field access on Enum instance via variant '{}'",
+                                        field.name
+                                    ),
                                     pos: Some((field.line, field.col)),
                                 });
                             }
@@ -518,7 +536,10 @@ impl Generator {
                                 // Static field access on Structs not yet supported.
                                 return Err(SemanticError::TypeMismatch {
                                     lhs: format!("Struct type '{}'", struct_def.qualified_name),
-                                    rhs: format!("Static field access on Struct type '{}' (not supported)", field.name),
+                                    rhs: format!(
+                                        "Static field access on Struct type '{}' (not supported)",
+                                        field.name
+                                    ),
                                     pos: Some((field.line, field.col)),
                                 });
                             } else {
@@ -536,7 +557,10 @@ impl Generator {
                                     return Ok(ftype.clone());
                                 } else {
                                     return Err(SemanticError::TypeMismatch {
-                                        lhs: format!("Struct instance '{}: {}'", object_name, struct_def.qualified_name),
+                                        lhs: format!(
+                                            "Struct instance '{}: {}'",
+                                            object_name, struct_def.qualified_name
+                                        ),
                                         rhs: format!("Unknown field '.{}' on struct", field.name),
                                         pos: Some((field.line, field.col)),
                                     });
@@ -602,6 +626,7 @@ impl Generator {
         let ty = Function {
             qualified_name: qualified_name.clone(),
             args: args.iter().map(|var| var.ty.clone()).collect(),
+            arg_names: args.iter().map(|var| var.name.clone()).collect(),
             return_type,
         };
 
@@ -630,12 +655,8 @@ impl Generator {
     }
 
     fn generate_function_call(&mut self, call: FunctionCall) -> SaResult<Type> {
-        for arg in call.arguments {
-            self.generate_expression(arg)?;
-        }
-
         let call_name = call.name.name.clone();
-
+    
         if let Some(symbol_id) = self.symbol_table.find_symbol_in_scope(&call_name) {
             let symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
             let (_, type_id) = match symbol.kind {
@@ -647,9 +668,77 @@ impl Generator {
                     });
                 }
             };
-
+    
+            let param_names: Vec<String> = match self.symbol_table.get_udt(type_id) {
+                UserDefinedType::Function(function) => function.arg_names.clone(),
+                _ => vec![],
+            };
+    
+            // Determine if this call uses named args, positional args, or a mix.
+            let has_named = call.arguments.iter().any(|(n, _)| n.is_some());
+            let has_positional = call.arguments.iter().any(|(n, _)| n.is_none());
+    
+            if has_named && has_positional {
+                return Err(SemanticError::MixedNamedAndPositional {
+                    name: call_name.clone(),
+                    pos: Some((call.name.line, call.name.col)),
+                });
+            }
+    
+            let mut ordered_exprs: Vec<Expression> = Vec::with_capacity(param_names.len());
+    
+            if has_named {
+                // All arguments are named: build a name->expr map and order by parameters.
+                let mut arg_map = std::collections::HashMap::new();
+                for (name_opt, expr) in call.arguments.into_iter() {
+                    if let Some(name) = name_opt {
+                        arg_map.insert(name.name, expr);
+                    }
+                }
+    
+                // Ensure every parameter has a named argument.
+                for param_name in &param_names {
+                    if let Some(expr) = arg_map.remove(param_name) {
+                        ordered_exprs.push(expr);
+                    } else {
+                        return Err(SemanticError::TypeMismatch {
+                            lhs: param_name.clone(),
+                            rhs: "missing argument".to_string(),
+                            pos: Some((call.name.line, call.name.col)),
+                        });
+                    }
+                }
+    
+                // If there are leftover named args that don't match parameters, that's an error.
+                if !arg_map.is_empty() {
+                    let unexpected = arg_map.keys().next().unwrap().clone();
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: unexpected,
+                        rhs: "unexpected argument".to_string(),
+                        pos: Some((call.name.line, call.name.col)),
+                    });
+                }
+            } else {
+                // Positional arguments only: argument count must match parameter count.
+                if call.arguments.len() != param_names.len() {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: format!("{} args expected", param_names.len()),
+                        rhs: format!("{} provided", call.arguments.len()),
+                        pos: Some((call.name.line, call.name.col)),
+                    });
+                }
+    
+                for (_name_opt, expr) in call.arguments.into_iter() {
+                    ordered_exprs.push(expr);
+                }
+            }
+    
+            for expr in ordered_exprs {
+                self.generate_expression(expr)?;
+            }
+    
             self.builder.call(symbol_id);
-
+    
             let ty = self.symbol_table.get_udt(type_id);
             match ty {
                 UserDefinedType::Function(function) => Ok(function.return_type.clone()),
