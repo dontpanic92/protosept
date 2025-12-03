@@ -29,9 +29,10 @@ impl Type {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Argument {
+pub struct Parameter {
     pub name: Identifier,
     pub arg_type: Type,
+    pub default_value: Option<Expression>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -44,7 +45,7 @@ pub struct FunctionCall {
 pub struct FunctionDeclaration {
     pub name: Identifier,
     pub effects: Vec<Identifier>,
-    pub parameters: Vec<Argument>,
+    pub parameters: Vec<Parameter>,
     pub return_type: Option<Type>,
     pub body: StatementBlock,
 }

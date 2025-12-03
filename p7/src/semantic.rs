@@ -57,8 +57,9 @@ impl Symbol {
 #[derive(Debug, Clone)]
 pub struct Function {
     pub qualified_name: String,
-    pub args: Vec<Type>,
-    pub arg_names: Vec<String>,
+    pub params: Vec<Type>,
+    pub param_names: Vec<String>,
+    pub param_defaults: Vec<Option<crate::ast::Expression>>,
     pub return_type: Type,
 }
 

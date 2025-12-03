@@ -536,7 +536,7 @@ impl Generator {
         let qualified_name = self
             .symbol_table
             .get_new_symbol_qualified_name(declaration.name.name.clone());
-        let args = declaration
+        let params = declaration
             .parameters
             .iter()
             .map(|arg| {
@@ -549,6 +549,13 @@ impl Generator {
             })
             .collect::<SaResult<Vec<Variable>>>()?;
 
+        // Collect default expressions (AST expressions) for each parameter
+        let param_defaults: Vec<Option<Expression>> = declaration
+            .parameters
+            .iter()
+            .map(|param| param.default_value.clone())
+            .collect();
+
         let return_type = if let Some(ret) = declaration.return_type {
             self.get_semantic_type(&ret)?
         } else {
@@ -557,8 +564,9 @@ impl Generator {
 
         let ty = Function {
             qualified_name: qualified_name.clone(),
-            args: args.iter().map(|var| var.ty.clone()).collect(),
-            arg_names: args.iter().map(|var| var.name.clone()).collect(),
+            params: params.iter().map(|var| var.ty.clone()).collect(),
+            param_names: params.iter().map(|var| var.name.clone()).collect(),
+            param_defaults: param_defaults.clone(),
             return_type,
         };
 
@@ -574,7 +582,7 @@ impl Generator {
 
         self.symbol_table.push_symbol(symbol);
 
-        self.local_scope = Some(LocalSymbolScope::new(args.clone()));
+        self.local_scope = Some(LocalSymbolScope::new(params.clone()));
         let ty = self.generate_block(declaration.body, vec![])?;
         if ty != Type::Primitive(PrimitiveType::Unit) {
             self.builder.ret();
@@ -604,10 +612,21 @@ impl Generator {
                 }
             };
 
-            let param_names: Vec<String> = match self.symbol_table.get_udt(type_id) {
-                UserDefinedType::Function(function) => function.arg_names.clone(),
-                _ => vec![],
+            let function_udt = match self.symbol_table.get_udt(type_id) {
+                UserDefinedType::Function(function) => function,
+                _ => {
+                    return Err(SemanticError::FunctionNotFound {
+                        name: call_name.clone(),
+                        pos: Some(SourcePos {
+                            line: call.name.line,
+                            col: call.name.col,
+                        }),
+                    });
+                }
             };
+
+            let param_names: Vec<String> = function_udt.param_names.clone();
+            let param_defaults: Vec<Option<Expression>> = function_udt.param_defaults.clone();
 
             // Determine if this call uses named args, positional args, or a mix.
             let has_named = call.arguments.iter().any(|(n, _)| n.is_some());
@@ -634,10 +653,13 @@ impl Generator {
                     }
                 }
 
-                // Ensure every parameter has a named argument.
-                for param_name in &param_names {
+                // For each parameter, use provided named arg, or default if present.
+                for (i, param_name) in param_names.iter().enumerate() {
                     if let Some(expr) = arg_map.remove(param_name) {
                         ordered_exprs.push(expr);
+                    } else if let Some(default_expr) = param_defaults.get(i).and_then(|o| o.clone())
+                    {
+                        ordered_exprs.push(default_expr);
                     } else {
                         return Err(SemanticError::TypeMismatch {
                             lhs: param_name.clone(),
@@ -663,8 +685,9 @@ impl Generator {
                     });
                 }
             } else {
-                // Positional arguments only: argument count must match parameter count.
-                if call.arguments.len() != param_names.len() {
+                // Positional arguments only: allow fewer provided args if remaining params have defaults.
+                let provided_count = call.arguments.len();
+                if provided_count > param_names.len() {
                     return Err(SemanticError::TypeMismatch {
                         lhs: format!("{} args expected", param_names.len()),
                         rhs: format!("{} provided", call.arguments.len()),
@@ -675,8 +698,31 @@ impl Generator {
                     });
                 }
 
+                // Collect provided expressions in order
+                let mut provided_exprs: Vec<Expression> = Vec::new();
                 for (_name_opt, expr) in call.arguments.into_iter() {
+                    provided_exprs.push(expr);
+                }
+
+                // Append provided
+                for expr in provided_exprs.into_iter() {
                     ordered_exprs.push(expr);
+                }
+
+                // For remaining params, use defaults if available
+                for i in provided_count..param_names.len() {
+                    if let Some(default_expr) = param_defaults.get(i).and_then(|o| o.clone()) {
+                        ordered_exprs.push(default_expr);
+                    } else {
+                        return Err(SemanticError::TypeMismatch {
+                            lhs: format!("{} args expected", param_names.len()),
+                            rhs: format!("{} provided", provided_count),
+                            pos: Some(SourcePos {
+                                line: call.name.line,
+                                col: call.name.col,
+                            }),
+                        });
+                    }
                 }
             }
 

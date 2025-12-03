@@ -265,7 +265,7 @@ impl Context {
                             _ => return Err(RuntimeError::FunctionNotFound),
                         };
 
-                        let args_len = function_type.args.len();
+                        let args_len = function_type.params.len();
                         (address, args_len)
                     };
 

@@ -1,5 +1,5 @@
 use crate::ast::{
-    Argument, EnumValue, Expression, FunctionCall, FunctionDeclaration, Identifier, NamedPattern,
+    EnumValue, Expression, FunctionCall, FunctionDeclaration, Identifier, NamedPattern, Parameter,
     Pattern, Statement, StatementBlock, StructField, StructInitiation, StructMethod, Type,
 };
 use crate::errors::{ParseError, SourcePos};
@@ -553,7 +553,7 @@ impl Parser {
         return Ok(statements);
     }
 
-    fn parse_argument_list(&mut self) -> ParseResult<Vec<Argument>> {
+    fn parse_argument_list(&mut self) -> ParseResult<Vec<Parameter>> {
         let mut parameters = Vec::new();
         self.consume_match(TokenType::OpenParen)?;
         while let Some(token) = self.peek() {
@@ -565,18 +565,22 @@ impl Parser {
             let parameter = match_token! {
                 self.peek(),
                 TokenType::Ampersand => {
+                    // &self: no default allowed
                     self.consume();
                     self.consume_match(TokenType::Identifier("self".to_string()))?;
-                    Ok(Argument {
+                    Ok(Parameter {
                         name: Identifier { name: "self".to_string(), line: 0, col: 0 },
                         arg_type: Type::Reference(Box::new(Type::Identifier(Identifier { name: "Self".to_string(), line: 0, col: 0 }))),
+                        default_value: None,
                      })
                 },
                 TokenType::Identifier(ref ident) if ident == "self" => {
+                    // self: no default allowed
                     self.consume();
-                    Ok(Argument {
+                    Ok(Parameter {
                         name: Identifier { name: "self".to_string(), line: 0, col: 0 },
-                        arg_type: Type::Identifier(Identifier { name: "Self".to_string(), line: 0, col: 0 })
+                        arg_type: Type::Identifier(Identifier { name: "Self".to_string(), line: 0, col: 0 }),
+                        default_value: None,
                     })
                 },
                 TokenType::Identifier(_) => {
@@ -584,7 +588,13 @@ impl Parser {
                     self.consume_match(TokenType::Colon)?;
 
                     let arg_type = self.parse_type()?;
-                    Ok(Argument { name, arg_type })
+                    // Optional default value
+                    let default_value = if self.consume_match(TokenType::Assignment).is_ok() {
+                        Some(self.parse_expression()?)
+                    } else {
+                        None
+                    };
+                    Ok(Parameter { name, arg_type, default_value })
                 },
             };
 
