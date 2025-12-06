@@ -61,6 +61,12 @@ pub enum TokenType {
     EOF,
 }
 
+impl TokenType {
+    pub fn discriminant(&self) -> std::mem::Discriminant<TokenType> {
+        std::mem::discriminant(self)
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum LexerError {
     UnexpectedCharacter(char, (usize, usize)),

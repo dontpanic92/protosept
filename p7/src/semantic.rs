@@ -94,6 +94,7 @@ pub struct Enum {
 pub struct Struct {
     pub qualified_name: String,
     pub fields: Vec<(String, Type)>,
+    pub field_defaults: Vec<Option<crate::ast::Expression>>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

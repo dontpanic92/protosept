@@ -138,10 +138,12 @@ impl Generator {
                         (f.name.name.clone(), field_type)
                     })
                     .collect();
+                let field_defaults = fields.iter().map(|f| f.default_value.clone()).collect();
 
                 let ty = Struct {
                     qualified_name: qualified_name.clone(),
                     fields: fields_with_types,
+                    field_defaults,
                 };
                 let type_id = self.symbol_table.add_udt(UserDefinedType::Struct(ty));
 
@@ -512,7 +514,6 @@ impl Generator {
                     }
                 }
             }
-            Expression::StructInitiation(initiation) => self.generate_struct_initiation(initiation),
             Expression::Block(statements) => self.generate_block(statements, vec![]),
             Expression::Try {
                 try_block,
@@ -648,10 +649,7 @@ impl Generator {
                 &param_defaults,
             )?;
 
-            for expr in ordered_exprs {
-                self.generate_expression(expr)?;
-            }
-
+            self.push_argument_list(ordered_exprs)?;
             self.builder.call(symbol_id);
 
             let ty = self.symbol_table.get_udt(type_id);
@@ -795,7 +793,7 @@ impl Generator {
             .iter()
             .map(|(name, _)| name.clone())
             .collect();
-        let field_defaults: Vec<Option<Expression>> = vec![None; field_names.len()]; // TODO: Get from struct field definitions
+        let field_defaults: Vec<Option<Expression>> = struct_def.field_defaults.clone();
 
         // Process arguments using shared logic
         let ordered_exprs = self.process_arguments(
@@ -807,25 +805,18 @@ impl Generator {
             &field_defaults,
         )?;
 
-        // Generate bytecode for each field expression
-        for expr in ordered_exprs {
-            self.generate_expression(expr)?;
-        }
-
-        // Emit NewStruct instruction
+        self.push_argument_list(ordered_exprs)?;
         self.builder.newstruct(struct_def.fields.len() as u32);
 
         Ok(Type::Struct(type_id))
     }
 
-    fn generate_struct_initiation(&mut self, _initiation: StructInitiation) -> SaResult<Type> {
-        unimplemented!();
-        // for (_field_name, field_value) in initiation.fields {
-        //     if let Some(value) = field_value {
-        //         self.generate_expression(value);
-        //     } else {
-        //     }
-        // }
+    fn push_argument_list(&mut self, arguments: Vec<Expression>) -> SaResult<()> {
+        for expr in arguments {
+            self.generate_expression(expr)?;
+        }
+
+        Ok(())
     }
 
     fn get_semantic_type(&self, parsed_type: &ParsedType) -> SaResult<Type> {

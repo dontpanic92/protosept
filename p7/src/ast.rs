@@ -98,7 +98,6 @@ pub enum Expression {
         object: Box<Expression>,
         field: Identifier,
     },
-    StructInitiation(StructInitiation),
     Block(StatementBlock),
     Try {
         try_block: Box<Expression>,

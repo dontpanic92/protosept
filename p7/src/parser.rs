@@ -81,7 +81,7 @@ impl Parser {
 
     fn peek_match(&self, token_type: TokenType) -> bool {
         match self.peek() {
-            Some(t) => t.token_type == token_type,
+            Some(t) => t.token_type.discriminant() == token_type.discriminant(),
             _ => false,
         }
     }
@@ -170,6 +170,7 @@ impl Parser {
             } else {
                 (None, self.parse_expression()?)
             };
+
             arguments.push(arg);
             let _ = self.consume_match(TokenType::Comma);
         }
@@ -202,34 +203,6 @@ impl Parser {
         })
     }
 
-    fn parse_struct_initiation(&mut self, struct_type: Identifier) -> ParseResult<Expression> {
-        self.consume_match(TokenType::OpenBrace)?;
-
-        let mut fields = Vec::new();
-        while !self.peek_match(TokenType::CloseBrace) {
-            let field_name = self.parse_identifier()?;
-            let field_value = if self.consume_match(TokenType::Colon).is_ok() {
-                Some(self.parse_expression()?)
-            } else {
-                None
-            };
-
-            fields.push((field_name, field_value));
-
-            let comma = self.consume_match(TokenType::Comma);
-            if !self.peek_match(TokenType::CloseBrace) {
-                comma?;
-            }
-        }
-
-        self.consume_match(TokenType::CloseBrace)?;
-
-        Ok(Expression::StructInitiation(StructInitiation {
-            struct_type,
-            fields,
-        }))
-    }
-
     fn parse_expression_suffix(&mut self, mut expression: Expression) -> ParseResult<Expression> {
         loop {
             if self.peek_match(TokenType::OpenParen) {
@@ -256,11 +229,7 @@ impl Parser {
                 }
                 TokenType::Identifier(_) => {
                     let identifier = self.parse_identifier()?;
-                    if self.peek_match(TokenType::OpenBrace) {
-                        return self.parse_struct_initiation(identifier);
-                    } else {
-                        Expression::Identifier(identifier)
-                    }
+                    Expression::Identifier(identifier)
                 }
                 TokenType::OpenBrace => {
                     let statements = self.parse_block()?;
@@ -320,6 +289,7 @@ impl Parser {
             } else {
                 (None, self.parse_expression()?)
             };
+
             arguments.push(arg);
 
             let comma = self.consume_match(TokenType::Comma);
