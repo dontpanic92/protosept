@@ -1,0 +1,16 @@
+/*
+[testcase]
+entrypoint = "test"
+expected_type = "int"
+expected_value = "15"
+*/
+
+struct Point(
+    x: int,
+    y: int,
+);
+
+fn test() -> int {
+    let p = Point(y = 15, x = 10);
+    p.y
+}

@@ -325,6 +325,27 @@ impl Context {
                         }
                     }
                 }
+                Instruction::NewStruct(field_count) => {
+                    // Pop field values from stack in reverse order
+                    let mut fields = Vec::with_capacity(field_count as usize);
+                    for _ in 0..field_count {
+                        if let Some(value) = self.stack_frame_mut()?.stack.pop() {
+                            fields.push(value);
+                        } else {
+                            return Err(RuntimeError::StackUnderflow);
+                        }
+                    }
+                    
+                    // Reverse to get fields in definition order
+                    fields.reverse();
+                    
+                    // Allocate struct on heap
+                    let struct_ref = self.heap.len() as u32;
+                    self.heap.push(Struct { fields });
+                    
+                    // Push reference onto stack
+                    self.stack_frame_mut()?.stack.push(Data::StructRef(struct_ref));
+                }
                 Instruction::Ret => {
                     if self.stack_frame()?.stack.len() > 0 {
                         let return_value = self.stack_frame_mut()?.stack.pop();

@@ -53,6 +53,12 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::Stfield(field_index));
     }
 
+    /// Create a new struct on the heap with the given number of fields.
+    /// Expects field values on the stack (in order: field0, field1, ..., fieldN).
+    pub fn newstruct(&mut self, field_count: u32) {
+        self.add_instruction(Instruction::NewStruct(field_count));
+    }
+
     pub fn addi(&mut self) {
         self.add_instruction(Instruction::Add);
     }

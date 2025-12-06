@@ -1,14 +1,14 @@
 use crate::errors::SourcePos;
 use crate::{
     ast::{
-        Expression, FunctionCall, FunctionDeclaration, Statement, StructInitiation,
+        Expression, FunctionCall, FunctionDeclaration, Identifier, Statement, StructInitiation,
         Type as ParsedType,
     },
     bytecode::builder::ByteCodeBuilder,
     lexer::TokenType,
     semantic::{
         Enum, Function, LocalSymbolScope, PrimitiveType, Struct, Symbol, SymbolKind, SymbolTable,
-        Type, UserDefinedType, Variable,
+        Type, TypeId, UserDefinedType, Variable,
     },
 };
 
@@ -599,6 +599,12 @@ impl Generator {
 
         if let Some(symbol_id) = self.symbol_table.find_symbol_in_scope(&call_name) {
             let symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
+            
+            // Check if this is a struct initialization (struct name used as a function)
+            if let SymbolKind::Struct(type_id) = symbol.kind {
+                return self.generate_struct_from_call(call, type_id);
+            }
+            
             let (_, type_id) = match symbol.kind {
                 SymbolKind::Function { address, type_id } => (address, type_id),
                 _ => {
@@ -628,103 +634,15 @@ impl Generator {
             let param_names: Vec<String> = function_udt.param_names.clone();
             let param_defaults: Vec<Option<Expression>> = function_udt.param_defaults.clone();
 
-            // Determine if this call uses named args, positional args, or a mix.
-            let has_named = call.arguments.iter().any(|(n, _)| n.is_some());
-            let has_positional = call.arguments.iter().any(|(n, _)| n.is_none());
-
-            if has_named && has_positional {
-                return Err(SemanticError::MixedNamedAndPositional {
-                    name: call_name.clone(),
-                    pos: Some(SourcePos {
-                        line: call.name.line,
-                        col: call.name.col,
-                    }),
-                });
-            }
-
-            let mut ordered_exprs: Vec<Expression> = Vec::with_capacity(param_names.len());
-
-            if has_named {
-                // All arguments are named: build a name->expr map and order by parameters.
-                let mut arg_map = std::collections::HashMap::new();
-                for (name_opt, expr) in call.arguments.into_iter() {
-                    if let Some(name) = name_opt {
-                        arg_map.insert(name.name, expr);
-                    }
-                }
-
-                // For each parameter, use provided named arg, or default if present.
-                for (i, param_name) in param_names.iter().enumerate() {
-                    if let Some(expr) = arg_map.remove(param_name) {
-                        ordered_exprs.push(expr);
-                    } else if let Some(default_expr) = param_defaults.get(i).and_then(|o| o.clone())
-                    {
-                        ordered_exprs.push(default_expr);
-                    } else {
-                        return Err(SemanticError::TypeMismatch {
-                            lhs: param_name.clone(),
-                            rhs: "missing argument".to_string(),
-                            pos: Some(SourcePos {
-                                line: call.name.line,
-                                col: call.name.col,
-                            }),
-                        });
-                    }
-                }
-
-                // If there are leftover named args that don't match parameters, that's an error.
-                if !arg_map.is_empty() {
-                    let unexpected = arg_map.keys().next().unwrap().clone();
-                    return Err(SemanticError::TypeMismatch {
-                        lhs: unexpected,
-                        rhs: "unexpected argument".to_string(),
-                        pos: Some(SourcePos {
-                            line: call.name.line,
-                            col: call.name.col,
-                        }),
-                    });
-                }
-            } else {
-                // Positional arguments only: allow fewer provided args if remaining params have defaults.
-                let provided_count = call.arguments.len();
-                if provided_count > param_names.len() {
-                    return Err(SemanticError::TypeMismatch {
-                        lhs: format!("{} args expected", param_names.len()),
-                        rhs: format!("{} provided", call.arguments.len()),
-                        pos: Some(SourcePos {
-                            line: call.name.line,
-                            col: call.name.col,
-                        }),
-                    });
-                }
-
-                // Collect provided expressions in order
-                let mut provided_exprs: Vec<Expression> = Vec::new();
-                for (_name_opt, expr) in call.arguments.into_iter() {
-                    provided_exprs.push(expr);
-                }
-
-                // Append provided
-                for expr in provided_exprs.into_iter() {
-                    ordered_exprs.push(expr);
-                }
-
-                // For remaining params, use defaults if available
-                for i in provided_count..param_names.len() {
-                    if let Some(default_expr) = param_defaults.get(i).and_then(|o| o.clone()) {
-                        ordered_exprs.push(default_expr);
-                    } else {
-                        return Err(SemanticError::TypeMismatch {
-                            lhs: format!("{} args expected", param_names.len()),
-                            rhs: format!("{} provided", provided_count),
-                            pos: Some(SourcePos {
-                                line: call.name.line,
-                                col: call.name.col,
-                            }),
-                        });
-                    }
-                }
-            }
+            // Use shared argument processing logic
+            let ordered_exprs = self.process_arguments(
+                &call_name,
+                call.name.line,
+                call.name.col,
+                call.arguments,
+                &param_names,
+                &param_defaults,
+            )?;
 
             for expr in ordered_exprs {
                 self.generate_expression(expr)?;
@@ -746,6 +664,150 @@ impl Generator {
                 }),
             })
         }
+    }
+
+    /// Process arguments (positional or named) and map them to parameters/fields.
+    /// Returns ordered expressions matching the parameter/field order.
+    fn process_arguments(
+        &self,
+        call_name: &str,
+        call_line: usize,
+        call_col: usize,
+        arguments: Vec<(Option<Identifier>, Expression)>,
+        param_names: &[String],
+        param_defaults: &[Option<Expression>],
+    ) -> SaResult<Vec<Expression>> {
+        let has_named = arguments.iter().any(|(n, _)| n.is_some());
+        let has_positional = arguments.iter().any(|(n, _)| n.is_none());
+
+        if has_named && has_positional {
+            return Err(SemanticError::MixedNamedAndPositional {
+                name: call_name.to_string(),
+                pos: Some(SourcePos {
+                    line: call_line,
+                    col: call_col,
+                }),
+            });
+        }
+
+        let mut ordered_exprs: Vec<Expression> = Vec::with_capacity(param_names.len());
+
+        if has_named {
+            // Named arguments: build a map and order by parameters
+            let mut arg_map = std::collections::HashMap::new();
+            for (name_opt, expr) in arguments.into_iter() {
+                if let Some(name) = name_opt {
+                    arg_map.insert(name.name, expr);
+                }
+            }
+
+            // For each parameter, use provided arg or default
+            for (i, param_name) in param_names.iter().enumerate() {
+                if let Some(expr) = arg_map.remove(param_name) {
+                    ordered_exprs.push(expr);
+                } else if let Some(default_expr) = param_defaults.get(i).and_then(|o| o.clone()) {
+                    ordered_exprs.push(default_expr);
+                } else {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: param_name.clone(),
+                        rhs: "missing required argument".to_string(),
+                        pos: Some(SourcePos {
+                            line: call_line,
+                            col: call_col,
+                        }),
+                    });
+                }
+            }
+
+            // Check for unexpected named arguments
+            if !arg_map.is_empty() {
+                let unexpected = arg_map.keys().next().unwrap().clone();
+                return Err(SemanticError::TypeMismatch {
+                    lhs: unexpected,
+                    rhs: "unexpected argument".to_string(),
+                    pos: Some(SourcePos {
+                        line: call_line,
+                        col: call_col,
+                    }),
+                });
+            }
+        } else {
+            // Positional arguments
+            let provided_count = arguments.len();
+            if provided_count > param_names.len() {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: format!("{} args expected", param_names.len()),
+                    rhs: format!("{} provided", provided_count),
+                    pos: Some(SourcePos {
+                        line: call_line,
+                        col: call_col,
+                    }),
+                });
+            }
+
+            // Add provided arguments
+            for (_name_opt, expr) in arguments.into_iter() {
+                ordered_exprs.push(expr);
+            }
+
+            // Fill remaining with defaults
+            for i in provided_count..param_names.len() {
+                if let Some(default_expr) = param_defaults.get(i).and_then(|o| o.clone()) {
+                    ordered_exprs.push(default_expr);
+                } else {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: format!("{} args expected", param_names.len()),
+                        rhs: format!("{} provided", provided_count),
+                        pos: Some(SourcePos {
+                            line: call_line,
+                            col: call_col,
+                        }),
+                    });
+                }
+            }
+        }
+
+        Ok(ordered_exprs)
+    }
+
+    fn generate_struct_from_call(&mut self, call: FunctionCall, type_id: TypeId) -> SaResult<Type> {
+        // Get struct definition
+        let struct_def = match self.symbol_table.get_udt(type_id) {
+            UserDefinedType::Struct(s) => s.clone(),
+            _ => {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: "Struct".to_string(),
+                    rhs: "Non-struct type".to_string(),
+                    pos: Some(SourcePos {
+                        line: call.name.line,
+                        col: call.name.col,
+                    }),
+                });
+            }
+        };
+
+        let field_names: Vec<String> = struct_def.fields.iter().map(|(name, _)| name.clone()).collect();
+        let field_defaults: Vec<Option<Expression>> = vec![None; field_names.len()]; // TODO: Get from struct field definitions
+
+        // Process arguments using shared logic
+        let ordered_exprs = self.process_arguments(
+            &call.name.name,
+            call.name.line,
+            call.name.col,
+            call.arguments,
+            &field_names,
+            &field_defaults,
+        )?;
+
+        // Generate bytecode for each field expression
+        for expr in ordered_exprs {
+            self.generate_expression(expr)?;
+        }
+
+        // Emit NewStruct instruction
+        self.builder.newstruct(struct_def.fields.len() as u32);
+
+        Ok(Type::Struct(type_id))
     }
 
     fn generate_struct_initiation(&mut self, _initiation: StructInitiation) -> SaResult<Type> {

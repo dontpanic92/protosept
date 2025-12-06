@@ -96,6 +96,12 @@ pub enum Instruction {
     // Expects: [..., struct_value, field_value] -> pops both and pushes updated struct_value.
     #[brw(magic = 27u8)]
     Stfield(u32),
+
+    // Create a new struct on the heap.
+    // Expects: [..., field0, field1, ..., fieldN] (N = field_count) on stack
+    // Pops N field values, creates struct on heap, pushes StructRef
+    #[brw(magic = 28u8)]
+    NewStruct(u32),
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {

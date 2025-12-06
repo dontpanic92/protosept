@@ -1,0 +1,20 @@
+/*
+[testcase]
+entrypoint = "test"
+expected_type = "int"
+expected_value = "142"
+*/
+
+struct Point(
+    x: int,
+    y: int,
+);
+
+fn test() -> int {
+    let p1 = Point(42, 100);
+    let p2 = Point(50, 200);
+    let p3 = Point(25, 75);
+    
+    // Verify each struct maintains independent values
+    p1.x + p2.y - p3.y - p3.x
+}
