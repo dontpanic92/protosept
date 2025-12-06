@@ -1,6 +1,8 @@
+use std::ops::Deref;
+
 use crate::ast::{
     EnumValue, Expression, FunctionCall, FunctionDeclaration, Identifier, NamedPattern, Parameter,
-    Pattern, Statement, StatementBlock, StructField, StructInitiation, StructMethod, Type,
+    Pattern, Statement, StatementBlock, StructField, StructMethod, Type,
 };
 use crate::errors::{ParseError, SourcePos};
 use crate::lexer::{Token, TokenType};
@@ -10,22 +12,6 @@ const UNARY_OPERATIONS: &[TokenType] = &[
     TokenType::Plus,
     TokenType::Minus,
     TokenType::Ampersand,
-];
-
-const BINARY_OPTERATORS: &[TokenType] = &[
-    TokenType::Assignment,
-    TokenType::And,
-    TokenType::Or,
-    TokenType::Plus,
-    TokenType::Minus,
-    TokenType::Multiply,
-    TokenType::Divide,
-    TokenType::Equals,
-    TokenType::NotEquals,
-    TokenType::GreaterThan,
-    TokenType::GreaterThanOrEqual,
-    TokenType::LessThan,
-    TokenType::LessThanOrEqual,
 ];
 
 type ParseResult<T> = Result<T, ParseError>;
@@ -148,44 +134,11 @@ impl Parser {
         }
     }
 
-    fn parse_function_call(&mut self, identifier: Identifier) -> ParseResult<Expression> {
-        self.consume_match(TokenType::OpenParen)?;
-        let mut arguments = Vec::new();
-        while let Some(token) = self.peek() {
-            if token.token_type == TokenType::CloseParen {
-                self.consume();
-                break;
-            }
-
-            // Check for named argument: identifier '=' expr
-            let arg = if self.peek_match(TokenType::Identifier("".to_string())) {
-                let ident = self.parse_identifier()?;
-                if self.consume_match(TokenType::Assignment).is_ok() {
-                    let expr = self.parse_expression()?;
-                    (Some(ident), expr)
-                } else {
-                    // Not a named argument, treat as positional
-                    (None, Expression::Identifier(ident))
-                }
-            } else {
-                (None, self.parse_expression()?)
-            };
-
-            arguments.push(arg);
-            let _ = self.consume_match(TokenType::Comma);
-        }
-
-        Ok(Expression::FunctionCall(FunctionCall {
-            name: identifier,
-            arguments,
-        }))
-    }
-
     fn parse_field_access(&mut self, object: Expression) -> ParseResult<Expression> {
         self.consume_match(TokenType::Dot)?;
         let field = self.parse_identifier()?;
 
-        if self.peek_match(TokenType::OpenParen) {
+        /*if self.peek_match(TokenType::OpenParen) {
             let call_expr = self.parse_function_call(field)?;
             if let Expression::FunctionCall(FunctionCall { name, .. }) = call_expr {
                 return Ok(Expression::FieldAccess {
@@ -195,7 +148,7 @@ impl Parser {
             } else {
                 unreachable!()
             }
-        }
+        }*/
 
         Ok(Expression::FieldAccess {
             object: Box::new(object),
@@ -206,7 +159,7 @@ impl Parser {
     fn parse_expression_suffix(&mut self, mut expression: Expression) -> ParseResult<Expression> {
         loop {
             if self.peek_match(TokenType::OpenParen) {
-                expression = self.parse_function_call_with_expression(expression)?;
+                expression = self.parse_function_call(expression)?;
             } else if self.peek_match(TokenType::Dot) {
                 expression = self.parse_field_access(expression)?;
             } else {
@@ -263,10 +216,7 @@ impl Parser {
         self.parse_expression_suffix(expression)
     }
 
-    fn parse_function_call_with_expression(
-        &mut self,
-        identifier: Expression,
-    ) -> ParseResult<Expression> {
+    fn parse_function_call(&mut self, identifier: Expression) -> ParseResult<Expression> {
         self.consume_match(TokenType::OpenParen)?;
 
         let mut arguments = Vec::new();
@@ -276,18 +226,22 @@ impl Parser {
                 break;
             }
 
-            // Check for named argument: identifier '=' expr
-            let arg = if self.peek_match(TokenType::Identifier("".to_string())) {
-                let ident = self.parse_identifier()?;
-                if self.consume_match(TokenType::Assignment).is_ok() {
-                    let expr = self.parse_expression()?;
-                    (Some(ident), expr)
-                } else {
-                    // Not a named argument, treat as positional
-                    (None, Expression::Identifier(ident))
-                }
+            let expr = self.parse_expression()?;
+
+            let arg = if let Expression::Binary {
+                left,
+                operator:
+                    Token {
+                        token_type: TokenType::Assignment,
+                        ..
+                    },
+                right,
+            } = &expr
+                && let Expression::Identifier(ident) = left.as_ref()
+            {
+                (Some(ident.clone()), right.deref().clone())
             } else {
-                (None, self.parse_expression()?)
+                (None, expr)
             };
 
             arguments.push(arg);
@@ -340,19 +294,41 @@ impl Parser {
     }
 
     fn parse_expression(&mut self) -> ParseResult<Expression> {
+        self.parse_binary_expression(0)
+    }
+
+    fn get_precedence(token_type: &TokenType) -> u8 {
+        match token_type {
+            TokenType::Assignment => 1,
+            TokenType::Or => 2,
+            TokenType::And => 3,
+            TokenType::Equals | TokenType::NotEquals => 4,
+            TokenType::GreaterThan | TokenType::GreaterThanOrEqual |
+            TokenType::LessThan | TokenType::LessThanOrEqual => 5,
+            TokenType::Plus | TokenType::Minus => 6,
+            TokenType::Multiply | TokenType::Divide => 7,
+            _ => 0,
+        }
+    }
+
+    fn parse_binary_expression(&mut self, min_prec: u8) -> ParseResult<Expression> {
         let mut left = self.parse_unary_expression()?;
+
         while let Some(token) = self.peek() {
-            if BINARY_OPTERATORS.contains(&token.token_type) {
-                let operator = self.consume().unwrap().clone();
-                let right = self.parse_primary_expression()?;
-                left = Expression::Binary {
-                    operator,
-                    left: Box::new(left),
-                    right: Box::new(right),
-                };
-            } else {
+            let prec = Self::get_precedence(&token.token_type);
+            if prec < min_prec || prec == 0 {
                 break;
             }
+            let operator = self.consume().unwrap().clone();
+
+            let next_min_prec = prec + 1;
+            let right = self.parse_binary_expression(next_min_prec)?;
+
+            left = Expression::Binary {
+                operator,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
 
         Ok(left)

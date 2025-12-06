@@ -108,12 +108,6 @@ pub enum Expression {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct StructInitiation {
-    pub struct_type: Identifier,
-    pub fields: Vec<(Identifier, Option<Expression>)>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
 pub enum Pattern {
     Identifier(Identifier),
     IntegerLiteral(i64),

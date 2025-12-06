@@ -1,7 +1,7 @@
 use crate::errors::SourcePos;
 use crate::{
     ast::{
-        Expression, FunctionCall, FunctionDeclaration, Identifier, Statement, StructInitiation,
+        Expression, FunctionCall, FunctionDeclaration, Identifier, Statement,
         Type as ParsedType,
     },
     bytecode::builder::ByteCodeBuilder,
