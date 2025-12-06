@@ -17,6 +17,27 @@ pub enum SymbolKind {
     Module,
 }
 
+impl SymbolKind {
+    pub fn discriminant(&self) -> std::mem::Discriminant<SymbolKind> {
+        std::mem::discriminant(self)
+    }
+
+    pub fn discriminant_of_function() -> std::mem::Discriminant<SymbolKind> {
+        std::mem::discriminant(&SymbolKind::Function {
+            type_id: 0,
+            address: 0,
+        })
+    }
+
+    pub fn discriminant_of_enum() -> std::mem::Discriminant<SymbolKind> {
+        std::mem::discriminant(&SymbolKind::Enum(0))
+    }
+
+    pub fn discriminant_of_struct() -> std::mem::Discriminant<SymbolKind> {
+        std::mem::discriminant(&SymbolKind::Struct(0))
+    }
+}
+
 pub type SymbolId = u32;
 
 #[derive(Debug, Clone)]
@@ -97,6 +118,12 @@ pub enum Type {
     Struct(TypeId),
 }
 
+impl Type {
+    pub fn is_struct(&self) -> bool {
+        matches!(self, Type::Function(_))
+    }
+}
+
 impl Clone for Type {
     fn clone(&self) -> Self {
         match self {
@@ -159,6 +186,19 @@ pub struct SymbolTable {
 }
 
 impl SymbolTable {
+    /// Finds the nearest symbol in the current chain that matches the given SymbolKind discriminant.
+    pub fn find_nearest_symbol_id_by_kind(
+        &self,
+        kind: std::mem::Discriminant<SymbolKind>,
+    ) -> Option<&SymbolId> {
+        for symbol_id in self.symbol_chain.iter().rev() {
+            let symbol = &self.symbols[*symbol_id as usize];
+            if symbol.kind.discriminant() == kind {
+                return Some(symbol_id);
+            }
+        }
+        None
+    }
     pub fn new() -> Self {
         let root = Symbol::new("$root".to_string(), "$root".to_string(), SymbolKind::Module);
 
@@ -214,8 +254,11 @@ impl SymbolTable {
     pub fn find_type_in_scope(&self, name: &str) -> Option<Type> {
         // Special handling: inside a struct's scope, `Self` refers to the enclosing struct type.
         if name == "Self" {
-            if let Some(current) = self.get_current_symbol() {
-                match current.kind {
+            if let Some(enclose_struct) =
+                self.find_nearest_symbol_id_by_kind(SymbolKind::discriminant_of_struct())
+            {
+                let strukt = self.get_symbol(*enclose_struct).unwrap();
+                match strukt.kind {
                     SymbolKind::Struct(id) => return Some(Type::Struct(id)),
                     _ => {}
                 }

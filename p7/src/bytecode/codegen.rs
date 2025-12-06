@@ -597,14 +597,18 @@ impl Generator {
     fn generate_function_call(&mut self, call: FunctionCall) -> SaResult<Type> {
         let call_name = call.name.name.clone();
 
-        if let Some(symbol_id) = self.symbol_table.find_symbol_in_scope(&call_name) {
+        if let Some(ty) = self.symbol_table.find_type_in_scope(&call_name)
+            && let Type::Struct(type_id) = ty
+        {
+            self.generate_struct_from_call(call, type_id)
+        } else if let Some(symbol_id) = self.symbol_table.find_symbol_in_scope(&call_name) {
             let symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
-            
+
             // Check if this is a struct initialization (struct name used as a function)
             if let SymbolKind::Struct(type_id) = symbol.kind {
                 return self.generate_struct_from_call(call, type_id);
             }
-            
+
             let (_, type_id) = match symbol.kind {
                 SymbolKind::Function { address, type_id } => (address, type_id),
                 _ => {
@@ -786,7 +790,11 @@ impl Generator {
             }
         };
 
-        let field_names: Vec<String> = struct_def.fields.iter().map(|(name, _)| name.clone()).collect();
+        let field_names: Vec<String> = struct_def
+            .fields
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
         let field_defaults: Vec<Option<Expression>> = vec![None; field_names.len()]; // TODO: Get from struct field definitions
 
         // Process arguments using shared logic
