@@ -634,75 +634,304 @@ impl Generator {
     }
 
     fn generate_function_call(&mut self, call: FunctionCall) -> SaResult<Type> {
-        let call_name = call.name.name.clone();
-
-        if let Some(ty) = self.symbol_table.find_type_in_scope(&call_name)
-            && let Type::Struct(type_id) = ty
-        {
-            self.generate_struct_from_call(call, type_id)
-        } else if let Some(symbol_id) = self.symbol_table.find_symbol_in_scope(&call_name) {
-            let symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
-
-            // Check if this is a struct initialization (struct name used as a function)
-            if let SymbolKind::Struct(type_id) = symbol.kind {
-                return self.generate_struct_from_call(call, type_id);
+        // Extract callee and args so we can inspect callee structure (method vs plain function)
+        let callee_expr = *call.callee;
+        let arguments = call.arguments;
+        let (call_line, call_col) = callee_expr.get_pos();
+        let call_name = callee_expr.get_name();
+        
+        // Handle field-call (method or static method) specially.
+        if let Expression::FieldAccess { object, field } = callee_expr {
+            // Case 1: Static method call like `Type.method(...)` (object is identifier referring to a type)
+            if let Expression::Identifier(ident) = *object.clone() {
+                if let Some(ty) = self.symbol_table.find_type_in_scope(&ident.name) {
+                    if let Type::Struct(type_id) = ty {
+                        // Find the struct symbol and then the method as its child
+                        let struct_symbol_id = self
+                            .symbol_table
+                            .find_symbol_in_scope(&ident.name)
+                            .ok_or(SemanticError::FunctionNotFound {
+                                name: format!("{}.{}", ident.name, field.name),
+                                pos: Some(SourcePos {
+                                    line: field.line,
+                                    col: field.col,
+                                }),
+                            })?;
+    
+                        let struct_symbol = self.symbol_table.get_symbol(struct_symbol_id).unwrap();
+                        let method_symbol_id = struct_symbol
+                            .children
+                            .get(&field.name)
+                            .cloned()
+                            .ok_or(SemanticError::FunctionNotFound {
+                                name: format!("{}.{}", ident.name, field.name),
+                                pos: Some(SourcePos {
+                                    line: field.line,
+                                    col: field.col,
+                                }),
+                            })?;
+    
+                        let method_symbol = self.symbol_table.get_symbol(method_symbol_id).unwrap();
+                        let (addr, type_id) = match method_symbol.kind {
+                            SymbolKind::Function { address, type_id } => (address, type_id),
+                            _ => {
+                                return Err(SemanticError::FunctionNotFound {
+                                    name: format!("{}.{}", ident.name, field.name),
+                                    pos: Some(SourcePos {
+                                        line: field.line,
+                                        col: field.col,
+                                    }),
+                                });
+                            }
+                        };
+    
+                        let function_udt = match self.symbol_table.get_udt(type_id) {
+                            UserDefinedType::Function(f) => f,
+                            _ => {
+                                return Err(SemanticError::FunctionNotFound {
+                                    name: format!("{}.{}", ident.name, field.name),
+                                    pos: Some(SourcePos {
+                                        line: field.line,
+                                        col: field.col,
+                                    }),
+                                });
+                            }
+                        };
+    
+                        let param_names: Vec<String> = function_udt.param_names.clone();
+                        let param_defaults: Vec<Option<Expression>> = function_udt.param_defaults.clone();
+                        let ret_type = function_udt.return_type.clone();
+    
+                        // Static method: process all args normally (no receiver pre-pushed)
+                        let ordered_exprs = self.process_arguments(
+                            &format!("{}.{}", ident.name, field.name),
+                            field.line,
+                            field.col,
+                            arguments,
+                            &param_names,
+                            &param_defaults,
+                        )?;
+    
+                        self.push_argument_list(ordered_exprs)?;
+                        self.builder.call(method_symbol_id);
+    
+                        return Ok(ret_type);
+                    }
+                }
             }
-
-            let (_, type_id) = match symbol.kind {
+    
+            // Case 2: Instance method call like `obj.method(...)`
+            // Generate the object expression first (pushes receiver on stack)
+            let object_ty = self.generate_expression(*object)?;
+    
+            // Resolve underlying struct TypeId
+            let struct_type_id = if let Type::Reference(boxed) = &object_ty {
+                if let Type::Struct(id) = **boxed {
+                    Some(id)
+                } else {
+                    None
+                }
+            } else if let Type::Struct(id) = object_ty {
+                Some(id)
+            } else {
+                None
+            };
+    
+            if struct_type_id.is_none() {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: object_ty.to_string(),
+                    rhs: "Struct instance".to_string(),
+                    pos: Some(SourcePos {
+                        line: field.line,
+                        col: field.col,
+                    }),
+                });
+            }
+    
+            let type_id = struct_type_id.unwrap();
+    
+            // Find the struct symbol corresponding to the TypeId
+            let struct_symbol_id_opt = self
+                .symbol_table
+                .symbols
+                .iter()
+                .enumerate()
+                .find(|(_, s)| match s.kind {
+                    SymbolKind::Struct(id) => id == type_id,
+                    _ => false,
+                })
+                .map(|(i, _)| i as u32);
+    
+            let struct_symbol_id = struct_symbol_id_opt.ok_or(SemanticError::FunctionNotFound {
+                name: field.name.clone(),
+                pos: Some(SourcePos {
+                    line: field.line,
+                    col: field.col,
+                }),
+            })?;
+    
+            let struct_symbol = self.symbol_table.get_symbol(struct_symbol_id).unwrap();
+            let method_symbol_id = struct_symbol
+                .children
+                .get(&field.name)
+                .cloned()
+                .ok_or(SemanticError::FunctionNotFound {
+                    name: field.name.clone(),
+                    pos: Some(SourcePos {
+                        line: field.line,
+                        col: field.col,
+                    }),
+                })?;
+    
+            let method_symbol = self.symbol_table.get_symbol(method_symbol_id).unwrap();
+            let (_, method_type_id) = match method_symbol.kind {
                 SymbolKind::Function { address, type_id } => (address, type_id),
                 _ => {
                     return Err(SemanticError::FunctionNotFound {
-                        name: call_name.clone(),
+                        name: field.name.clone(),
                         pos: Some(SourcePos {
-                            line: call.name.line,
-                            col: call.name.col,
+                            line: field.line,
+                            col: field.col,
                         }),
                     });
                 }
             };
-
-            let function_udt = match self.symbol_table.get_udt(type_id) {
-                UserDefinedType::Function(function) => function,
+    
+            let function_udt = match self.symbol_table.get_udt(method_type_id) {
+                UserDefinedType::Function(f) => f.clone(),
                 _ => {
                     return Err(SemanticError::FunctionNotFound {
-                        name: call_name.clone(),
+                        name: field.name.clone(),
                         pos: Some(SourcePos {
-                            line: call.name.line,
-                            col: call.name.col,
+                            line: field.line,
+                            col: field.col,
                         }),
                     });
                 }
             };
-
-            let param_names: Vec<String> = function_udt.param_names.clone();
-            let param_defaults: Vec<Option<Expression>> = function_udt.param_defaults.clone();
-
-            // Use shared argument processing logic
-            let ordered_exprs = self.process_arguments(
-                &call_name,
-                call.name.line,
-                call.name.col,
-                call.arguments,
-                &param_names,
-                &param_defaults,
-            )?;
-
-            self.push_argument_list(ordered_exprs)?;
-            self.builder.call(symbol_id);
-
-            let ty = self.symbol_table.get_udt(type_id);
-            match ty {
-                UserDefinedType::Function(function) => Ok(function.return_type.clone()),
-                _ => panic!("Function not found"),
+    
+            // For instance methods the first parameter is the receiver (self) which we've already pushed.
+            // So process remaining parameters (skip first).
+            let param_names_full: Vec<String> = function_udt.param_names.clone();
+            let param_defaults_full: Vec<Option<Expression>> = function_udt.param_defaults.clone();
+    
+            if param_names_full.is_empty() {
+                // No params declared (we still pushed receiver) - ensure no args provided
+                if !arguments.is_empty() {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "0 args expected".to_string(),
+                        rhs: format!("{} provided", arguments.len()),
+                        pos: Some(SourcePos {
+                            line: call_line,
+                            col: call_col,
+                        }),
+                    });
+                }
+    
+                // Call method (receiver already on stack)
+                self.builder.call(method_symbol_id);
+                return Ok(function_udt.return_type.clone());
             }
+    
+            // Skip receiver param
+            let param_names_tail = &param_names_full[1..];
+            let param_defaults_tail = &param_defaults_full[1..];
+    
+            // Process only the provided arguments (not including receiver)
+            let ordered_exprs = self.process_arguments(
+                &format!("{}.{}", struct_symbol.name, field.name),
+                field.line,
+                field.col,
+                arguments,
+                param_names_tail,
+                param_defaults_tail,
+            )?;
+    
+            // This will generate remaining arguments and push them after the receiver.
+            self.push_argument_list(ordered_exprs)?;
+            self.builder.call(method_symbol_id);
+    
+            Ok(function_udt.return_type.clone())
         } else {
-            Err(SemanticError::FunctionNotFound {
-                name: call_name,
-                pos: Some(SourcePos {
-                    line: call.name.line,
-                    col: call.name.col,
-                }),
-            })
+            // Non-field callee: top-level function or constructor by name
+            let call_name = call_name;
+            // First try type-name constructor (e.g., Point(...))
+            if let Some(ty) = self.symbol_table.find_type_in_scope(&call_name)
+                && let Type::Struct(type_id) = ty
+            {
+                return self.generate_struct_from_call(crate::ast::FunctionCall {
+                    callee: Box::new(Expression::Identifier(crate::ast::Identifier { name: call_name.clone(), line: call_line, col: call_col })),
+                    arguments,
+                }, type_id);
+            }
+    
+            if let Some(symbol_id) = self.symbol_table.find_symbol_in_scope(&call_name) {
+                let symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
+    
+                // Check if this is a struct initialization (struct name used as a function)
+                if let SymbolKind::Struct(type_id) = symbol.kind {
+                    return self.generate_struct_from_call(crate::ast::FunctionCall {
+                        callee: Box::new(Expression::Identifier(crate::ast::Identifier { name: call_name.clone(), line: call_line, col: call_col })),
+                        arguments,
+                    }, type_id);
+                }
+    
+                let (_, type_id) = match symbol.kind {
+                    SymbolKind::Function { address, type_id } => (address, type_id),
+                    _ => {
+                        return Err(SemanticError::FunctionNotFound {
+                            name: call_name.clone(),
+                            pos: Some(SourcePos {
+                                line: call_line,
+                                col: call_col,
+                            }),
+                        });
+                    }
+                };
+    
+                let function_udt = match self.symbol_table.get_udt(type_id) {
+                    UserDefinedType::Function(function) => function,
+                    _ => {
+                        return Err(SemanticError::FunctionNotFound {
+                            name: call_name.clone(),
+                            pos: Some(SourcePos {
+                                line: call_line,
+                                col: call_col,
+                            }),
+                        });
+                    }
+                };
+    
+                let param_names: Vec<String> = function_udt.param_names.clone();
+                let param_defaults: Vec<Option<Expression>> = function_udt.param_defaults.clone();
+    
+                // Use shared argument processing logic
+                let ordered_exprs = self.process_arguments(
+                    &call_name,
+                    call_line,
+                    call_col,
+                    arguments,
+                    &param_names,
+                    &param_defaults,
+                )?;
+    
+                self.push_argument_list(ordered_exprs)?;
+                self.builder.call(symbol_id);
+    
+                let ty = self.symbol_table.get_udt(type_id);
+                match ty {
+                    UserDefinedType::Function(function) => Ok(function.return_type.clone()),
+                    _ => panic!("Function not found"),
+                }
+            } else {
+                Err(SemanticError::FunctionNotFound {
+                    name: call_name,
+                    pos: Some(SourcePos {
+                        line: call_line,
+                        col: call_col,
+                    }),
+                })
+            }
         }
     }
 
@@ -812,6 +1041,8 @@ impl Generator {
 
     fn generate_struct_from_call(&mut self, call: FunctionCall, type_id: TypeId) -> SaResult<Type> {
         // Get struct definition
+        let (call_name, (call_line, call_col)) = (call.callee.get_name(), call.callee.get_pos());
+    
         let struct_def = match self.symbol_table.get_udt(type_id) {
             UserDefinedType::Struct(s) => s.clone(),
             _ => {
@@ -819,33 +1050,33 @@ impl Generator {
                     lhs: "Struct".to_string(),
                     rhs: "Non-struct type".to_string(),
                     pos: Some(SourcePos {
-                        line: call.name.line,
-                        col: call.name.col,
+                        line: call_line,
+                        col: call_col,
                     }),
                 });
             }
         };
-
+    
         let field_names: Vec<String> = struct_def
             .fields
             .iter()
             .map(|(name, _)| name.clone())
             .collect();
         let field_defaults: Vec<Option<Expression>> = struct_def.field_defaults.clone();
-
+    
         // Process arguments using shared logic
         let ordered_exprs = self.process_arguments(
-            &call.name.name,
-            call.name.line,
-            call.name.col,
+            &call_name,
+            call_line,
+            call_col,
             call.arguments,
             &field_names,
             &field_defaults,
         )?;
-
+    
         self.push_argument_list(ordered_exprs)?;
         self.builder.newstruct(struct_def.fields.len() as u32);
-
+    
         Ok(Type::Struct(type_id))
     }
 

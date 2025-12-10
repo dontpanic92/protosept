@@ -37,7 +37,7 @@ pub struct Parameter {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct FunctionCall {
-    pub name: Identifier,
+    pub callee: Box<Expression>,
     pub arguments: Vec<(Option<Identifier>, Expression)>,
 }
 
@@ -155,11 +155,20 @@ impl Expression {
     pub fn get_name(&self) -> String {
         match self {
             Expression::Identifier(identifier) => identifier.name.clone(),
-            Expression::FunctionCall(function_call) => function_call.name.name.clone(),
+            Expression::FunctionCall(function_call) => function_call.callee.get_name(),
             Expression::FieldAccess { object, field } => {
                 format!("{}.{}", object.get_name(), field.name)
             }
             _ => "".to_string(),
+        }
+    }
+
+    pub fn get_pos(&self) -> (usize, usize) {
+        match self {
+            Expression::Identifier(identifier) => (identifier.line, identifier.col),
+            Expression::FunctionCall(function_call) => function_call.callee.get_pos(),
+            Expression::FieldAccess { object: _, field } => (field.line, field.col),
+            _ => (0, 0),
         }
     }
 }

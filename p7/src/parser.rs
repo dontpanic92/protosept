@@ -138,18 +138,6 @@ impl Parser {
         self.consume_match(TokenType::Dot)?;
         let field = self.parse_identifier()?;
 
-        /*if self.peek_match(TokenType::OpenParen) {
-            let call_expr = self.parse_function_call(field)?;
-            if let Expression::FunctionCall(FunctionCall { name, .. }) = call_expr {
-                return Ok(Expression::FieldAccess {
-                    object: Box::new(object),
-                    field: name,
-                });
-            } else {
-                unreachable!()
-            }
-        }*/
-
         Ok(Expression::FieldAccess {
             object: Box::new(object),
             field,
@@ -218,16 +206,16 @@ impl Parser {
 
     fn parse_function_call(&mut self, identifier: Expression) -> ParseResult<Expression> {
         self.consume_match(TokenType::OpenParen)?;
-
+    
         let mut arguments = Vec::new();
         while let Some(token) = self.peek() {
             if token.token_type == TokenType::CloseParen {
                 self.consume();
                 break;
             }
-
+    
             let expr = self.parse_expression()?;
-
+    
             let arg = if let Expression::Binary {
                 left,
                 operator:
@@ -243,36 +231,26 @@ impl Parser {
             } else {
                 (None, expr)
             };
-
+    
             arguments.push(arg);
-
+    
             let comma = self.consume_match(TokenType::Comma);
             if !self.peek_match(TokenType::CloseParen) {
                 comma?;
             }
         }
-
-        match identifier.clone() {
+    
+        match identifier {
             Expression::Identifier(identifier) => Ok(Expression::FunctionCall(FunctionCall {
-                name: identifier,
+                callee: Box::new(Expression::Identifier(identifier)),
                 arguments,
             })),
-            Expression::FieldAccess { object, field } => {
-                Ok(Expression::FunctionCall(FunctionCall {
-                    name: Identifier {
-                        name: format!("{}.{}", object.clone().get_name(), field.name),
-                        line: field.line,
-                        col: field.col,
-                    },
-                    arguments,
-                }))
-            }
-            _ => Ok(Expression::FunctionCall(FunctionCall {
-                name: Identifier {
-                    name: identifier.get_name(),
-                    line: 0,
-                    col: 0,
-                },
+            Expression::FieldAccess { object, field } => Ok(Expression::FunctionCall(FunctionCall {
+                callee: Box::new(Expression::FieldAccess { object, field }),
+                arguments,
+            })),
+            other => Ok(Expression::FunctionCall(FunctionCall {
+                callee: Box::new(other),
                 arguments,
             })),
         }
