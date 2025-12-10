@@ -1,8 +1,7 @@
 use crate::errors::SourcePos;
 use crate::{
     ast::{
-        Expression, FunctionCall, FunctionDeclaration, Identifier, Statement,
-        Type as ParsedType,
+        Expression, FunctionCall, FunctionDeclaration, Identifier, Statement, Type as ParsedType,
     },
     bytecode::builder::ByteCodeBuilder,
     lexer::TokenType,
@@ -236,12 +235,11 @@ impl Generator {
             } => {
                 // Handle assignment specially: generate RHS first and then store into the LHS target
                 if operator.token_type == TokenType::Assignment {
-                    // Generate RHS value
-                    let rhs_ty = self.generate_expression(*right)?;
-
                     // Handle LHS without generating its value (we need the target)
                     match *left {
                         Expression::Identifier(identifier) => {
+                            let _rhs_ty = self.generate_expression(*right)?;
+
                             // Prefer local variable, fallback to parameter
                             if let Some(var_id) = self
                                 .local_scope
@@ -273,15 +271,55 @@ impl Generator {
                             }
                         }
                         Expression::FieldAccess { object, field } => {
-                            // Field assignment not implemented yet (struct instance field mutation).
-                            return Err(SemanticError::TypeMismatch {
-                                lhs: object.get_name(),
-                                rhs: format!("Field assignment '{}'", field.name),
-                                pos: Some(SourcePos {
-                                    line: field.line,
-                                    col: field.col,
-                                }),
-                            });
+                            let object_ty = self.generate_expression(*object.clone())?;
+                            let _rhs_ty = self.generate_expression(*right.clone())?;
+                            
+                            if let Type::Reference(struct_ref) = &object_ty
+                                && let Type::Struct(type_id) = **struct_ref
+                            {
+                                let udt = self.symbol_table.get_udt(type_id);
+                                if let UserDefinedType::Struct(struct_def) = udt {
+                                    if let Some((idx, (_fname, _ftype))) = struct_def
+                                        .fields
+                                        .iter()
+                                        .enumerate()
+                                        .find(|(_i, (fname, _))| fname == &field.name)
+                                    {
+                                        // Stack is now [object][value], as required by stfield
+                                        self.builder.stfield(idx as u32);
+                                        return Ok(Type::Primitive(PrimitiveType::Unit));
+                                    } else {
+                                        return Err(SemanticError::TypeMismatch {
+                                            lhs: format!(
+                                                "Struct instance '{}: {}'",
+                                                object.get_name(),
+                                                struct_def.qualified_name
+                                            ),
+                                            rhs: format!(
+                                                "Unknown field '.{}' on struct",
+                                                field.name
+                                            ),
+                                            pos: Some(SourcePos {
+                                                line: field.line,
+                                                col: field.col,
+                                            }),
+                                        });
+                                    }
+                                } else {
+                                    unimplemented!(
+                                        "Internal error: Type ID resolved to non-Struct UDT"
+                                    );
+                                }
+                            } else {
+                                return Err(SemanticError::TypeMismatch {
+                                    lhs: object_ty.to_string(),
+                                    rhs: "Struct instance".to_string(),
+                                    pos: Some(SourcePos {
+                                        line: field.line,
+                                        col: field.col,
+                                    }),
+                                });
+                            }
                         }
                         _ => {
                             // Other lvalues (like indexing, deref) not supported yet.
