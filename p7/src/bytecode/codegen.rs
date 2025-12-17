@@ -160,7 +160,7 @@ impl Generator {
                 named_pattern,
                 expression,
             } => {
-                unimplemented!("branching not implemented");
+                unimplemented!("branching not implemented {:?} {:?}", named_pattern, expression);
             }
             Statement::Return(expression) => {
                 self.generate_expression(*expression)?;

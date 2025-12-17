@@ -58,7 +58,6 @@ fn test() -> float {
     };
 
     let f = try test42(d) else 0;
-    let g = try test42(d);
 
     assign42(&f);
 
