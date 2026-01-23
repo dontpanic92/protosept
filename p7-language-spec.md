@@ -907,12 +907,19 @@ A function declared with `fn[fiber]` is a **fiber function**.
 Properties:
 - Fiber functions may suspend execution via `yield;`.
 - Fiber functions are cooperatively scheduled: they run until they explicitly `yield`, `return`, or `throw`.
+- Fibers are single-threaded and non-preemptive at the language level: the runtime does not interrupt execution in the middle of a statement/expression.
 
 Calling convention constraints:
 - `yield` is only valid inside a `fn[fiber]` function body.
-- The runtime must provide a way for the host to create and resume fiber executions (§20.4).
-- Direct calls to a fiber function require a fiber context (i.e. may only occur within another `fn[fiber]`), otherwise compile-time error.
-- Non-fiber code should start fibers via a host/runtime API that returns a fiber handle (§20.4).
+- A fiber function may be:
+  - started from p7 via `spawn` (§20.5), or
+  - started from the host via an embedding API (§20.4).
+
+Direct calling constraints (recommended for v1):
+- A `fn[fiber]` function may be called directly only from within another `fn[fiber]` function.
+- Attempting to call a `fn[fiber]` function from a non-fiber function is a compile-time error.
+Rationale:
+- `yield` requires a fiber resumption context.
 
 ### 20.3 `yield;` statement
 Form:
@@ -931,7 +938,7 @@ Restrictions:
 
 ### 20.4 Host interop requirements for fibers
 When the Fiber extension is enabled, the host/runtime must support:
-- Creating a fiber execution from a `fn[fiber]` function and its arguments.
+- Creating a fiber execution from a `fn[fiber]` function and its arguments (start/spawn).
 - Resuming a fiber execution.
 
 A minimal host-driven protocol is:
@@ -943,13 +950,68 @@ A minimal host-driven protocol is:
   3) throws     => reports `Threw(error_enum)`
 
 Notes:
-- Fibers are single-threaded and cooperative (no preemption).
 - After `Returned` or `Threw`, the handle is complete and cannot be resumed further.
+- A host may ignore a fiber (never resume it). If ignored, it remains suspended indefinitely unless cancelled or dropped (see §20.7).
 
-[[TODO]]: specify concrete API surface and mapping to host language.
-[[TODO]]: specify whether yielding can be observed via debug hooks/profiling.
+[[TODO]]: specify concrete host API surface and mapping to host language.
 
-### 20.5 Interaction with `&T` borrowed views
+### 20.5 Spawning fibers from p7 (`spawn`)
+In addition to host-started fibers, p7 code may create fibers using `spawn`.
+
+Form:
+```p7
+spawn f(arg1, arg2, ...);
+```
+
+Where:
+- `f` must refer to a function declared with `fn[fiber]`.
+- `spawn` is a statement (returns `unit`) in v1.
+
+Semantics:
+- `spawn` requests creation of a new fiber execution of `f(arg1, arg2, ...)`.
+- The newly created fiber is initially **runnable** and begins execution when (and only when) it is first resumed by a scheduler/host policy.
+- The act of spawning does not itself run the new fiber.
+
+Host visibility and control:
+- Every successful `spawn` triggers the host hook `on_fiber_spawn` (§20.6) with a handle for the new fiber.
+- The host may choose to:
+  - schedule and resume the fiber,
+  - defer it,
+  - ignore it (never resume it),
+  - cancel it (if cancellation exists; [[TODO]]).
+
+Rationale:
+- Allows scripts to start background behaviors while keeping the host in full control of scheduling and resource budgets.
+
+[[TODO]]: decide whether `spawn` should return a `FiberHandle` value to p7 code (recommended later; keep statement-only in v1 to minimize surface area).
+
+### 20.6 Host hook: observing fibers spawned by p7 (`on_fiber_spawn`)
+To preserve embedding control, runtimes that enable the Fiber extension must provide a host hook that is invoked whenever p7 code spawns a new fiber:
+
+- Hook name (conceptual): `on_fiber_spawn(handle: FiberHandle, info: FiberSpawnInfo) -> unit`
+
+Where:
+- `FiberHandle` is an opaque host value that can be passed to `resume`.
+- `FiberSpawnInfo` is implementation-defined metadata. Recommended fields:
+  - spawned function name (if available)
+  - optional source location (if available)
+  - optional parent fiber handle (if spawned from within a fiber) [[TODO]]
+
+Semantics:
+- The runtime invokes the hook synchronously during `spawn` execution (i.e. before `spawn` completes).
+- The host may record the handle and decide scheduling policy externally.
+
+Constraints:
+- The hook must not itself resume the new fiber re-entrantly while `spawn` is still executing, unless the implementation explicitly guarantees re-entrancy safety. [[TODO]] decide (recommended for v1: disallow re-entrant resume during hook delivery).
+
+### 20.7 Scheduling policy (informative)
+Scheduling is not part of the core language semantics. A fiber yields control only at explicit `yield`, `return`, or `throw` boundaries; when and whether it is resumed is controlled by the host/runtime.
+
+Example host policy for games:
+- Host resumes selected fibers at most once per frame (or on a fixed tick).
+- `yield;` represents a cooperative checkpoint; a frame-based policy can treat each yield as "pause until next frame".
+
+### 20.8 Interaction with `&T` borrowed views
 Because `yield` suspends execution, values of type `&T` must not escape across suspension points.
 
 In v1, to avoid introducing lifetime tracking, implementations must enforce a conservative restriction such as:
