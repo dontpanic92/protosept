@@ -41,7 +41,7 @@ Top-level executable statements are not allowed in v1; execution begins by calli
 Identifiers start with `_` or a letter and continue with letters, digits, or `_`.
 
 ### 2.2 Keywords (reserved)
-`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `try`
+`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `try`, `loop`, `break`, `continue`
 
 [[TODO]]: confirm final keyword set; keep minimal.
 
@@ -107,7 +107,7 @@ Views compose naturally with nullability:
 
 > Important: `&T` is *not* a heap box and is *not* an owned reference.
 
-There is **no** `&mut T` in v1. All shared mutation and escaping references are done via `box<T>` (§3.6, §7.5).
+There is **no** `&mut T` in v1. All shared mutation and escaping references are done via `box<T>` (§3.6, §7.4).
 
 ### 3.6 Owned heap (box) type: `box<T>`
 `box<T>` is an **owned heap-allocated container** that stores a `T` and provides **stable identity** and **shared, escapable reference-like semantics**.
@@ -159,22 +159,42 @@ Examples:
 
 ---
 
-## 5. Bindings (slots)
+## 5. Bindings (slots), shadowing, and rebind
 
 ### 5.1 Slots and `let`
 `let x = expr;` introduces an immutable slot (single-assignment binding).
 
-Reassignment is not supported in v1:
+Reassignment to an existing slot is not supported in v1:
 - `x = expr` is always a compile-time error.
 
-Rationale: avoid confusion between “mutable slot” and “mutable object”; mutation is explicit via `box<T>`.
+### 5.2 Shadowing (rebind)
+A `let` may introduce a new binding with the same name as an existing binding in an outer scope:
 
-[[TODO]]: if needed later, introduce a separate feature for local variable reassignment (e.g. `var`) without changing `box<T>` semantics.
+```p7
+let a = 1;
+{
+  let a = 2;  // shadows outer a
+  a           // 2
+}
+a             // 1
+```
 
-### 5.2 Identity and mutation
-Mutation in v1 is performed only through:
-- `box<T>` field assignment (when `T` is a struct), and
-- boxed cell update operations (`*b = ...`) [[TODO]].
+This is **shadowing**, not mutation:
+- the outer binding is not modified
+- the new binding is visible only within its scope
+
+Type rule (v1):
+- If a name is shadowed, the new binding must have the **same type** as the shadowed binding (after inference), unless an explicit type annotation is provided on the new binding. [[TODO]] finalize whether explicit annotation may change type.
+
+Rationale: keep shadowing predictable and avoid turning it into an untyped “variable reuse” mechanism.
+
+### 5.3 Identity and mutation
+Mutation in v1 is performed only through `box<T>`:
+- field assignment on `box<Struct>` (e.g. `p.x = 1` where `p: box<Point>`)
+- boxed cell update operations (e.g. `*b = value`) [[TODO]] exact syntax
+
+There is no direct in-place mutation of value structs:
+- `s.x = 1` is illegal when `s: Struct` (non-box).
 
 ---
 
@@ -283,6 +303,7 @@ Expressions include:
 - field access
 - block expressions
 - `if` expressions
+- loop expressions (`loop ...`) (§8.5)
 - `try` expressions (error handling)
 
 ### 8.2 Block expressions
@@ -302,6 +323,102 @@ Value of a block:
 ### 8.4 Operators and precedence
 [[TODO]]: specify full operator set and precedence table.
 
+### 8.5 Loop expressions
+`loop` is an expression that repeats execution of a body until a `break` is executed (or a `throw` escapes). A `loop` may yield a value via `break value`.
+
+#### 8.5.1 Forms
+Two forms exist:
+
+1) Infinite loop:
+```p7
+loop {
+  body
+}
+```
+
+2) Loop with header bindings (init + step):
+```p7
+loop (init; step) {
+  body
+}
+```
+
+Where:
+- `init` is exactly **one** `let` binding evaluated once, before the first iteration.
+- `step` is exactly **one** `let` binding evaluated after each iteration that completes normally (i.e. not via `break`).
+- The `step` binding must bind the **same name** as `init`.
+
+Grammar sketch:
+- `init := let name = expr`
+- `step := let name = expr`  (same `name` as `init`)
+
+Example:
+```p7
+let out = loop (let i = 0; let i = i + 1) {
+  if i > 10 { break i; }
+};
+```
+
+To carry multiple pieces of state, use a single state value (struct or tuple):
+
+```p7
+struct State(i: int, sum: int);
+
+let sum = loop (let s = State(0, 0); let s = State(s.i + 1, s.sum + s.i)) {
+  if s.i > 10 { break s.sum; }
+};
+```
+
+#### 8.5.2 Scope and visibility of loop bindings
+A `loop (init; step) { body }` introduces a **loop scope**.
+
+- The binding introduced by `init` is defined in the loop scope and is visible in `body` and `step`.
+- The binding introduced by `step` becomes the binding for the next iteration in the loop scope.
+
+Outer bindings with the same name may exist; they are **shadowed** inside the loop scope and are unaffected by the loop.
+
+Example:
+```p7
+let i = 0;
+let out = loop (let i = 1; let i = i + 1) {
+  if i > 3 { break i; }
+};
+// out == 4
+// outer i is still 0
+```
+
+#### 8.5.3 Step evaluation
+Because `step` is a single `let` binding, its right-hand side is evaluated using the binding from the current iteration, and the new binding becomes visible at the start of the next iteration.
+
+#### 8.5.4 Control flow: `break` and `continue`
+Inside a loop body:
+
+- `break;` exits the loop and yields `unit`.
+- `break expr;` exits the loop and yields the value of `expr`.
+
+- `continue;` ends the current iteration early and proceeds to the next iteration:
+  - it executes the `step` clause (if present) and then begins the next iteration
+  - in `loop { ... }` without header, it simply begins the next iteration
+
+Type of a `loop` expression:
+- If a loop contains any `break expr;`, the loop expression's type is the common type of all break values.
+- If the loop uses only `break;`, the loop expression has type `unit`.
+
+[[TODO]]: define the exact “common type” rules (must be identical type in v1 recommended).
+
+#### 8.5.5 Normal completion
+A loop expression does not complete normally by reaching the end of its body; it runs until a `break` is executed, or until it throws.
+
+#### 8.5.6 `break` and `step` interaction
+- `break` does **not** execute the `step` clause.
+- `continue` **does** execute the `step` clause.
+
+#### 8.5.7 Interaction with `&T` views
+Because shadowing creates new bindings (new slots), a view `&x` taken in one iteration refers to that iteration’s binding and must not escape (§7). Views cannot be stored for use across iterations unless the viewed value is stored in a `box<T>` and accessed through the box.
+
+### 8.6 `try` expressions
+See §14.
+
 ---
 
 ## 9. Statements
@@ -311,6 +428,8 @@ Value of a block:
 - expression statement: `expr;`
 - `return expr;` or `return;` (returns `unit`)
 - `throw expr;`
+- `break;` and `break expr;` (only valid inside `loop`)
+- `continue;` (only valid inside `loop`)
 - declarations (functions/types) [[TODO]] where allowed
 
 ### 9.2 Return semantics
@@ -617,8 +736,11 @@ Requirements:
 - Nullability uses `?T` prefix (sugar for `nullable<T>`) (§3.4).
 - `&T` exists as read-only non-escapable view; no `&mut` (§3.5, §7).
 - Shared mutation and escaping references use `box<T>` (§3.6, §7.4).
-- Reassignment is not supported; `let` is single-assignment (§5).
-- Field assignment is allowed only through `box<Struct>` (§7.4, §11.4).
+- Reassignment is not supported; `let` is single-assignment (§5.1).
+- Shadowing (“rebind”) is supported: `let a = ...; let a = ...;` in inner scopes (§5.2).
+- `loop` is an expression and supports `break value` (§8.5).
+- `loop (init; step)` uses exactly one `let` in init and step, and `step` must bind the same name as `init` (§8.5.1).
+- Field assignment is allowed only through `box<Struct>` (§5.3, §7.4, §11.4).
 - Protos are structural and boxed-only (`box<P>`) (§12).
 - Structs are tuple-like only for fields; blocks are only for methods (§11).
 
@@ -637,7 +759,8 @@ Requirements:
 9) Define host ABI/value representation and ownership transfer
 10) Finalize proto cast syntax (`box<T>` -> `box<P>`) and runtime dispatch table caching
 11) Define precise semantics of `*box` read/write and member auto-deref
-12) Decide whether any form of local variable reassignment (`var`) will be supported later
+12) Finalize shadowing type rule (whether explicit annotation may change type)
+13) Finalize whether `&` can be taken of temporaries
 
 ---
 End.
