@@ -222,35 +222,81 @@ The same rule applies to:
 - passing arguments to parameters of type `T`
 - returning values of type `T`
 
-### 6.2 The `Copy` marker
-Types may opt into `Copy`. `Copy` indicates *implicit duplication* is allowed.
+### 6.2 Conformances (`struct[...]`) and implicit behavior
+A struct declaration may include a bracket list of **conformances**:
 
-Copy is **structural**:
-- Copying a primitive duplicates the bits/value.
-- Copying a struct duplicates each field (using each field’s copy rule).
-- Copying an array duplicates its storage and copies each element.  
-  Note: `array<T>` is immutable; implementations may optimize copying via shared storage (e.g. copy-on-write), but the semantics are “as if” a value copy occurred.
-- Copying a string duplicates its storage and copies its bytes/code units.  
-  Note: `string` is immutable; implementations may optimize copying via shared storage (e.g. copy-on-write), but the semantics are “as if” a value copy occurred.
+```p7
+struct[Conformance1, Conformance2] Name(
+  ...
+) {
+  ...
+}
+```
 
-Copying handles:
-- Copying a `box<T>` copies the handle (aliases the same boxed cell). `box<T>` is `Copy` by default (recommended).
+A conformance name in `struct[...]` is one of:
+- a **proto name** (e.g. `Printable`), or
+- a **built-in marker conformance** (currently: `Copy`).
 
-Eligibility:
-- A struct may be `Copy` only if all fields are `Copy` and the struct explicitly opts in.
-- `array<T>` is `Copy` iff `T` is `Copy` [[TODO]] (recommended: yes).
-- `string` is `Copy` iff it opts in; recommended: allow (immutable value semantics; implementation may share storage).
+For each conformance listed, the compiler:
+1) Performs a compile-time conformance check (structural).
+2) Enables certain *implicit* behaviors (coercions / operations) associated with that conformance.
 
-[[TODO]]: Syntax for opting into Copy: e.g. `struct A [Copy](...) { ... }` or similar.
+If a struct lists a conformance that it does not satisfy, compilation fails.
 
-### 6.3 Explicit copying and cloning
-p7 may provide explicit operations:
-- `copy(x)` : requires `T: Copy`, returns a copied value
-- `clone(x)` : requires `T: Clone`, returns a duplicated value
+Notes:
+- `struct[...]` does **not** inject methods or fields into the type. It only checks and enables implicit behaviors described in this specification.
+- The bracket list is about *implicitness*. A program may still use explicit casts/operations based on structural properties (see §12.3 and §6.4).
 
+[[TODO]]: precise grammar for the bracket list, including whether duplicates are allowed (recommended: disallow) and whether order matters (recommended: no).
+
+### 6.3 The `Copy` marker conformance
+`Copy` indicates that *implicit duplication* is allowed for a type.
+
+Copy is **structural**: a type is **Copy-eligible** if it can be duplicated by duplicating its parts (per the rules below). However, a type is treated as `Copy` (i.e. participates in implicit copy behavior) only if it both:
+- is Copy-eligible, and
+- declares `Copy` in `struct[...]`.
+
+In other words:
+- Copy-eligible is a structural property.
+- Declaring `[Copy]` opts a struct into implicit copy behavior.
+
+#### 6.3.1 Copy behavior
+When a value of type `T` is copied:
+- Primitives: duplicating a primitive duplicates the bits/value.
+- Structs: copying duplicates each field (using each field’s copy rule).
+- Arrays: copying duplicates the array value and copies each element.
+  - `array<T>` is immutable; implementations may optimize copying via shared storage (e.g. copy-on-write), but the semantics are “as if” a value copy occurred.
+- Strings: copying duplicates the string value.
+  - `string` is immutable; implementations may optimize copying via shared storage (e.g. copy-on-write), but the semantics are “as if” a value copy occurred.
+- Boxes: copying a `box<T>` copies the handle (aliases the same boxed cell). This is a shallow copy of the handle, not a deep copy of `T`.
+
+#### 6.3.2 Copy-eligibility
+- `int`, `float`, `bool`, `unit` are Copy-eligible.
+- `box<T>` is Copy-eligible (handle copy) and is `Copy` by default.
+- `?T` is Copy-eligible iff `T` is Copy-eligible.
+- `&T` is not `Copy` (and views are non-escapable regardless; §7.3).
+- `array<T>` is Copy-eligible iff `T` is Copy-eligible. [[TODO]] confirm this choice.
+- `string` is `Copy` by default (immutable value semantics; may share storage internally).
+
+User-defined structs:
+- A struct `S(...)` is Copy-eligible iff all of its field types are Copy-eligible.
+- A struct is treated as `Copy` (i.e. copies implicitly) only if it declares `[Copy]`.
+
+Policy choices:
+- `array<T>` default: if `array<T>` is Copy-eligible, it may be `Copy` by default or require explicit opt-in; [[TODO]] decide. (If defaulting to Copy, prefer doing so only when `T` is Copy-eligible.)
+
+### 6.4 Explicit copying
+p7 provides an explicit copying operation:
+
+- `copy(x)` : requires that `T` is Copy-eligible, and returns a copied value of type `T`.
+
+This operation may be used even if `T` does not declare `[Copy]`.
+Rationale: structural properties may be used explicitly, but implicit duplication must be opted into by declaring `[Copy]`.
+
+### 6.5 Clone
 [[TODO]]: Whether `Clone` exists in v1; recommended: postpone until needed.
 
-### 6.4 Drop / destruction
+### 6.6 Drop / destruction
 [[TODO]]: whether p7 exposes deterministic destructors. Likely **no** in v1 (GC-based runtime).
 
 ---
@@ -580,31 +626,15 @@ Restrictions in v1:
 - Overloads in proto are [[TODO]] (recommended: disallow in v1).
 
 ### 12.3 Converting a concrete box to a proto box
-A value of type `box<T>` may be converted to `box<P>` only with an explicit conversion, and only if `T` implements `P`.
+There are two ways to obtain a `box<P>` from a concrete `box<T>`:
 
-Example (cast syntax TBD):
-```p7
-let v = box(Vec2(1, 2));
-let p: box<Printable> = v as Printable;   // [[TODO]] exact syntax
-p.print(); // dynamic dispatch
-```
+1) **Explicit cast** (always allowed when `T` implements `P`):
+   - A value of type `box<T>` may be converted to `box<P>` with an explicit conversion, and only if `T` implements `P` structurally.
 
-Semantics:
-- The conversion does not allocate a new `T`; it reinterprets the existing box handle with an associated dispatch table for `P`.
-- If `T` does not implement `P`, the conversion is a compile-time error.
+2) **Implicit coercion** (allowed only when `T` declares conformance `[P]`):
+   - If `T` declares `P` in `struct[...]`, then a value of type `box<T>` is implicitly coercible to `box<P>` at coercion sites (e.g. `let` type annotation, argument passing, return).
 
-[[TODO]]: decide cast spelling:
-- `v as Printable` (where `Printable` is a proto)
-- or `v as box<Printable>`
-- or `to_proto<Printable>(v)`
-
-### 12.4 Dynamic dispatch
-Calling a proto method on `box<P>` performs dynamic dispatch:
-- `p.print()` invokes the concrete implementation for the dynamic type stored in `p`.
-
-### 12.5 Optional nominal conformance assertions (compiler hints)
-A struct declaration may include proto names as annotations to request an explicit compile-time conformance check:
-
+Examples (cast syntax TBD):
 ```p7
 struct[Printable] Vec2(
   x: float,
@@ -612,13 +642,28 @@ struct[Printable] Vec2(
 ) {
   pub fn print(&self) -> unit { ... }
 }
+
+let v = box(Vec2(1, 2));
+
+let p1: box<Printable> = v;                 // ok: implicit (Vec2 declares [Printable])
+let p2: box<Printable> = v as box<Printable>; // ok: explicit cast (always allowed if Vec2 implements Printable)
 ```
 
-Meaning:
-- `Vec2` must implement `Printable` structurally, otherwise compilation fails with a method mismatch error.
-- This does not change runtime dispatch or conversion rules; it is an assertion/documentation feature.
+Semantics:
+- Converting `box<T>` to `box<P>` does not allocate a new `T`; it reinterprets the existing box handle with an associated dispatch table for `P`.
+- If `T` does not implement `P`, the conversion is a compile-time error.
 
-[[TODO]]: whether `struct[...]` annotations are limited to proto names in v1 (recommended: yes).
+[[TODO]]: decide cast spelling:
+- `v as Printable` (where `Printable` is a proto)
+- or `v as box<Printable>`
+- or `to_proto<Printable>(v)`
+
+[[TODO]]: precisely define the set of coercion sites for implicit `box<T> -> box<P>`.
+
+### 12.4 Dynamic dispatch
+Calling a proto method on `box<P>` performs dynamic dispatch:
+- `p.print()` invokes the concrete implementation for the dynamic type stored in `p`.
+
 
 ### 12.6 Downcasting / type tests
 [[TODO]]: Provide runtime type tests and downcasts for proto boxes, e.g.:
@@ -772,6 +817,12 @@ Requirements:
 - Integer width is i64; float width is f64 (§3.1).
 - Integer overflow traps by default; wraparound addition is available via `wrapping_add` (§15.1.1).
 - Protos are structural and boxed-only (`box<P>`) (§12).
+- `struct[...]` declares conformances and enables implicit behaviors:
+  - `[Copy]` enables implicit copying for Copy-eligible structs (§6.3).
+  - `[P]` enables implicit `box<T> -> box<P>` coercions for proto `P` (§12.3).
+- Explicit operations/casts remain available based on structural properties:
+  - `copy(x)` duplicates Copy-eligible values even without `[Copy]` (§6.4).
+  - explicit `as box<P>` is available when `T` implements `P` (§12.3).
 - Structs are tuple-like only for fields; blocks are only for methods (§11).
 
 ---
@@ -779,19 +830,21 @@ Requirements:
 ## 19. Open items / TODO list
 
 1) Decide float NaN/Inf behavior details and conversions
-2) Decide if `string` is `Copy` by default (copy may share storage internally)
-3) Decide `copy(x)`/`clone(x)` existence and naming
-4) Define arrays: literal syntax, indexing, bounds behavior
-5) Define boxed array mutation APIs and semantics
-6) Define string: encoding, indexing, slicing
-7) Define enum payload variants (if any)
-8) Define error model: thrown value types, matching/patterns
-9) Define module system & visibility
-10) Define host ABI/value representation and ownership transfer
-11) Finalize proto cast syntax (`box<T>` -> `box<P>`) and runtime dispatch table caching
-12) Define precise semantics of `*box` read/write and member auto-deref (including reads of non-`Copy` from a box)
-13) Finalize shadowing type rule (whether explicit annotation may change type)
-14) Finalize whether `&` can be taken of temporaries
+2) Decide `string` default Copy policy (recommended: Copy by default)
+3) Decide `copy(x)` surface syntax and naming
+4) Decide `array<T>` default Copy policy
+5) Define arrays: literal syntax, indexing, bounds behavior
+6) Define boxed array mutation APIs and semantics
+7) Define string: encoding, indexing, slicing
+8) Define enum payload variants (if any)
+9) Define error model: thrown value types, matching/patterns
+10) Define module system & visibility
+11) Define host ABI/value representation and ownership transfer
+12) Finalize proto cast syntax (`box<T>` -> `box<P>`) and runtime dispatch table caching
+13) Define precise semantics of `*box` read/write and member auto-deref (including reads of non-`Copy` from a box)
+14) Finalize shadowing type rule (whether explicit annotation may change type)
+15) Finalize whether `&` can be taken of temporaries
+16) Precisely define coercion sites for implicit `box<T> -> box<P>` when `T` declares `[P]`
 
 ---
 End.
