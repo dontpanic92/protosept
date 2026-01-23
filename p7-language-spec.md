@@ -41,9 +41,10 @@ Top-level executable statements are not allowed in v1; execution begins by calli
 Identifiers start with `_` or a letter and continue with letters, digits, or `_`.
 
 ### 2.2 Keywords (reserved)
-`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `try`, `loop`, `break`, `continue`
+`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `try`, `loop`, `break`, `continue`, `yield`
 
 [[TODO]]: confirm final keyword set; keep minimal.
+Note: `yield` is reserved even though it is only valid when the Fiber extension is enabled (§20).
 
 ### 2.3 Comments
 - Line comments: `// ...`
@@ -190,7 +191,7 @@ This is **shadowing**, not mutation:
 - the new binding is visible only within its scope
 
 Type rule (v1):
-- If a name is shadowed, the new binding must have the **same type** as the shadowed binding (after inference), unless an explicit type annotation is provided on the new binding. [[TODO]] finalize whether explicit annotation may change the type.
+- If a name is shadowed, the new binding must have the **same type** as the shadowed binding (after inference), unless an explicit type annotation is provided on the new binding. [[TODO]] finalize whether explicit annotation may change type.
 
 Rationale: keep shadowing predictable and avoid turning it into an untyped “variable reuse” mechanism.
 
@@ -252,7 +253,7 @@ Notes:
 ### 6.3 The `Copy` marker conformance
 `Copy` indicates that *implicit duplication* is allowed for a type.
 
-Copy is **structural**: a type is **Copy-eligible** if it can be duplicated by duplicating its parts (per the rules below). However, a type is treated as `Copy` (i.e. participates in implicit copy behavior) only if it both:
+Copy is **structural**: a type is **Copy-eligible** if it can be duplicated by duplicating its parts (per the rules below). However, a type is treated as `Copy` (i.e. participates in implicit copy behavior) only if it:
 - is Copy-eligible, and
 - declares `Copy` in `struct[...]`.
 
@@ -364,6 +365,8 @@ Expressions include:
 - `if` expressions
 - loop expressions (`loop ...`) (§8.5)
 - `try` expressions (error handling)
+
+Note: `yield` is a statement/expression only under the Fiber extension (§20); it is not part of core expressions in v1.
 
 ### 8.2 Block expressions
 A block `{ ... }` contains a sequence of statements.
@@ -486,9 +489,10 @@ See §14.
 - `let` binding: `let x = expr;`
 - expression statement: `expr;`
 - `return expr;` or `return;` (returns `unit`)
-- `throw expr;`
+- `throw expr;` (only valid in `fn[throws]` / `fn[throws<E>]`; §14)
 - `break;` and `break expr;` (only valid inside `loop`)
 - `continue;` (only valid inside `loop`)
+- `yield;` (only valid in `fn[fiber]` when Fiber extension is enabled; §20)
 - declarations (functions/types) [[TODO]] where allowed
 
 ### 9.2 Return semantics
@@ -502,18 +506,36 @@ Functions return the value of:
 
 ## 10. Functions
 
-### 10.1 Function declaration
-Form:
+### 10.1 Function declaration (core)
+Core form:
 ```p7
 fn name(param1: T1, param2: T2, ...) -> R {
   ...
 }
 ```
 
-- Return type `-> R` may be optional; if omitted, default is `unit`. [[TODO]] confirm.
+- Return type `-> R` may be optional; if omitted, default is `unit`.
 - Parameters are slots local to the function body.
 
-### 10.2 Parameter passing
+### 10.2 Function signature qualifiers (`fn[...]`)
+A function declaration may include an optional bracket list of **signature qualifiers**:
+
+```p7
+fn[qual1, qual2, ...] name(params...) -> R { ... }
+```
+
+Signature qualifiers are **part of the function's type and calling contract**. They are not general-purpose attributes.
+
+Rules:
+- Order does not matter.
+- Duplicates are disallowed. [[TODO]]: specify diagnostics.
+- In v1, the set of allowed qualifiers is closed and limited to:
+  - `throws` and `throws<E>`
+  - `fiber` (Fiber extension; §20)
+
+[[TODO]]: finalize grammar for qualifiers including whether spaces are permitted in `throws<E>`.
+
+### 10.3 Parameter passing
 For parameter type `T`:
 - argument passing follows move-by-default/copy rules (§6).
 
@@ -523,7 +545,7 @@ For parameter type `&T`:
 
 Mutating inputs requires `box<T>` parameters (including `box<array<T>>` for arrays).
 
-### 10.3 Named arguments and defaults
+### 10.4 Named arguments and defaults
 p7 supports:
 - named arguments: `f(x = 1, y = 2)`
 - default values in parameter declarations: `fn f(x: int = 1) { ... }`
@@ -645,7 +667,7 @@ struct[Printable] Vec2(
 
 let v = box(Vec2(1, 2));
 
-let p1: box<Printable> = v;                 // ok: implicit (Vec2 declares [Printable])
+let p1: box<Printable> = v;                   // ok: implicit (Vec2 declares [Printable])
 let p2: box<Printable> = v as box<Printable>; // ok: explicit cast (always allowed if Vec2 implements Printable)
 ```
 
@@ -663,7 +685,6 @@ Semantics:
 ### 12.4 Dynamic dispatch
 Calling a proto method on `box<P>` performs dynamic dispatch:
 - `p.print()` invokes the concrete implementation for the dynamic type stored in `p`.
-
 
 ### 12.6 Downcasting / type tests
 [[TODO]]: Provide runtime type tests and downcasts for proto boxes, e.g.:
@@ -696,12 +717,18 @@ Enum variants are referenced as:
 
 ---
 
-## 14. Error handling (`throw`, `try`)
+## 14. Error handling (`throw`, `try`) and typed throws
 
 ### 14.1 Throwing
 `throw expr;` aborts evaluation and transfers control to the nearest enclosing `try`.
 
-[[TODO]]: whether thrown values must be of an enum type or any value is allowed.
+Constraints:
+- Thrown values must be of an `enum` type (including payload enums if/when supported).
+- `throw` is only permitted in functions declared with `fn[throws]` or `fn[throws<E>]`.
+
+If a function is declared:
+- `fn[throws] ...`: it may `throw` any enum value.
+- `fn[throws<E>] ...`: it may `throw` only values of enum type `E`.
 
 ### 14.2 Try expressions
 Form:
@@ -721,7 +748,14 @@ Rules:
 - Pattern syntax and matching rules are [[TODO]].
 - Type of the `try` expression is the common type of normal result and else result.
 
-[[TODO]]: represent error types and whether “throws” is typed/checked. (Current direction: no user-defined effects in v1.)
+### 14.3 Calling `throws` functions (propagation vs handling)
+Calling a function declared with `throws` is permitted only if:
+1) The call is within the dynamic extent of a `try ... else ...` expression which handles any thrown value, or
+2) The enclosing function is also declared with `throws` and the thrown type is compatible.
+
+Compatibility rule (recommended for v1):
+- `throws<E>` may be called only from `throws<E>` (exact match), unless handled by `try`.
+- `throws` (unconstrained) may be called only from `throws` (unconstrained), unless handled by `try`.
 
 ---
 
@@ -783,6 +817,8 @@ Host calls a named p7 function with arguments and receives either:
 - a returned value, or
 - an error/exception object if `throw` escapes.
 
+If the function is declared `fn[throws]` / `fn[throws<E>]`, hosts are encouraged to expose this as a structured result (e.g. `Ok(value)` / `Err(enum_value)`), but the concrete API is implementation-defined.
+
 [[TODO]]: define API and error mapping.
 
 ### 17.2 Calling host functions from p7
@@ -824,6 +860,8 @@ Requirements:
   - `copy(x)` duplicates Copy-eligible values even without `[Copy]` (§6.4).
   - explicit `as box<P>` is available when `T` implements `P` (§12.3).
 - Structs are tuple-like only for fields; blocks are only for methods (§11).
+- `throw` is restricted to enum values and only permitted in `fn[throws]` functions (§14.1).
+- `fn[...]` may include signature qualifiers `throws`, `throws<E>`, and (extension) `fiber` (§10.2, §20).
 
 ---
 
@@ -837,7 +875,7 @@ Requirements:
 6) Define boxed array mutation APIs and semantics
 7) Define string: encoding, indexing, slicing
 8) Define enum payload variants (if any)
-9) Define error model: thrown value types, matching/patterns
+9) Define error model: thrown value types, matching/patterns (now constrained to enums)
 10) Define module system & visibility
 11) Define host ABI/value representation and ownership transfer
 12) Finalize proto cast syntax (`box<T>` -> `box<P>`) and runtime dispatch table caching
@@ -845,6 +883,80 @@ Requirements:
 14) Finalize shadowing type rule (whether explicit annotation may change type)
 15) Finalize whether `&` can be taken of temporaries
 16) Precisely define coercion sites for implicit `box<T> -> box<P>` when `T` declares `[P]`
+18) Specify whether `try` can narrow thrown enum types in match-like else blocks
+19) Fiber extension: specify borrow/view restrictions across `yield` (recommended: disallow `&T` live across `yield`)
+
+---
+
+## 20. Fiber extension (cooperative coroutines)
+
+Status: Extension (optional in runtime / implementation).
+
+Goal:
+- Enable cooperative coroutines where script code can explicitly yield control back to the host (or a host-provided scheduler), preserving execution context and resuming later.
+
+### 20.1 Enabling the extension
+- When the Fiber extension is not enabled, `fn[fiber]` and `yield` are compile-time errors.
+- When enabled, `fn[fiber]` and `yield` are available as specified below.
+
+[[TODO]]: define how a program declares it requires the fiber extension (compiler flag, module import, or host configuration).
+
+### 20.2 The `fiber` function qualifier
+A function declared with `fn[fiber]` is a **fiber function**.
+
+Properties:
+- Fiber functions may suspend execution via `yield;`.
+- Fiber functions are cooperatively scheduled: they run until they explicitly `yield`, `return`, or `throw`.
+
+Calling convention constraints:
+- `yield` is only valid inside a `fn[fiber]` function body.
+- The runtime must provide a way for the host to create and resume fiber executions (§20.4).
+- Direct calls to a fiber function require a fiber context (i.e. may only occur within another `fn[fiber]`), otherwise compile-time error.
+- Non-fiber code should start fibers via a host/runtime API that returns a fiber handle (§20.4).
+
+### 20.3 `yield;` statement
+Form:
+- `yield;`
+
+Semantics:
+- Suspends the current fiber execution.
+- Transfers control to the entity that resumed the fiber (host or scheduler).
+- When resumed again, execution continues immediately after the `yield;`.
+
+Typing:
+- `yield;` is a statement. It yields no value to p7 code (no resume inputs in v1).
+
+Restrictions:
+- `yield;` is only permitted inside a `fn[fiber]` function.
+
+### 20.4 Host interop requirements for fibers
+When the Fiber extension is enabled, the host/runtime must support:
+- Creating a fiber execution from a `fn[fiber]` function and its arguments.
+- Resuming a fiber execution.
+
+A minimal host-driven protocol is:
+
+- Create/start: produce a fiber handle `H` (opaque).
+- Resume: `resume(H)` runs the fiber until it reaches one of:
+  1) `yield;`   => reports `Yielded`
+  2) returns    => reports `Returned(value)`
+  3) throws     => reports `Threw(error_enum)`
+
+Notes:
+- Fibers are single-threaded and cooperative (no preemption).
+- After `Returned` or `Threw`, the handle is complete and cannot be resumed further.
+
+[[TODO]]: specify concrete API surface and mapping to host language.
+[[TODO]]: specify whether yielding can be observed via debug hooks/profiling.
+
+### 20.5 Interaction with `&T` borrowed views
+Because `yield` suspends execution, values of type `&T` must not escape across suspension points.
+
+In v1, to avoid introducing lifetime tracking, implementations must enforce a conservative restriction such as:
+
+- A value of type `&T` must not be live across a `yield;` within a fiber function.
+
+[[TODO]]: finalize and specify the exact static restriction enforced by the compiler (e.g. ban `&` entirely in `fn[fiber]` in v1, or ban only across yield).
 
 ---
 End.
