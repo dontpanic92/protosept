@@ -4,7 +4,7 @@ Status: Draft
 Design goals (north star):
 - **Statically typed scripting**: concise, readable, low ceremony.
 - **Limited syntax/grammar**: features must pay rent in simplicity and interop.
-- **Correctness by default**: explicit nullability, explicit mutability, explicit borrowing.
+- **Correctness by default**: explicit nullability, explicit borrowing, explicit identity/mutation.
 - **Host interop**: easy to embed; predictable runtime values and errors.
 
 This document defines the *intended* semantics. Where implementation details are not finalized, sections use `[[TODO]]`.
@@ -27,6 +27,7 @@ A program is a sequence of top-level items:
 - Function declarations: `fn ...`
 - Struct declarations: `struct ...`
 - Enum declarations: `enum ...`
+- Proto declarations: `proto ...`
 
 [[TODO]]: module/import system and visibility rules at module boundaries.
 
@@ -40,7 +41,7 @@ Top-level executable statements are not allowed in v1; execution begins by calli
 Identifiers start with `_` or a letter and continue with letters, digits, or `_`.
 
 ### 2.2 Keywords (reserved)
-`fn`, `struct`, `enum`, `let`, `mut`, `pub`, `return`, `if`, `else`, `throw`, `try`
+`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `try`
 
 [[TODO]]: confirm final keyword set; keep minimal.
 
@@ -94,22 +95,38 @@ Examples:
 - `let x: ?int = null;`
 - `let y: int = x;`  // error unless proven non-null via control flow [[TODO]]
 
-### 3.5 Reference (borrow) types
-p7 has **borrowed reference** types:
+### 3.5 Borrow (reference view) type: `&T`
+p7 has **borrowed reference views**:
 
-- `&T` : read-only borrowed reference to an existing slot/sub-location holding a `T`.
-- `&mut T` : mutable borrowed reference to an existing mutable slot/sub-location holding a `T`.
+- `&T` : a **read-only** borrowed view of an existing slot/sub-location holding a `T`.
 
-Borrowed references are **non-escapable** (§7).
+Borrowed views are **non-escapable** (§7).
 
-References compose naturally with nullability:
-- `&?T` is a reference to a nullable slot/value of type `?T`.
+Views compose naturally with nullability:
+- `&?T` is a view of a nullable slot/value of type `?T`.
 
-> Important: `&T` / `&mut T` are *not* heap boxes and are *not* owned references.
+> Important: `&T` is *not* a heap box and is *not* an owned reference.
 
-### 3.6 User-defined types
+There is **no** `&mut T` in v1. All shared mutation and escaping references are done via `box<T>` (§3.6, §7.5).
+
+### 3.6 Owned heap (box) type: `box<T>`
+`box<T>` is an **owned heap-allocated container** that stores a `T` and provides **stable identity** and **shared, escapable reference-like semantics**.
+
+Intuition:
+- `T` is a value.
+- `box<T>` is a reference-like handle to a heap cell containing a `T`.
+
+Properties:
+- `box<T>` values **can escape** (stored in structs/arrays, returned, captured, interop).
+- Copying a `box<T>` copies the handle (aliases the same boxed cell).
+- Mutation of the boxed contents is visible through all aliases (shared mutation).
+
+[[TODO]]: exact surface syntax for boxing; `box(expr)` is recommended.
+
+### 3.7 User-defined types
 - `struct Name(...) { ... }` defines a nominal product type with fields (tuple-like) and an optional method block.
 - `enum Name { ... }` defines a nominal sum type.
+- `proto Name { ... }` defines a structural interface for dynamic dispatch (§12).
 
 No inheritance.
 
@@ -128,7 +145,7 @@ Examples: `1.0`, `3.1415`, `1_000.5`
 [[TODO]]: exponent notation.
 
 ### 4.3 String literals
-Double-quoted strings: "hello"  
+Double-quoted strings: `"hello"`  
 [[TODO]]: escapes.
 
 ### 4.4 Boolean literals
@@ -142,24 +159,22 @@ Examples:
 
 ---
 
-## 5. Bindings, storage, and mutability
+## 5. Bindings (slots)
 
 ### 5.1 Slots and `let`
-A binding introduces a slot:
+`let x = expr;` introduces an immutable slot (single-assignment binding).
 
-- `let x = expr;` introduces an **immutable slot**.
-- `let mut x = expr;` introduces a **mutable slot**.
+Reassignment is not supported in v1:
+- `x = expr` is always a compile-time error.
 
-Slot mutability is a static property used to validate assignments and borrows.
+Rationale: avoid confusion between “mutable slot” and “mutable object”; mutation is explicit via `box<T>`.
 
-### 5.2 Assignment to slots
-- Assignment `x = expr` is valid only if `x` is a mutable slot.
-- Otherwise it is a compile-time error.
+[[TODO]]: if needed later, introduce a separate feature for local variable reassignment (e.g. `var`) without changing `box<T>` semantics.
 
-### 5.3 Mutability and aliasing intent
-p7’s mutability model is **slot-based**:
-- You may only mutate through a mutable slot or a mutable borrow of a mutable slot.
-- There is no promise of deep immutability of heap graphs; the promise is about writes through the language’s mutation operations.
+### 5.2 Identity and mutation
+Mutation in v1 is performed only through:
+- `box<T>` field assignment (when `T` is a struct), and
+- boxed cell update operations (`*b = ...`) [[TODO]].
 
 ---
 
@@ -186,6 +201,9 @@ Copy is **structural**:
 - Copying an array duplicates its storage and copies each element.
 - Copying a string duplicates its storage and copies its bytes/code units.
 
+Copying handles:
+- Copying a `box<T>` copies the handle (aliases the same boxed cell). `box<T>` is `Copy` by default (recommended).
+
 Eligibility:
 - A struct may be `Copy` only if all fields are `Copy` and the struct explicitly opts in.
 - `array<T>` is `Copy` iff `T` is `Copy` [[TODO]] (recommended: yes).
@@ -205,58 +223,51 @@ p7 may provide explicit operations:
 
 ---
 
-## 7. Borrowed references: `&T` and `&mut T`
+## 7. Borrowed views (`&T`) and boxes (`box<T>`)
 
-### 7.1 Meaning
-A borrowed reference refers to an **existing storage location** (slot or sub-location).
+### 7.1 Meaning of `&T` (read-only view)
+A borrowed view refers to an **existing storage location** (slot or sub-location).
 
-If `r` refers to `x`:
-- `*r` reads the current value of `x`
-- `*r = v` updates `x` only when `r: &mut T`
+If `r: &T` refers to `x: T`:
+- `*r` reads the current value of `x`.
 
-Example (intended behavior):
-```p7
-let mut x = 1;
-let r = &mut x;
-x = 2;
-*r    // evaluates to 2
-```
-
-### 7.2 Taking borrows
+### 7.2 Taking views
 - `&x` is allowed when `x` is addressable (slot or sub-location).
-- `&mut x` is allowed only when `x` is a mutable slot/sub-location.
 
-Illegal:
-- `let x = 1; let r = &mut x;`  // cannot mut-borrow immutable slot
+[[TODO]]: whether `&` can be taken of temporaries (recommended: no in v1).
 
 ### 7.3 Non-escapable rule (hard rule in v1)
-Values of type `&T` and `&mut T` **must not escape** their scope.
+Values of type `&T` **must not escape** their scope.
 
-A borrow value cannot be:
+A view value cannot be:
 - returned from a function
 - assigned into a struct field
 - assigned into an array element
-- stored in any heap-allocated value
+- stored in any heap-allocated value (including `box<...>`)
 - stored in globals/statics
 - captured by closures (if/when closures exist)
-- passed to host interop boundaries as a persistent value [[TODO]] (borrowing may be supported only during a call)
+- passed to host interop boundaries as a persistent value [[TODO]] (viewing may be supported only during a call)
 
 Consequences:
-- user-defined types cannot contain fields of type `&...` or `&mut ...`
-- arrays cannot contain `&...` or `&mut ...` elements
+- user-defined types cannot contain fields of type `&...`
+- arrays cannot contain `&...` elements
 
 This avoids needing escape analysis or lifetime tracking in v1.
 
-### 7.4 Borrow exclusivity rules
-[[TODO]]: Choose one of:
-- (A) No aliasing rules enforced (easiest, but can surprise)
-- (B) Simple borrow rules: at most one `&mut` at a time, no `&` while `&mut` exists, etc. (Rust-like but can be simplified)
+### 7.4 Meaning of `box<T>`
+A `box<T>` contains a `T` and provides:
+- stable identity
+- escapable storage
+- shared mutation (mutation through a box is visible through all aliases)
 
-Recommended for simplicity & correctness: **a simplified Rust-like rule** enforced lexically within a function body:
-- You cannot take `&mut x` if there exists an active borrow of `x` (either `&` or `&mut`) whose scope overlaps.
-- You cannot take `&x` if there exists an active `&mut x` whose scope overlaps.
+Operations (surface syntax TBD):
+- Construction: `box(expr)` allocates a new boxed cell containing `expr`.
+- Read/deref: `*b` reads the inner `T` (by move or copy depending on `T`) [[TODO]].
+- Write/set: `*b = expr` writes a new `T` into the cell [[TODO]].
+- Member access auto-deref: `b.field` and `b.method(...)` access the inner value. [[TODO]] (recommended: yes).
+- Field assignment: `b.field = expr` updates the inner struct field (only valid when `b: box<S>`).
 
-[[TODO]]: define “active borrow scope” precisely (likely lexical: until end of statement/block).
+[[TODO]]: define whether `b.field = ...` desugars to read-modify-write of the boxed `S` or a direct interior update.
 
 ---
 
@@ -281,19 +292,6 @@ Value of a block:
 - If the final statement is an expression statement without a trailing semicolon, the block evaluates to that expression’s value.
 - Otherwise the block evaluates to `unit`.
 
-Examples:
-```p7
-let x = {
-  let a = 1;
-  a + 2   // no semicolon => value is 3
-};
-
-let y = {
-  let a = 1;
-  a + 2;  // semicolon => value is unit
-};
-```
-
 ### 8.3 `if` expression
 `if condition then_expr else else_expr`
 
@@ -309,7 +307,7 @@ let y = {
 ## 9. Statements
 
 ### 9.1 Statement forms
-- `let` binding: `let x = expr;`, `let mut x = expr;`
+- `let` binding: `let x = expr;`
 - expression statement: `expr;`
 - `return expr;` or `return;` (returns `unit`)
 - `throw expr;`
@@ -341,9 +339,11 @@ fn name(param1: T1, param2: T2, ...) -> R {
 For parameter type `T`:
 - argument passing follows move-by-default/copy rules (§6).
 
-For parameter type `&T` / `&mut T`:
-- caller must pass an addressable location and use explicit `&` / `&mut` at the call site.
+For parameter type `&T`:
+- caller must pass an addressable location and use explicit `&` at the call site.
 - no implicit borrowing in v1.
+
+Mutating inputs requires `box<T>` parameters.
 
 ### 10.3 Named arguments and defaults
 p7 supports:
@@ -382,13 +382,17 @@ struct Vec2(
   pub x: float = 0,
   pub y: float = 0,
 ) {
-  pub fn add(self, other: Self) -> Self {
-    Self(self.x + other.x, self.y + other.y) [[TODO]] // placeholder if tuple constructor differs
+  pub fn length(&self) -> float {
+    // ...
   }
 }
 ```
 
-[[TODO]]: `Self(...)` constructor syntax for tuple-like structs.
+Receivers in v1:
+- `self` (by value; move/copy)
+- `&self` (read-only view)
+
+There is no `&mut self` in v1. In-place mutation APIs should use `box<Self>` parameters (or be expressed as free functions taking `box<T>`).
 
 ### 11.3 Construction
 Struct values are constructed by calling the struct name:
@@ -398,34 +402,116 @@ Struct values are constructed by calling the struct name:
 [[TODO]]: whether a `Self(...)` expression exists inside methods.
 
 ### 11.4 Field access and assignment
-- Access: `p.x`
-- Assignment: `p.x = v` only allowed if `p` is mutable (slot or `&mut` borrow), per §5.3.
+- Access: `s.x` is allowed on a struct value `s: S` (read-only).
+- Assignment: `s.x = v` is **illegal** unless `s` is a `box<S>`.
 
-### 11.5 Methods (static dispatch sugar)
-Receiver forms:
-- `self` : by-value receiver (move/copy)
-- `&self` : read-only borrow receiver
-- `&mut self` : mutable borrow receiver
-
-Method call desugaring:
-- `a.add(b)` desugars to `Vec2.add(a, b)` (or a mangled free function) with static resolution.
-
-No inheritance or dynamic dispatch.
+Example:
+```p7
+let p = box(Point(1, 2));
+p.x = 10; // ok
+```
 
 ---
 
-## 12. Enums
+## 12. Protos (structural polymorphism and dynamic dispatch)
 
-### 12.1 Declaration
+### 12.1 Overview
+A `proto` defines a **structural interface**: a set of required method signatures.
+
+A concrete type `T` implements a proto `P` if `T` provides methods matching every required signature in `P`.
+
+Proto values are **boxed-only**:
+- The only way to hold a dynamic-dispatch value of proto type `P` is via `box<P>`.
+- There is no plain value of type `P`.
+
+Rationale:
+- keeps dispatch and ownership uniform
+- avoids hidden boxing
+- makes sharing/escaping explicit
+
+### 12.2 Proto declaration
+Form:
+```p7
+proto Printable {
+  fn print(&self) -> unit;
+}
+```
+
+Rules:
+- Method name must match exactly.
+- Parameter types and return type must match exactly.
+- Receiver must be `&self` in v1.
+
+Restrictions in v1:
+- Proto methods must use `&self` receiver only.
+- Proto methods must not mention `Self` as a type (in parameters or return types). [[TODO]] may be added later.
+- Overloads in proto are [[TODO]] (recommended: disallow in v1).
+
+### 12.3 Converting a concrete box to a proto box
+A value of type `box<T>` may be converted to `box<P>` only with an explicit conversion, and only if `T` implements `P`.
+
+Example (cast syntax TBD):
+```p7
+let v = box(Vec2(1, 2));
+let p: box<Printable> = v as Printable;   // [[TODO]] exact syntax
+p.print(); // dynamic dispatch
+```
+
+Semantics:
+- The conversion does not allocate a new `T`; it reinterprets the existing box handle with an associated dispatch table for `P`.
+- If `T` does not implement `P`, the conversion is a compile-time error.
+
+[[TODO]]: decide cast spelling:
+- `v as Printable` (where `Printable` is a proto)
+- or `v as box<Printable>`
+- or `to_proto<Printable>(v)`
+
+### 12.4 Dynamic dispatch
+Calling a proto method on `box<P>` performs dynamic dispatch:
+- `p.print()` invokes the concrete implementation for the dynamic type stored in `p`.
+
+### 12.5 Optional nominal conformance assertions (compiler hints)
+A struct declaration may include proto names as annotations to request an explicit compile-time conformance check:
+
+```p7
+struct[Printable] Vec2(
+  x: float,
+  y: float,
+) {
+  pub fn print(&self) -> unit { ... }
+}
+```
+
+Meaning:
+- `Vec2` must implement `Printable` structurally, otherwise compilation fails with a method mismatch error.
+- This does not change runtime dispatch or conversion rules; it is an assertion/documentation feature.
+
+[[TODO]]: whether `struct[...]` annotations are limited to proto names in v1 (recommended: yes).
+
+### 12.6 Downcasting / type tests
+[[TODO]]: Provide runtime type tests and downcasts for proto boxes, e.g.:
+- `p is Vec2`
+- `p as Vec2` returning `?box<Vec2>` or throwing on failure
+
+### 12.7 Nullability
+- `?box<P>` is the nullable proto-handle type.
+- `box<P>` itself is non-null.
+
+---
+
+## 13. Enums
+
+### 13.1 Declaration
 ```p7
 enum SomeErrors {
   NumberIsNot42,
   [[TODO]]: payload variants? e.g. Number(i:int)
 }
 ```
+
 v1 may support only unit variants (names only). Payload variants are [[TODO]].
 
-### 12.2 Values and namespacing
+### 13.2 Values and namespacing
 Enum variants are referenced as:
 - `SomeErrors.NumberIsNot42`
 
@@ -433,14 +519,14 @@ Enum variants are referenced as:
 
 ---
 
-## 13. Error handling (`throw`, `try`)
+## 14. Error handling (`throw`, `try`)
 
-### 13.1 Throwing
+### 14.1 Throwing
 `throw expr;` aborts evaluation and transfers control to the nearest enclosing `try`.
 
 [[TODO]]: whether thrown values must be of an enum type or any value is allowed.
 
-### 13.2 Try expressions
+### 14.2 Try expressions
 Form:
 - `try expr else fallback_expr`
 - or a match-like else block:
@@ -462,15 +548,15 @@ Rules:
 
 ---
 
-## 14. Standard conversions and type checking
+## 15. Standard conversions and type checking
 
-### 14.1 Numeric coercions
+### 15.1 Numeric coercions
 [[TODO]]: decide numeric coercions.
 Recommendation for scripting:
 - allow implicit `int -> float` promotion in arithmetic/comparison
 - require explicit conversion elsewhere
 
-### 14.2 Nullability checks
+### 15.2 Nullability checks
 Rules for using `?T`:
 - You cannot use a `?T` where `T` is required unless:
   - you check for non-null in control flow and the compiler narrows the type, or
@@ -479,11 +565,12 @@ Rules for using `?T`:
 
 ---
 
-## 15. Memory model / runtime model (informative)
+## 16. Memory model / runtime model (informative)
 
 p7 uses a GC-based runtime. However, the language semantics are defined in terms of:
 - value moves/copies
-- borrowed references that alias slots (non-escapable)
+- borrowed views that alias slots (non-escapable)
+- boxed identity containers (`box<T>`) that can escape and can be mutated
 
 Implementation may represent values on stack or heap; this is not semantically observable.
 
@@ -491,59 +578,66 @@ Implementation may represent values on stack or heap; this is not semantically o
 - int/float/bool/unit/null
 - string
 - array
-- struct instances
+- struct instances (values)
+- box instances (handles)
 - enum values
-- (no borrowed references as persistent values)
+- proto dispatch tables / type ids as needed
+- (no borrowed views as persistent values)
 
 ---
 
-## 16. Host interop (v1 requirements)
+## 17. Host interop (v1 requirements)
 
-### 16.1 Calling into p7
+### 17.1 Calling into p7
 Host calls a named p7 function with arguments and receives either:
 - a returned value, or
 - an error/exception object if `throw` escapes.
 
 [[TODO]]: define API and error mapping.
 
-### 16.2 Calling host functions from p7
+### 17.2 Calling host functions from p7
 Host may register functions callable by p7.
 
 Requirements:
 - Interop supports `?T` mapping to/from host null.
-- Borrowed references (`&T` / `&mut T`) do not cross the boundary as persistent values.
+- Borrowed views (`&T`) do not cross the boundary as persistent values.
   They may be passed to host only for the duration of a call, or disallowed entirely in v1 [[TODO]].
+- Boxes (`box<T>`) are the primary mechanism for passing identity/mutable objects across the boundary.
+- Proto boxes (`box<P>`) are the primary mechanism for passing dynamically-dispatched objects across the boundary.
 
-### 16.3 Ownership rules
+### 17.3 Ownership rules
 - Passing a value type `T` to host follows move/copy semantics.
-- Arrays/strings are values; host receives either owned copies or shared views depending on ABI [[TODO]].
+- Boxes are handles; passing `box<T>` copies/moves the handle per rules in §6.
 
 ---
 
-## 17. Summary of chosen decisions (from discussion)
+## 18. Summary of chosen decisions (from discussion)
 
 - Move-by-default (§6.1).
-- Both `&T` and `&mut T` exist (§7).
-- All `&...` are non-escapable (hard rule in v1) (§7.3).
 - Nullability uses `?T` prefix (sugar for `nullable<T>`) (§3.4).
+- `&T` exists as read-only non-escapable view; no `&mut` (§3.5, §7).
+- Shared mutation and escaping references use `box<T>` (§3.6, §7.4).
+- Reassignment is not supported; `let` is single-assignment (§5).
+- Field assignment is allowed only through `box<Struct>` (§7.4, §11.4).
+- Protos are structural and boxed-only (`box<P>`) (§12).
 - Structs are tuple-like only for fields; blocks are only for methods (§11).
 
 ---
 
-## 18. Open items / TODO list
+## 19. Open items / TODO list
 
 1) Finalize integer/float widths
 2) Decide if `string` is `Copy` by default (copy allocates)
 3) Decide `copy(x)`/`clone(x)` existence and naming
-4) Define borrow exclusivity precisely (simple lexical rule recommended)
-5) Define arrays: literal syntax, indexing, bounds behavior
-6) Define string: encoding, indexing, slicing
-7) Define enum payload variants (if any)
-8) Define error model: thrown value types, matching/patterns
-9) Define module system & visibility
-10) Define host ABI/value representation and ownership transfer
-11) Decide on implicit int->float promotion rules
-12) Define `Self(...)` construction syntax for tuple-like structs inside method blocks
+4) Define arrays: literal syntax, indexing, bounds behavior
+5) Define string: encoding, indexing, slicing
+6) Define enum payload variants (if any)
+7) Define error model: thrown value types, matching/patterns
+8) Define module system & visibility
+9) Define host ABI/value representation and ownership transfer
+10) Finalize proto cast syntax (`box<T>` -> `box<P>`) and runtime dispatch table caching
+11) Define precise semantics of `*box` read/write and member auto-deref
+12) Decide whether any form of local variable reassignment (`var`) will be supported later
 
 ---
 End.
