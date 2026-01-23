@@ -70,15 +70,19 @@ p7 provides the following primitive types:
   The unit type, representing “no value”. The only value is `()` [[TODO]] or implicit.
 
 ### 3.2 String type
-- `string` is a built-in value type representing textual data.
+- `string` is a built-in **immutable value type** representing textual data.
 - Copy/move semantics are defined in §6.
+- `string` may internally share storage (e.g. copy-on-write), but this is not semantically observable.
 
 [[TODO]]: encoding (UTF-8 recommended), indexing semantics (bytes vs codepoints).
 
 ### 3.3 Array type
-- `array<T>` is a built-in value type representing a sequence of `T`.
+- `array<T>` is a built-in **immutable value type** representing a sequence of `T`.
+- Value arrays cannot be mutated in place.
+- In-place mutation and identity/aliasing are provided by `box<array<T>>` (§3.6, §7.4).
 
 [[TODO]]: surface syntax for array literals, indexing, length, iteration.
+[[TODO]]: define boxed array mutation APIs (e.g., push/pop/set) and their signatures.
 
 ### 3.4 Nullable types
 - `?T` is a nullable type: value is either `null` or a non-null `T`.
@@ -184,7 +188,7 @@ This is **shadowing**, not mutation:
 - the new binding is visible only within its scope
 
 Type rule (v1):
-- If a name is shadowed, the new binding must have the **same type** as the shadowed binding (after inference), unless an explicit type annotation is provided on the new binding. [[TODO]] finalize whether explicit annotation may change type.
+- If a name is shadowed, the new binding must have the **same type** as the shadowed binding (after inference), unless an explicit type annotation is provided on the new binding. [[TODO]] finalize whether explicit annotation may change the type.
 
 Rationale: keep shadowing predictable and avoid turning it into an untyped “variable reuse” mechanism.
 
@@ -192,9 +196,13 @@ Rationale: keep shadowing predictable and avoid turning it into an untyped “va
 Mutation in v1 is performed only through `box<T>`:
 - field assignment on `box<Struct>` (e.g. `p.x = 1` where `p: box<Point>`)
 - boxed cell update operations (e.g. `*b = value`) [[TODO]] exact syntax
+- in-place mutation operations on boxed arrays (e.g. `a.push(x)` where `a: box<array<T>>`) [[TODO]] exact API
 
 There is no direct in-place mutation of value structs:
 - `s.x = 1` is illegal when `s: Struct` (non-box).
+
+There is no direct in-place mutation of value arrays:
+- in-place update of `a[i] = v` is illegal when `a: array<T>` (non-box) [[TODO]] (pending final indexing syntax).
 
 ---
 
@@ -218,8 +226,10 @@ Types may opt into `Copy`. `Copy` indicates *implicit duplication* is allowed.
 Copy is **structural**:
 - Copying a primitive duplicates the bits/value.
 - Copying a struct duplicates each field (using each field’s copy rule).
-- Copying an array duplicates its storage and copies each element.
-- Copying a string duplicates its storage and copies its bytes/code units.
+- Copying an array duplicates its storage and copies each element.  
+  Note: `array<T>` is immutable; implementations may optimize copying via shared storage (e.g. copy-on-write), but the semantics are “as if” a value copy occurred.
+- Copying a string duplicates its storage and copies its bytes/code units.  
+  Note: `string` is immutable; implementations may optimize copying via shared storage (e.g. copy-on-write), but the semantics are “as if” a value copy occurred.
 
 Copying handles:
 - Copying a `box<T>` copies the handle (aliases the same boxed cell). `box<T>` is `Copy` by default (recommended).
@@ -227,7 +237,7 @@ Copying handles:
 Eligibility:
 - A struct may be `Copy` only if all fields are `Copy` and the struct explicitly opts in.
 - `array<T>` is `Copy` iff `T` is `Copy` [[TODO]] (recommended: yes).
-- `string` is `Copy` iff it opts in; recommended: allow but note it implies allocation.
+- `string` is `Copy` iff it opts in; recommended: allow (immutable value semantics; implementation may share storage).
 
 [[TODO]]: Syntax for opting into Copy: e.g. `struct A [Copy](...) { ... }` or similar.
 
@@ -285,9 +295,10 @@ Operations (surface syntax TBD):
 - Read/deref: `*b` reads the inner `T` (by move or copy depending on `T`) [[TODO]].
 - Write/set: `*b = expr` writes a new `T` into the cell [[TODO]].
 - Member access auto-deref: `b.field` and `b.method(...)` access the inner value. [[TODO]] (recommended: yes).
-- Field assignment: `b.field = expr` updates the inner struct field (only valid when `b: box<S>`).
+- Field assignment: `b.field = expr` updates the inner struct field **in-place** (only valid when `b: box<S>`).
+  - This is a direct interior update of the boxed cell’s contents, not a desugaring to read-modify-write of `S`.
 
-[[TODO]]: define whether `b.field = ...` desugars to read-modify-write of the boxed `S` or a direct interior update.
+[[TODO]]: define the precise semantics of `*box` read/write and member auto-deref, including rules for reading/moving non-`Copy` values out of a box.
 
 ---
 
@@ -414,7 +425,7 @@ A loop expression does not complete normally by reaching the end of its body; it
 - `continue` **does** execute the `step` clause.
 
 #### 8.5.7 Interaction with `&T` views
-Because shadowing creates new bindings (new slots), a view `&x` taken in one iteration refers to that iteration’s binding and must not escape (§7). Views cannot be stored for use across iterations unless the viewed value is stored in a `box<T>` and accessed through the box.
+Because shadowing creates new bindings (new slots), a view `&x` taken in one iteration refers to that iteration’s binding and must not escape (§7). Views cannot be stored for use across iterations.
 
 ### 8.6 `try` expressions
 See §14.
@@ -462,7 +473,7 @@ For parameter type `&T`:
 - caller must pass an addressable location and use explicit `&` at the call site.
 - no implicit borrowing in v1.
 
-Mutating inputs requires `box<T>` parameters.
+Mutating inputs requires `box<T>` parameters (including `box<array<T>>` for arrays).
 
 ### 10.3 Named arguments and defaults
 p7 supports:
@@ -741,6 +752,8 @@ Requirements:
 - `loop` is an expression and supports `break value` (§8.5).
 - `loop (init; step)` uses exactly one `let` in init and step, and `step` must bind the same name as `init` (§8.5.1).
 - Field assignment is allowed only through `box<Struct>` (§5.3, §7.4, §11.4).
+- Arrays and strings are **immutable value types**; in-place mutation requires boxing (e.g. `box<array<T>>`) (§3.2, §3.3, §5.3).
+- `box<T>` mutation is **in-place** and visible through all aliases (§7.4).
 - Protos are structural and boxed-only (`box<P>`) (§12).
 - Structs are tuple-like only for fields; blocks are only for methods (§11).
 
@@ -749,18 +762,19 @@ Requirements:
 ## 19. Open items / TODO list
 
 1) Finalize integer/float widths
-2) Decide if `string` is `Copy` by default (copy allocates)
+2) Decide if `string` is `Copy` by default (copy may share storage internally)
 3) Decide `copy(x)`/`clone(x)` existence and naming
 4) Define arrays: literal syntax, indexing, bounds behavior
-5) Define string: encoding, indexing, slicing
-6) Define enum payload variants (if any)
-7) Define error model: thrown value types, matching/patterns
-8) Define module system & visibility
-9) Define host ABI/value representation and ownership transfer
-10) Finalize proto cast syntax (`box<T>` -> `box<P>`) and runtime dispatch table caching
-11) Define precise semantics of `*box` read/write and member auto-deref
-12) Finalize shadowing type rule (whether explicit annotation may change type)
-13) Finalize whether `&` can be taken of temporaries
+5) Define boxed array mutation APIs and semantics
+6) Define string: encoding, indexing, slicing
+7) Define enum payload variants (if any)
+8) Define error model: thrown value types, matching/patterns
+9) Define module system & visibility
+10) Define host ABI/value representation and ownership transfer
+11) Finalize proto cast syntax (`box<T>` -> `box<P>`) and runtime dispatch table caching
+12) Define precise semantics of `*box` read/write and member auto-deref (including reads of non-`Copy` from a box)
+13) Finalize shadowing type rule (whether explicit annotation may change type)
+14) Finalize whether `&` can be taken of temporaries
 
 ---
 End.
