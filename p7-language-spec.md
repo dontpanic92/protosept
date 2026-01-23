@@ -57,10 +57,12 @@ Identifiers start with `_` or a letter and continue with letters, digits, or `_`
 p7 provides the following primitive types:
 
 - `int`  
-  Signed integer. [[TODO]]: width (recommend `i64` for scripting).
+  Signed 64-bit two’s-complement integer (i64).  
+  **Overflow**: traps (runtime error) in v1 (§15.1).
 
 - `float`  
-  IEEE floating point. [[TODO]]: width (recommend `f64`).
+  IEEE-754 binary64 floating-point (f64).  
+  [[TODO]]: specify NaN/Inf behavior details and conversions.
 
 - `bool`  
   Boolean. Values: `true`, `false`.  
@@ -680,7 +682,20 @@ Rules:
 
 ## 15. Standard conversions and type checking
 
-### 15.1 Numeric coercions
+### 15.1 Numeric operations and coercions
+
+#### 15.1.1 Integer overflow
+For `int` arithmetic operations (`+`, `-`, `*`, and any other fixed-width integer arithmetic operators added in v1):
+- If the mathematical result does not fit in signed 64-bit range, evaluation **traps** (runtime error).
+
+A standard library (or prelude) function is provided for wraparound addition:
+- `wrapping_add(a: int, b: int) -> int` computes `(a + b) mod 2^64`, interpreted as a signed two’s-complement `int`.
+
+[[TODO]]: define additional wrapping/checked helpers:
+- `wrapping_sub`, `wrapping_mul`
+- `checked_add(a,b) -> ?int` (recommended; aligns with nullability)
+
+#### 15.1.2 Numeric coercions
 [[TODO]]: decide numeric coercions.
 Recommendation for scripting:
 - allow implicit `int -> float` promotion in arithmetic/comparison
@@ -754,6 +769,8 @@ Requirements:
 - Field assignment is allowed only through `box<Struct>` (§5.3, §7.4, §11.4).
 - Arrays and strings are **immutable value types**; in-place mutation requires boxing (e.g. `box<array<T>>`) (§3.2, §3.3, §5.3).
 - `box<T>` mutation is **in-place** and visible through all aliases (§7.4).
+- Integer width is i64; float width is f64 (§3.1).
+- Integer overflow traps by default; wraparound addition is available via `wrapping_add` (§15.1.1).
 - Protos are structural and boxed-only (`box<P>`) (§12).
 - Structs are tuple-like only for fields; blocks are only for methods (§11).
 
@@ -761,7 +778,7 @@ Requirements:
 
 ## 19. Open items / TODO list
 
-1) Finalize integer/float widths
+1) Decide float NaN/Inf behavior details and conversions
 2) Decide if `string` is `Copy` by default (copy may share storage internally)
 3) Decide `copy(x)`/`clone(x)` existence and naming
 4) Define arrays: literal syntax, indexing, bounds behavior
