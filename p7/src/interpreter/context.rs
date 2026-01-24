@@ -14,6 +14,8 @@ pub enum Data {
     Float(f64),
     /// Reference to a heap-allocated struct (index into Context.heap).
     StructRef(u32),
+    /// Exception value (enum variant ID) - used for try-catch as special return value
+    Exception(i32),
 }
 
 impl From<i32> for Data {
@@ -49,6 +51,10 @@ macro_rules! arithmetic_op {
                 // Arithmetic on struct references is invalid.
                 return Err(RuntimeError::UnexpectedStructRef);
             }
+            (Data::Exception(_), _) | (_, Data::Exception(_)) => {
+                // Arithmetic on exceptions is invalid.
+                return Err(RuntimeError::Other("Arithmetic on exception value".to_string()));
+            }
         }
     };
 }
@@ -73,6 +79,10 @@ macro_rules! comparison_op {
             (Data::StructRef(_), _) | (_, Data::StructRef(_)) => {
                 // Comparison with struct refs not supported
                 return Err(RuntimeError::UnexpectedStructRef);
+            }
+            (Data::Exception(_), _) | (_, Data::Exception(_)) => {
+                // Comparison with exceptions not supported
+                return Err(RuntimeError::Other("Comparison on exception value".to_string()));
             }
         }
     };
@@ -201,6 +211,11 @@ impl Context {
                             Data::Float(f) => self.stack_frame_mut()?.stack.push(Data::Float(-f)),
                             Data::StructRef(_) => {
                                 return Err(RuntimeError::VariableNotFound);
+                            }
+                            Data::Exception(_) => {
+                                return Err(RuntimeError::Other(
+                                    "Cannot negate exception value".to_string(),
+                                ));
                             }
                         }
                     } else {
@@ -358,8 +373,57 @@ impl Context {
                 Instruction::Pop => {
                     self.stack_frame_mut()?.stack.pop();
                 }
+                Instruction::Dup => {
+                    // Duplicate the top value on the stack
+                    if let Some(value) = self.stack_frame()?.stack.last() {
+                        let duplicated = value.clone();
+                        self.stack_frame_mut()?.stack.push(duplicated);
+                    } else {
+                        return Err(RuntimeError::StackUnderflow);
+                    }
+                }
                 Instruction::Throw => {
-                    unimplemented!();
+                    // Pop the value from stack and convert it to an Exception
+                    if let Some(value) = self.stack_frame_mut()?.stack.pop() {
+                        let exception_value = match value {
+                            Data::Int(i) => i,
+                            Data::Exception(e) => e, // Already an exception
+                            _ => {
+                                return Err(RuntimeError::Other(
+                                    "Can only throw integer/enum values".to_string(),
+                                ));
+                            }
+                        };
+                        // Push as exception and return immediately (unwind stack)
+                        self.stack_frame_mut()?.stack.push(Data::Exception(exception_value));
+                        // Return from function immediately when throwing
+                        self.stack.pop();
+                        return Ok(());
+                    } else {
+                        return Err(RuntimeError::StackUnderflow);
+                    }
+                }
+                Instruction::CheckException(jump_addr) => {
+                    // Check if top of stack is an exception
+                    if let Some(value) = self.stack_frame()?.stack.last() {
+                        if matches!(value, Data::Exception(_)) {
+                            // It's an exception, jump to handler
+                            self.stack_frame_mut()?.pc = jump_addr as usize;
+                        }
+                        // Otherwise, continue normally
+                    } else {
+                        return Err(RuntimeError::StackUnderflow);
+                    }
+                }
+                Instruction::UnwrapException => {
+                    // Convert Exception back to regular value for pattern matching
+                    if let Some(Data::Exception(value)) = self.stack_frame_mut()?.stack.pop() {
+                        self.stack_frame_mut()?.stack.push(Data::Int(value));
+                    } else {
+                        return Err(RuntimeError::Other(
+                            "Expected exception on stack".to_string(),
+                        ));
+                    }
                 }
             }
         }
@@ -379,13 +443,19 @@ impl Context {
     where
         F: Fn(i32, i32) -> i32,
     {
-        if let (Some(Data::Int(b)), Some(Data::Int(a))) = (
-            self.stack_frame_mut()?.stack.pop(),
-            self.stack_frame_mut()?.stack.pop(),
-        ) {
-            self.stack_frame_mut()?.stack.push(Data::Int(op(a, b)));
-        } else {
-            // Handle error: stack underflow or invalid types
+        let b = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+        let a = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+        
+        match (a, b) {
+            (Data::Int(a), Data::Int(b)) => {
+                self.stack_frame_mut()?.stack.push(Data::Int(op(a, b)));
+            }
+            (Data::Exception(_), _) | (_, Data::Exception(_)) => {
+                return Err(RuntimeError::Other("Binary operation on exception value".to_string()));
+            }
+            _ => {
+                return Err(RuntimeError::Other("Invalid types for binary operation".to_string()));
+            }
         }
 
         Ok(())

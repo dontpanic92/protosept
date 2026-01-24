@@ -1,0 +1,22 @@
+/*
+[testcase]
+entrypoint = "test_exception"
+expected_type = "int"
+expected_value = "42"
+*/
+
+enum MyError {
+    SomeError,
+}
+
+fn[throws] may_throw(value: int) -> int {
+    if value == 0 {
+        throw MyError.SomeError;
+    }
+    value
+}
+
+fn test_exception() -> int {
+    let result = try may_throw(0) else 42;
+    result
+}

@@ -1,0 +1,29 @@
+/*
+[testcase]
+entrypoint = "test_named_binding"
+expected_type = "int"
+expected_value = "100"
+*/
+
+enum ErrorType {
+    ErrorA,
+    ErrorB,
+}
+
+fn[throws] thrower(value: int) -> int {
+    if value == 1 {
+        throw ErrorType.ErrorA;
+    }
+    if value == 2 {
+        throw ErrorType.ErrorB;
+    }
+    value
+}
+
+fn test_named_binding() -> int {
+    let result = try thrower(2) else {
+        e: ErrorType.ErrorB => 100,
+        _: _ => 0,
+    };
+    result
+}

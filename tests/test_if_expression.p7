@@ -1,0 +1,16 @@
+/*
+[testcase]
+entrypoint = "test_if"
+expected_type = "int"
+expected_value = "42"
+*/
+
+fn test_if() -> int {
+    let x = 10;
+    let y = if x > 5 {
+        42
+    } else {
+        0
+    };
+    y
+}
