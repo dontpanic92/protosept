@@ -170,10 +170,8 @@ impl Generator {
                 // 2. Pattern matching logic to compare the caught exception
                 // 3. Variable binding for named patterns
                 
-                // If there's a name in the pattern, we would need to bind the exception
-                // value to a local variable. However, without proper exception handling
-                // infrastructure in the bytecode, we skip this for now.
-                let _named_pattern = named_pattern; // Acknowledge the pattern exists
+                // Suppress unused warning - pattern will be used in future implementation
+                let _ = named_pattern;
                 
                 // Generate the expression that handles this branch
                 let expr_type = self.generate_expression(expression)?;
