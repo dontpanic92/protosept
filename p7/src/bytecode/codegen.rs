@@ -163,12 +163,16 @@ impl Generator {
                 // Statement::Branch is used in try-else blocks for pattern matching
                 // on thrown exceptions.
                 
-                // TODO: Implement proper pattern matching and exception value binding.
-                // For now, we generate a simple implementation that evaluates the expression.
-                // A complete implementation would need:
-                // 1. Exception handling bytecode instructions
-                // 2. Pattern matching logic to compare the caught exception
-                // 3. Variable binding for named patterns
+                // The exception value has already been unwrapped to a regular value
+                // by the Expression::Try code generation (via UnwrapException instruction).
+                // So we can just generate the pattern matching and expression code.
+                
+                // TODO: Implement proper pattern matching logic.
+                // For now, we just generate the expression for this branch.
+                // A complete implementation would need to:
+                // 1. Check if the unwrapped exception value matches the pattern
+                // 2. Conditionally execute this branch only if it matches
+                // 3. Jump to next branch if no match
                 
                 // Suppress unused warning - pattern will be used in future implementation
                 let _ = named_pattern;
@@ -573,11 +577,37 @@ impl Generator {
                 try_block,
                 else_block,
             } => {
+                // Generate the try block expression
                 let ty = self.generate_expression(*try_block)?;
+                
                 if let Some(else_block) = else_block {
+                    // After try_block, check if result is an exception
+                    // If exception, jump to else_block handler
+                    let check_exception_placeholder = self.builder.next_address();
+                    self.builder.check_exception(0); // Placeholder address
+                    
+                    // Normal path: no exception, jump over else block
+                    let jump_over_else_placeholder = self.builder.next_address();
+                    self.builder.jmp(0); // Placeholder address
+                    
+                    // Exception handler starts here
+                    let else_block_address = self.builder.next_address();
+                    self.builder.patch_jump_address(check_exception_placeholder, else_block_address);
+                    
+                    // Unwrap the exception value for the else block to use
+                    self.builder.unwrap_exception();
+                    
+                    // Generate the else block (which may contain Statement::Branch for pattern matching)
                     self.generate_expression(*else_block)?;
+                    
+                    // End of exception handler
+                    let end_address = self.builder.next_address();
+                    self.builder.patch_jump_address(jump_over_else_placeholder, end_address);
+                } else {
+                    // No else block - if there's an exception, it propagates
+                    // The exception is already on the stack, so it will return to caller
                 }
-
+                
                 Ok(ty)
             }
             Expression::BlockValue(expression) => {
