@@ -1310,7 +1310,7 @@ Contrast with throws:
 - **Throws** (§14.1) are recoverable errors that can be caught and handled within the same thread using `try`.
 - **Traps** are unrecoverable and terminate the thread, but other threads remain unaffected.
 
-[[TODO]]: define exact thread spawn/join APIs, message passing primitives, and supervision interfaces.
+[[TODO]]: define exact thread spawn/join APIs, message passing primitives, and supervision interfaces. This is planned for post-v1 as part of a comprehensive concurrency feature.
 
 ---
 
@@ -1348,7 +1348,7 @@ In the initial design (when threading is added), `Send` will be **opt-in** for u
 - If a field is not Send-eligible (e.g., contains a `box<T>`), declaring `[Send]` is a compile-time error.
 
 [[TODO]]: **Reconsider auto-derived Send** in a future version. Potential design:
-- Automatically derive `Send` for all structs whose fields are Send-eligible (similar to how `Copy` might be auto-derived).
+- Automatically derive `Send` for all structs whose fields are Send-eligible (similar to how `Copy` is auto-derived for Copy-eligible structs that opt in via `[Copy]`; see §6.3).
 - Provide an opt-out mechanism (e.g., `struct[!Send]`) for types that should not be Send even if fields are eligible (e.g., types representing external resources, file handles, or thread-local state).
 
 Rationale for opt-in initially:
