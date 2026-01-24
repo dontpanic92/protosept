@@ -5,9 +5,8 @@ use std::path::Path;
 use binrw::BinRead;
 use p7::bytecode::Instruction;
 
-#[test]
-fn test_if_expression_codegen() -> Result<(), Box<dyn Error>> {
-    let file_path = Path::new("../tests/test_if_expression.p7");
+fn parse_and_generate(file_path: &str) -> Result<Vec<Instruction>, Box<dyn Error>> {
+    let file_path = Path::new(file_path);
     let contents = fs::read_to_string(file_path)?;
 
     let mut lexer = p7::lexer::Lexer::new(contents);
@@ -28,8 +27,6 @@ fn test_if_expression_codegen() -> Result<(), Box<dyn Error>> {
     let mut codegen = p7::bytecode::codegen::Generator::new();
     let module = codegen.generate(statements)?;
 
-    println!("module: {:?}", module);
-
     let mut insts = vec![];
     let mut cursor = std::io::Cursor::new(&module.instructions);
 
@@ -38,7 +35,14 @@ fn test_if_expression_codegen() -> Result<(), Box<dyn Error>> {
         insts.push(inst);
     }
 
-    println!("Generated instructions: {:?}", insts);
+    Ok(insts)
+}
+
+#[test]
+fn test_if_expression_codegen() -> Result<(), Box<dyn Error>> {
+    let insts = parse_and_generate("../tests/test_if_expression.p7")?;
+
+    println!("Generated instructions for if-else: {:?}", insts);
     
     // Verify that we have jump instructions (Jif and/or Jmp) for the if-else
     let has_jif = insts.iter().any(|inst| matches!(inst, Instruction::Jif(_)));
@@ -48,6 +52,52 @@ fn test_if_expression_codegen() -> Result<(), Box<dyn Error>> {
     
     // If there's an else clause, we should also have a Jmp to skip over it
     assert!(has_jmp, "Expected Jmp (unconditional jump) instruction to skip else clause");
+
+    Ok(())
+}
+
+#[test]
+fn test_if_without_else_codegen() -> Result<(), Box<dyn Error>> {
+    let insts = parse_and_generate("../tests/test_if_no_else.p7")?;
+
+    println!("Generated instructions for if without else: {:?}", insts);
+    
+    // Should have at least one Jif for the if condition
+    let has_jif = insts.iter().any(|inst| matches!(inst, Instruction::Jif(_)));
+    assert!(has_jif, "Expected Jif (jump if false) instruction for if expression");
+
+    Ok(())
+}
+
+#[test]
+fn test_nested_if_codegen() -> Result<(), Box<dyn Error>> {
+    let insts = parse_and_generate("../tests/test_nested_if.p7")?;
+
+    println!("Generated instructions for nested if: {:?}", insts);
+    
+    // Count the number of jump instructions - should have multiple for nested ifs
+    let jif_count = insts.iter().filter(|inst| matches!(inst, Instruction::Jif(_))).count();
+    let jmp_count = insts.iter().filter(|inst| matches!(inst, Instruction::Jmp(_))).count();
+    
+    assert!(jif_count >= 2, "Expected at least 2 Jif instructions for nested if expressions, got {}", jif_count);
+    assert!(jmp_count >= 2, "Expected at least 2 Jmp instructions for nested if expressions, got {}", jmp_count);
+
+    Ok(())
+}
+
+#[test]
+fn test_if_with_bool_logic_codegen() -> Result<(), Box<dyn Error>> {
+    let insts = parse_and_generate("../tests/test_if_complex.p7")?;
+
+    println!("Generated instructions for boolean logic: {:?}", insts);
+    
+    // Should have jump instructions for the if
+    let has_jif = insts.iter().any(|inst| matches!(inst, Instruction::Jif(_)));
+    assert!(has_jif, "Expected Jif instruction for if with boolean condition");
+    
+    // Should have comparison instruction (Gt for >)
+    let has_gt = insts.iter().any(|inst| matches!(inst, Instruction::Gt));
+    assert!(has_gt, "Expected Gt instruction for > operator");
 
     Ok(())
 }

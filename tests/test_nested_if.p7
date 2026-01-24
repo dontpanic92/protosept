@@ -1,0 +1,23 @@
+/*
+[testcase]
+entrypoint = "test_nested_if"
+expected_type = "int"
+expected_value = "3"
+*/
+
+fn test_nested_if() -> int {
+    let x = 10;
+    let y = 20;
+    
+    let result = if x > 5 {
+        if y > 15 {
+            3
+        } else {
+            2
+        }
+    } else {
+        1
+    };
+    
+    result
+}
