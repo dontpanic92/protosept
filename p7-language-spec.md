@@ -1263,4 +1263,98 @@ In v1, to avoid introducing lifetime tracking, implementations must enforce a co
 As specified in §20.2, the recommended restriction for v1 is to disallow `ref` usage entirely in fiber functions (no parameters/locals of type `ref T`, no `ref x` view-taking). This matches common restrictions in simple coroutine runtimes.
 
 ---
+
+## 21. Future direction: Concurrency and threading (non-normative draft)
+
+**Status**: This section is a **non-normative design direction** for future versions of p7. It describes planned semantics for threading and concurrency that are not yet implemented in v1.
+
+### 21.1 Threading model: actor-like isolation
+
+When threading support is added to p7 (post-v1), the threading model will be inspired by actor/Erlang-process semantics:
+
+- **No shared memory**: Threads do not share mutable state. Each thread has its own isolated memory space.
+- **Message passing only**: Communication between threads is via message passing (send/receive primitives).
+- **Immutable messages**: Only **Send-eligible** values (§22) may be sent between threads. Send-eligible values are deep-copyable pure values with no identity or aliasing.
+
+This model avoids data races and simplifies reasoning about concurrent execution.
+
+### 21.2 Fiber pinning
+
+When both fibers (§20) and threads are supported:
+
+- **Fibers are pinned to a single thread**: A fiber does not migrate between threads.
+- Each thread may have multiple fibers scheduled on it (cooperative multitasking within the thread).
+- Fibers on different threads are isolated and cannot directly share memory.
+
+### 21.3 Trap boundaries and supervision
+
+In the future threading model, the **trap boundary** is per-thread:
+
+- **Trap aborts the current thread**: If code traps (§14.0) within a thread, the trap terminates the entire thread, including all fibers scheduled on that thread.
+- **Other threads continue**: Traps do not propagate across thread boundaries. Other threads in the program may continue executing.
+- **Supervision**: This enables supervision patterns where a parent thread can spawn worker threads and monitor their health. If a worker thread traps (panics), the supervisor can detect the failure and take corrective action (e.g., restart the worker, log the error, or shut down gracefully).
+
+Example use case (informative):
+```
+// Pseudo-code (not v1 syntax)
+fn supervisor() {
+  let worker_handle = spawn_thread(worker_fn);
+  match wait_for_thread(worker_handle) {
+    ThreadResult.Completed => { /* worker finished normally */ },
+    ThreadResult.Trapped => { /* worker panicked; restart it */ },
+  }
+}
+```
+
+Contrast with throws:
+- **Throws** (§14.1) are recoverable errors that can be caught and handled within the same thread using `try`.
+- **Traps** are unrecoverable and terminate the thread, but other threads remain unaffected.
+
+[[TODO]]: define exact thread spawn/join APIs, message passing primitives, and supervision interfaces.
+
+---
+
+## 22. Future direction: Send marker conformance (non-normative draft)
+
+**Status**: This section is a **non-normative design direction** for future versions of p7. It describes planned semantics for the `Send` marker conformance, which controls which types can be safely sent between threads (§21).
+
+### 22.1 Send-eligibility: deep-copyable pure values
+
+A type is **Send-eligible** if it represents a **deep-copyable pure value** with no identity or aliasing:
+
+- All primitive types (`int`, `float`, `bool`, `char`, `unit`) are Send-eligible.
+- `string` is Send-eligible (strings are immutable values).
+- `array<T>` is Send-eligible if `T` is Send-eligible (arrays are immutable values).
+- User-defined `struct` types are Send-eligible if all fields are Send-eligible (and the struct opts into `Send`; see §22.3).
+- `enum` types are Send-eligible if all payload types (if any) are Send-eligible.
+
+### 22.2 Non-Send types
+
+The following types are **not Send-eligible**:
+
+- `box<T>`: Boxes have identity and support shared mutation (§3.6, §7.4). Sending a `box<T>` between threads would enable shared mutable state, violating the isolation property of the threading model (§21.1).
+- `ref T`: Borrowed views are non-escapable (§7.3) and tied to the lifetime of the viewed slot. They cannot safely outlive the thread that created them.
+- Any user-defined type that transitively contains `box<T>` or `ref T` fields.
+
+### 22.3 Opt-in Send conformance
+
+In the initial design (when threading is added), `Send` will be **opt-in** for user-defined types:
+
+- Struct authors must explicitly declare `Send` conformance using the syntax:
+  ```p7
+  struct MyData[Send](x: int, y: string) { }
+  ```
+- The compiler verifies that all fields are Send-eligible before allowing the conformance.
+- If a field is not Send-eligible (e.g., contains a `box<T>`), declaring `[Send]` is a compile-time error.
+
+[[TODO]]: **Reconsider auto-derived Send** in a future version. Potential design:
+- Automatically derive `Send` for all structs whose fields are Send-eligible (similar to how `Copy` might be auto-derived).
+- Provide an opt-out mechanism (e.g., `struct[!Send]`) for types that should not be Send even if fields are eligible (e.g., types representing external resources, file handles, or thread-local state).
+
+Rationale for opt-in initially:
+- Explicit opt-in makes the threading capability of a type visible in its declaration.
+- It avoids accidentally allowing types to cross thread boundaries during prototyping phases.
+- It provides a conservative starting point that can be relaxed later.
+
+---
 End.
