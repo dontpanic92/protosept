@@ -225,7 +225,28 @@ impl Context {
                 Instruction::And => self.binary_op_int(|a, b| (a != 0 && b != 0) as i32)?,
                 Instruction::Or => self.binary_op_int(|a, b| (a != 0 || b != 0) as i32)?,
                 Instruction::Not => {
-                    unimplemented!();
+                    if let Some(data) = self.stack_frame_mut()?.stack.pop() {
+                        match data {
+                            Data::Int(i) => self
+                                .stack_frame_mut()?
+                                .stack
+                                .push(Data::Int((i == 0) as i32)),
+                            Data::Float(f) => self
+                                .stack_frame_mut()?
+                                .stack
+                                .push(Data::Int((f == 0.0) as i32)),
+                            Data::StructRef(_) => {
+                                return Err(RuntimeError::VariableNotFound);
+                            }
+                            Data::Exception(_) => {
+                                return Err(RuntimeError::Other(
+                                    "Cannot negate exception value".to_string(),
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(RuntimeError::StackUnderflow);
+                    }
                 }
                 Instruction::Eq => {
                     comparison_op!(self, ==);
@@ -350,16 +371,18 @@ impl Context {
                             return Err(RuntimeError::StackUnderflow);
                         }
                     }
-                    
+
                     // Reverse to get fields in definition order
                     fields.reverse();
-                    
+
                     // Allocate struct on heap
                     let struct_ref = self.heap.len() as u32;
                     self.heap.push(Struct { fields });
-                    
+
                     // Push reference onto stack
-                    self.stack_frame_mut()?.stack.push(Data::StructRef(struct_ref));
+                    self.stack_frame_mut()?
+                        .stack
+                        .push(Data::StructRef(struct_ref));
                 }
                 Instruction::Ret => {
                     if self.stack_frame()?.stack.len() > 0 {
@@ -395,7 +418,9 @@ impl Context {
                             }
                         };
                         // Push as exception and return immediately (unwind stack)
-                        self.stack_frame_mut()?.stack.push(Data::Exception(exception_value));
+                        self.stack_frame_mut()?
+                            .stack
+                            .push(Data::Exception(exception_value));
                         // Return from function immediately when throwing
                         self.stack.pop();
                         return Ok(());
@@ -428,6 +453,15 @@ impl Context {
             }
         }
 
+        // Current function has finished executing. Pop the stack frame, and push return value if any.
+        if self.stack.len() > 1 {
+            let return_value = self.stack_frame_mut()?.stack.pop();
+            self.stack.pop();
+            if let Some(value) = return_value {
+                self.stack_frame_mut()?.stack.push(value);
+            }
+        }
+
         Ok(())
     }
 
@@ -443,18 +477,30 @@ impl Context {
     where
         F: Fn(i32, i32) -> i32,
     {
-        let b = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-        let a = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-        
+        let b = self
+            .stack_frame_mut()?
+            .stack
+            .pop()
+            .ok_or(RuntimeError::StackUnderflow)?;
+        let a = self
+            .stack_frame_mut()?
+            .stack
+            .pop()
+            .ok_or(RuntimeError::StackUnderflow)?;
+
         match (a, b) {
             (Data::Int(a), Data::Int(b)) => {
                 self.stack_frame_mut()?.stack.push(Data::Int(op(a, b)));
             }
             (Data::Exception(_), _) | (_, Data::Exception(_)) => {
-                return Err(RuntimeError::Other("Binary operation on exception value".to_string()));
+                return Err(RuntimeError::Other(
+                    "Binary operation on exception value".to_string(),
+                ));
             }
             _ => {
-                return Err(RuntimeError::Other("Invalid types for binary operation".to_string()));
+                return Err(RuntimeError::Other(
+                    "Invalid types for binary operation".to_string(),
+                ));
             }
         }
 

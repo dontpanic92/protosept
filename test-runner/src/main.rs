@@ -64,9 +64,18 @@ fn run_test(file_path: &PathBuf) -> anyhow::Result<TestResult> {
 
     // Execute the p7 code
     let entrypoint = &test_config.testcase.entrypoint;
-    let p7_result = match p7::run_p7_code(content, entrypoint) {
-        Ok(value) => value,
+    let module = match p7::compile(content.clone()) {
+        Ok(m) => m,
         Err(e) => return Ok(TestResult::Failure(FailureReason::ExecutionError(e))),
+    };
+
+    let disassembly = unp7::disassemble_module(&module);
+    let p7_result = match p7::run(module, entrypoint) {
+        Ok(value) => value,
+        Err(e) => {
+            println!("Disassembly of the module before error:\n{}", disassembly);
+            return Ok(TestResult::Failure(FailureReason::ExecutionError(e)));
+        }
     };
 
     // Compare results
@@ -109,6 +118,7 @@ fn run_test(file_path: &PathBuf) -> anyhow::Result<TestResult> {
     };
 
     if !is_match {
+        println!("Disassembly of the module before error:\n{}", disassembly);
         let found = match p7_result {
             P7Value::Int(i) => i.to_string(),
             P7Value::Float(f) => f.to_string(),

@@ -569,6 +569,7 @@ impl Generator {
                     });
                 }
 
+                self.builder.not();
                 let jump_if_false_address_placeholder = self.builder.next_address();
                 self.builder.jif(0);
 

@@ -1,12 +1,15 @@
 /*
 [testcase]
 entrypoint = "test_if_without_else"
-expected_type = "unit"
+expected_type = "int"
+expected_value = "0"
 */
 
-fn test_if_without_else() {
-    let x = 10;
+fn test_if_without_else() -> int {
+    let x = 0;
     if x > 5 {
-        let y = 42;
-    };
+        return 42;
+    }
+
+    return x;
 }
