@@ -373,6 +373,15 @@ impl Context {
                 Instruction::Pop => {
                     self.stack_frame_mut()?.stack.pop();
                 }
+                Instruction::Dup => {
+                    // Duplicate the top value on the stack
+                    if let Some(value) = self.stack_frame()?.stack.last() {
+                        let duplicated = value.clone();
+                        self.stack_frame_mut()?.stack.push(duplicated);
+                    } else {
+                        return Err(RuntimeError::StackUnderflow);
+                    }
+                }
                 Instruction::Throw => {
                     // Pop the value from stack and convert it to an Exception
                     if let Some(value) = self.stack_frame_mut()?.stack.pop() {

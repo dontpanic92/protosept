@@ -1,7 +1,7 @@
 use crate::errors::SourcePos;
 use crate::{
     ast::{
-        Expression, FunctionCall, FunctionDeclaration, Identifier, Statement, Type as ParsedType,
+        Expression, FunctionCall, FunctionDeclaration, Identifier, Pattern, Statement, Type as ParsedType,
     },
     bytecode::builder::ByteCodeBuilder,
     lexer::TokenType,
@@ -59,13 +59,169 @@ impl Generator {
         }
 
         let mut ty = Type::Primitive(PrimitiveType::Unit);
-        for statement in statements {
-            ty = self.generate_statement(statement)?;
+        
+        // Check if this block contains Branch statements (pattern matching)
+        let has_branches = statements.iter().any(|s| matches!(s, Statement::Branch { .. }));
+        
+        if has_branches {
+            // Special handling for blocks with pattern matching branches
+            let mut end_jumps = Vec::new();
+            
+            for statement in statements {
+                if let Statement::Branch { .. } = statement {
+                    // Generate the branch, collecting end jump addresses
+                    ty = self.generate_branch_statement(statement, &mut end_jumps)?;
+                } else {
+                    ty = self.generate_statement(statement)?;
+                }
+            }
+            
+            // Patch all end jumps to point here
+            let end_address = self.builder.next_address();
+            for jump_address in end_jumps {
+                self.builder.patch_jump_address(jump_address, end_address);
+            }
+        } else {
+            // Normal block handling
+            for statement in statements {
+                ty = self.generate_statement(statement)?;
+            }
         }
 
         self.local_scope.as_mut().unwrap().pop_scope();
 
         Ok(ty)
+    }
+
+    fn pattern_to_expression(&self, pattern: &Pattern) -> SaResult<Expression> {
+        match pattern {
+            Pattern::Identifier(id) => Ok(Expression::Identifier(id.clone())),
+            Pattern::IntegerLiteral(val) => Ok(Expression::IntegerLiteral(*val)),
+            Pattern::FloatLiteral(val) => Ok(Expression::FloatLiteral(*val)),
+            Pattern::StringLiteral(val) => Ok(Expression::StringLiteral(val.clone())),
+            Pattern::BooleanLiteral(val) => Ok(Expression::BooleanLiteral(*val)),
+            Pattern::FieldAccess { object, field } => {
+                let obj_expr = self.pattern_to_expression(object)?;
+                Ok(Expression::FieldAccess {
+                    object: Box::new(obj_expr),
+                    field: field.clone(),
+                })
+            }
+        }
+    }
+
+    fn generate_branch_statement(
+        &mut self,
+        statement: Statement,
+        end_jumps: &mut Vec<u32>,
+    ) -> SaResult<Type> {
+        if let Statement::Branch { named_pattern, expression } = statement {
+            // The exception value is on top of the stack (already unwrapped)
+            
+            match &named_pattern.pattern {
+                Pattern::FieldAccess { object, field } => {
+                    // Enum variant pattern like "SomeErrors.NumberIsNot42"
+                    
+                    // Duplicate the exception value for comparison
+                    self.builder.dup();
+                    
+                    // Generate code to load the enum variant index
+                    let pattern_expr = self.pattern_to_expression(&named_pattern.pattern)?;
+                    self.generate_expression(pattern_expr)?;
+                    
+                    // Compare: are they equal?
+                    self.builder.eq();
+                    
+                    // If not equal (result is 0), jump to next branch
+                    let no_match_jump_placeholder = self.builder.next_address();
+                    self.builder.jif(0); // Placeholder
+                    
+                    // Pattern matched!
+                    // Bind to variable if there's a name
+                    if let Some(name) = &named_pattern.name {
+                        let var_id = self
+                            .local_scope
+                            .as_mut()
+                            .unwrap()
+                            .add_variable(name.name.clone(), Type::Primitive(PrimitiveType::Int))
+                            .map_err(|_| SemanticError::VariableOutsideFunction {
+                                name: name.name.clone(),
+                                pos: Some(SourcePos {
+                                    line: name.line,
+                                    col: name.col,
+                                }),
+                            })?;
+                        self.builder.stvar(var_id);
+                    } else {
+                        // No name binding, pop the exception value
+                        self.builder.pop();
+                    }
+                    
+                    // Generate the expression for this branch
+                    let expr_type = self.generate_expression(expression)?;
+                    
+                    // Jump to end of all branches
+                    let end_jump_address = self.builder.next_address();
+                    self.builder.jmp(0); // Placeholder
+                    end_jumps.push(end_jump_address);
+                    
+                    // Patch the no-match jump to point here (next branch)
+                    let next_branch_address = self.builder.next_address();
+                    self.builder.patch_jump_address(no_match_jump_placeholder, next_branch_address);
+                    
+                    Ok(expr_type)
+                }
+                Pattern::Identifier(identifier) => {
+                    // Wildcard pattern (_) - matches everything
+                    // This is typically the last branch, no jump needed
+                    
+                    // Bind to variable if named
+                    if identifier.name == "_" {
+                        // Wildcard, just pop the exception value if not bound
+                        if named_pattern.name.is_none() {
+                            self.builder.pop();
+                        }
+                    }
+                    
+                    if let Some(name) = &named_pattern.name {
+                        let var_id = self
+                            .local_scope
+                            .as_mut()
+                            .unwrap()
+                            .add_variable(name.name.clone(), Type::Primitive(PrimitiveType::Int))
+                            .map_err(|_| SemanticError::VariableOutsideFunction {
+                                name: name.name.clone(),
+                                pos: Some(SourcePos {
+                                    line: name.line,
+                                    col: name.col,
+                                }),
+                            })?;
+                        self.builder.stvar(var_id);
+                    } else if identifier.name != "_" {
+                        // Not a wildcard and not a named binding - this is an error in the pattern
+                        return Err(SemanticError::Other(
+                            format!("Identifier pattern '{}' must be '_' or bound to a name", identifier.name)
+                        ));
+                    }
+                    
+                    // Generate the expression
+                    let expr_type = self.generate_expression(expression)?;
+                    
+                    Ok(expr_type)
+                }
+                Pattern::IntegerLiteral(_)
+                | Pattern::FloatLiteral(_)
+                | Pattern::StringLiteral(_)
+                | Pattern::BooleanLiteral(_) => {
+                    return Err(SemanticError::Other(
+                        "Pattern matching for literal patterns not yet implemented".to_string()
+                    ));
+                }
+            }
+        } else {
+            // Not a branch statement, use regular handling
+            self.generate_statement(statement)
+        }
     }
 
     fn generate_statement(&mut self, statement: Statement) -> SaResult<Type> {
@@ -160,27 +316,12 @@ impl Generator {
                 named_pattern,
                 expression,
             } => {
-                // Statement::Branch is used in try-else blocks for pattern matching
-                // on thrown exceptions.
-                
-                // The exception value has already been unwrapped to a regular value
-                // by the Expression::Try code generation (via UnwrapException instruction).
-                // So we can just generate the pattern matching and expression code.
-                
-                // TODO: Implement proper pattern matching logic.
-                // For now, we just generate the expression for this branch.
-                // A complete implementation would need to:
-                // 1. Check if the unwrapped exception value matches the pattern
-                // 2. Conditionally execute this branch only if it matches
-                // 3. Jump to next branch if no match
-                
-                // Suppress unused warning - pattern will be used in future implementation
-                let _ = named_pattern;
-                
-                // Generate the expression that handles this branch
-                let expr_type = self.generate_expression(expression)?;
-                
-                Ok(expr_type)
+                // Branch statements should be handled by generate_branch_statement
+                // when they appear in a pattern matching context.
+                // If we reach here, it's an error - branches should only appear in try-else blocks
+                return Err(SemanticError::Other(
+                    "Branch statements can only appear in try-else blocks".to_string()
+                ));
             }
             Statement::Return(expression) => {
                 self.generate_expression(*expression)?;

@@ -176,6 +176,10 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::Pop);
     }
 
+    pub fn dup(&mut self) {
+        self.add_instruction(Instruction::Dup);
+    }
+
     pub fn get_bytecode(&self) -> Vec<u8> {
         self.writer.get_ref().clone()
     }

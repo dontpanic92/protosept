@@ -84,6 +84,11 @@ pub enum Instruction {
     #[brw(magic = 24u8)]
     Pop,
 
+    // Duplicate the top value on the stack
+    // Expects: [..., value] -> [..., value, value]
+    #[brw(magic = 31u8)]
+    Dup,
+
     #[brw(magic = 25u8)]
     Throw,
 
