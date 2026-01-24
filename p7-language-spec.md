@@ -60,7 +60,7 @@ p7 provides the following primitive types:
 
 - `int`  
   Signed 64-bit two's-complement integer (i64).  
-  **Overflow**: traps (runtime error) in v1 (§15.1).
+  **Overflow**: traps (unrecoverable panic; see §14.0) in v1 (§15.1).
 
 - `float`  
   IEEE-754 binary64 floating-point (f64).  
@@ -126,7 +126,7 @@ Two ways to index arrays are provided:
 
 1) Trap indexing:
 - `a[i]` reads the element at index `i` (0-based).
-- If `i` is out of bounds, evaluation traps (runtime error).
+- If `i` is out of bounds, evaluation traps (unrecoverable panic; see §14.0).
 
 2) Checked indexing:
 - `a.get(i)` returns `?T`, yielding `null` when out of bounds.
@@ -840,6 +840,33 @@ Enum variants are referenced as:
 
 ## 14. Error handling (`throw`, `try`) and typed throws
 
+### 14.0 Two failure channels: traps vs throws
+
+p7 distinguishes between two kinds of runtime failures:
+
+1. **Traps (panics)**: Unrecoverable runtime failures representing bugs or contract violations.
+   - Examples: integer overflow, array out-of-bounds indexing (`a[i]`), force unwrap of `null` (`x!`).
+   - A trap indicates a programming error: the preconditions of an operation were not met.
+   - Traps **cannot be caught** by `try`. They propagate to the host/runtime as an unrecoverable error (panic).
+   - The host/runtime may terminate execution, log an error, or take other appropriate action (e.g., triggering a debugger).
+   
+2. **Throws (typed errors)**: Recoverable errors represented by `enum` values.
+   - Examples: parse failures, validation errors, domain-specific error conditions.
+   - Thrown errors are **expected** and can be handled or propagated using `try` (§14.2, §14.3).
+   - The type system tracks which functions may throw and what error types they throw (`throws` or `throws<E>`).
+
+**Key distinction**:
+- `try` expressions handle only **thrown** enum values. They **cannot catch traps**.
+- If code traps during evaluation of a `try` expression, the trap propagates to the host (bypassing the `try`).
+
+**Host-visible behavior** (v1):
+When calling into p7 from the host, the host must be able to distinguish three outcomes:
+- Normal return (function completed successfully with a value).
+- Threw (function threw an enum value; this is recoverable and the host may handle it).
+- Trapped/panicked (unrecoverable failure; host should treat as a fatal error or bug).
+
+[[TODO]]: specify exact host API surface for observing these outcomes and their representation in the host runtime.
+
 ### 14.1 Throwing
 `throw expr;` aborts evaluation and transfers control to the nearest enclosing `try`.
 
@@ -942,7 +969,7 @@ Compatibility rule (recommended for v1):
 
 #### 15.1.1 Integer overflow
 For `int` arithmetic operations (`+`, `-`, `*`, and any other fixed-width integer arithmetic operators added in v1):
-- If the mathematical result does not fit in signed 64-bit range, evaluation **traps** (runtime error).
+- If the mathematical result does not fit in signed 64-bit range, evaluation **traps** (unrecoverable panic; see §14.0).
 
 A standard library (or prelude) function is provided for wraparound addition:
 - `wrapping_add(a: int, b: int) -> int` computes `(a + b) mod 2^64`, interpreted as a signed two's-complement `int`.
@@ -984,7 +1011,7 @@ Type rule (v1):
 `x!`:
 - Requires `x: ?T`.
 - If `x` is non-null, yields the inner `T`.
-- If `x` is `null`, evaluation traps (runtime error).
+- If `x` is `null`, evaluation traps (unrecoverable panic; see §14.0).
 
 ---
 
@@ -1234,6 +1261,100 @@ In v1, to avoid introducing lifetime tracking, implementations must enforce a co
 - A value of type `ref T` must not be live across a `yield;` within a fiber function.
 
 As specified in §20.2, the recommended restriction for v1 is to disallow `ref` usage entirely in fiber functions (no parameters/locals of type `ref T`, no `ref x` view-taking). This matches common restrictions in simple coroutine runtimes.
+
+---
+
+## 21. Future direction: Concurrency and threading (non-normative draft)
+
+**Status**: This section is a **non-normative design direction** for future versions of p7. It describes planned semantics for threading and concurrency that are not yet implemented in v1.
+
+### 21.1 Threading model: actor-like isolation
+
+When threading support is added to p7 (post-v1), the threading model will be inspired by actor/Erlang-process semantics:
+
+- **No shared memory**: Threads do not share mutable state. Each thread has its own isolated memory space.
+- **Message passing only**: Communication between threads is via message passing (send/receive primitives).
+- **Immutable messages**: Only **Send-eligible** values (§22) may be sent between threads. Send-eligible values are deep-copyable pure values with no identity or aliasing.
+
+This model avoids data races and simplifies reasoning about concurrent execution.
+
+### 21.2 Fiber pinning
+
+When both fibers (§20) and threads are supported:
+
+- **Fibers are pinned to a single thread**: A fiber does not migrate between threads.
+- Each thread may have multiple fibers scheduled on it (cooperative multitasking within the thread).
+- Fibers on different threads are isolated and cannot directly share memory.
+
+### 21.3 Trap boundaries and supervision
+
+In the future threading model, the **trap boundary** is per-thread:
+
+- **Trap aborts the current thread**: If code traps (§14.0) within a thread, the trap terminates the entire thread, including all fibers scheduled on that thread.
+- **Other threads continue**: Traps do not propagate across thread boundaries. Other threads in the program may continue executing.
+- **Supervision**: This enables supervision patterns where a parent thread can spawn worker threads and monitor their health. If a worker thread traps (panics), the supervisor can detect the failure and take corrective action (e.g., restart the worker, log the error, or shut down gracefully).
+
+Example use case (informative):
+```
+// Pseudo-code (not v1 syntax)
+fn supervisor() {
+  let worker_handle = spawn_thread(worker_fn);
+  match wait_for_thread(worker_handle) {
+    ThreadResult.Completed => { /* worker finished normally */ },
+    ThreadResult.Trapped => { /* worker panicked; restart it */ },
+  }
+}
+```
+
+Contrast with throws:
+- **Throws** (§14.1) are recoverable errors that can be caught and handled within the same thread using `try`.
+- **Traps** are unrecoverable and terminate the thread, but other threads remain unaffected.
+
+[[TODO]]: define exact thread spawn/join APIs, message passing primitives, and supervision interfaces. This is planned for post-v1 as part of a comprehensive concurrency feature.
+
+---
+
+## 22. Future direction: Send marker conformance (non-normative draft)
+
+**Status**: This section is a **non-normative design direction** for future versions of p7. It describes planned semantics for the `Send` marker conformance, which controls which types can be safely sent between threads (§21).
+
+### 22.1 Send-eligibility: deep-copyable pure values
+
+A type is **Send-eligible** if it represents a **deep-copyable pure value** with no identity or aliasing:
+
+- All primitive types (`int`, `float`, `bool`, `char`, `unit`) are Send-eligible.
+- `string` is Send-eligible (strings are immutable values).
+- `array<T>` is Send-eligible if `T` is Send-eligible (arrays are immutable values).
+- User-defined `struct` types are Send-eligible if all fields are Send-eligible (and the struct opts into `Send`; see §22.3).
+- `enum` types are Send-eligible if all payload types (if any) are Send-eligible.
+
+### 22.2 Non-Send types
+
+The following types are **not Send-eligible**:
+
+- `box<T>`: Boxes have identity and support shared mutation (§3.6, §7.4). Sending a `box<T>` between threads would enable shared mutable state, violating the isolation property of the threading model (§21.1).
+- `ref T`: Borrowed views are non-escapable (§7.3) and tied to the lifetime of the viewed slot. They cannot safely outlive the thread that created them.
+- Any user-defined type that transitively contains `box<T>` or `ref T` fields.
+
+### 22.3 Opt-in Send conformance
+
+In the initial design (when threading is added), `Send` will be **opt-in** for user-defined types:
+
+- Struct authors must explicitly declare `Send` conformance using the syntax:
+  ```p7
+  struct MyData[Send](x: int, y: string) { }
+  ```
+- The compiler verifies that all fields are Send-eligible before allowing the conformance.
+- If a field is not Send-eligible (e.g., contains a `box<T>`), declaring `[Send]` is a compile-time error.
+
+[[TODO]]: **Reconsider auto-derived Send** in a future version. Potential design:
+- Automatically derive `Send` for all structs whose fields are Send-eligible (similar to how `Copy` is auto-derived for Copy-eligible structs that opt in via `[Copy]`; see §6.3).
+- Provide an opt-out mechanism (e.g., `struct[!Send]`) for types that should not be Send even if fields are eligible (e.g., types representing external resources, file handles, or thread-local state).
+
+Rationale for opt-in initially:
+- Explicit opt-in makes the threading capability of a type visible in its declaration.
+- It avoids accidentally allowing types to cross thread boundaries during prototyping phases.
+- It provides a conservative starting point that can be relaxed later.
 
 ---
 End.
