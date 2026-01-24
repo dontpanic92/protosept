@@ -4,6 +4,7 @@ Status: Draft
 Design goals (north star):
 - **Statically typed scripting**: concise, readable, low ceremony.
 - **Limited syntax/grammar**: features must pay rent in simplicity and interop.
+- **Readability first**: prefer clarity and obvious semantics over brevity; avoid sigil-heavy syntax when it obscures ownership, aliasing, or lifetime-like constraints.
 - **Correctness by default**: explicit nullability, explicit borrowing, explicit identity/mutation.
 - **Host interop**: easy to embed; predictable runtime values and errors.
 
@@ -41,7 +42,7 @@ Top-level executable statements are not allowed in v1; execution begins by calli
 Identifiers start with `_` or a letter and continue with letters, digits, or `_`.
 
 ### 2.2 Keywords (reserved)
-`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `fiber`, `yield`
+`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `fiber`, `yield`, `ref`
 
 [[TODO]]: confirm final keyword set; keep minimal.
 Note: `fiber` and `yield` are reserved even though they are only valid when the Fiber extension is enabled (§20).
@@ -102,19 +103,19 @@ Examples:
 - `let x: ?int = null;`
 - `let y: int = x;`  // error unless proven non-null via control flow [[TODO]]
 
-### 3.5 Borrow (reference view) type: `&T`
+### 3.5 Borrow (reference view) type: `ref T`
 p7 has **borrowed reference views**:
 
-- `&T` : a **read-only** borrowed view of an existing slot/sub-location holding a `T`.
+- `ref T` : a **read-only** borrowed view of an existing slot/sub-location holding a `T`.
 
 Borrowed views are **non-escapable** (§7).
 
 Views compose naturally with nullability:
-- `&?T` is a view of a nullable slot/value of type `?T`.
+- `ref ?T` is a view of a nullable slot/value of type `?T`.
 
-> Important: `&T` is *not* a heap box and is *not* an owned reference.
+> Important: `ref T` is *not* a heap box and is *not* an owned reference.
 
-There is **no** `&mut T` in v1. All shared mutation and escaping references are done via `box<T>` (§3.6, §7.4).
+There is **no** `ref mut T` in v1. All shared mutation and escaping references are done via `box<T>` (§3.6, §7.4).
 
 ### 3.6 Owned heap (box) type: `box<T>`
 `box<T>` is an **owned heap-allocated container** that stores a `T` and provides **stable identity** and **shared, escapable reference-like semantics**.
@@ -275,7 +276,7 @@ When a value of type `T` is copied:
 - `int`, `float`, `bool`, `unit` are Copy-eligible.
 - `box<T>` is Copy-eligible (handle copy) and is `Copy` by default.
 - `?T` is Copy-eligible iff `T` is Copy-eligible.
-- `&T` is not `Copy` (and views are non-escapable regardless; §7.3).
+- `ref T` is not `Copy` (and views are non-escapable regardless; §7.3).
 - `array<T>` is Copy-eligible iff `T` is Copy-eligible. [[TODO]] confirm this choice.
 - `string` is `Copy` by default (immutable value semantics; may share storage internally).
 
@@ -302,21 +303,21 @@ Rationale: structural properties may be used explicitly, but implicit duplicatio
 
 ---
 
-## 7. Borrowed views (`&T`) and boxes (`box<T>`)
+## 7. Borrowed views (`ref T`) and boxes (`box<T>`)
 
-### 7.1 Meaning of `&T` (read-only view)
+### 7.1 Meaning of `ref T` (read-only view)
 A borrowed view refers to an **existing storage location** (slot or sub-location).
 
-If `r: &T` refers to `x: T`:
+If `r: ref T` refers to `x: T`:
 - `*r` reads the current value of `x`.
 
 ### 7.2 Taking views
-- `&x` is allowed when `x` is addressable (slot or sub-location).
+- `ref x` is allowed when `x` is addressable (slot or sub-location).
 
-[[TODO]]: whether `&` can be taken of temporaries (recommended: no in v1).
+[[TODO]]: whether `ref` can be taken of temporaries (recommended: no in v1).
 
 ### 7.3 Non-escapable rule (hard rule in v1)
-Values of type `&T` **must not escape** their scope.
+Values of type `ref T` **must not escape** their scope.
 
 A view value cannot be:
 - returned from a function
@@ -328,8 +329,8 @@ A view value cannot be:
 - passed to host interop boundaries as a persistent value [[TODO]] (viewing may be supported only during a call)
 
 Consequences:
-- user-defined types cannot contain fields of type `&...`
-- arrays cannot contain `&...` elements
+- user-defined types cannot contain fields of type `ref ...`
+- arrays cannot contain `ref ...` elements
 
 This avoids needing escape analysis or lifetime tracking in v1.
 
@@ -475,8 +476,8 @@ A loop expression does not complete normally by reaching the end of its body; it
 - `break` does **not** execute the `step` clause.
 - `continue` **does** execute the `step` clause.
 
-#### 8.5.7 Interaction with `&T` views
-Because shadowing creates new bindings (new slots), a view `&x` taken in one iteration refers to that iteration's binding and must not escape (§7). Views cannot be stored for use across iterations.
+#### 8.5.7 Interaction with `ref T` views
+Because shadowing creates new bindings (new slots), a view `ref x` taken in one iteration refers to that iteration's binding and must not escape (§7). Views cannot be stored for use across iterations.
 
 ### 8.6 `try` expressions
 See §14.
@@ -577,8 +578,8 @@ effect_qualifier := 'throws' | 'throws' '<' enum_type '>'
 For parameter type `T`:
 - argument passing follows move-by-default/copy rules (§6).
 
-For parameter type `&T`:
-- caller must pass an addressable location and use explicit `&` at the call site.
+For parameter type `ref T`:
+- caller must pass an addressable location and use explicit `ref` at the call site.
 - no implicit borrowing in v1.
 
 Mutating inputs requires `box<T>` parameters (including `box<array<T>>` for arrays).
@@ -620,7 +621,7 @@ struct Vec2(
   pub x: float = 0,
   pub y: float = 0,
 ) {
-  pub fn length(&self) -> float {
+  pub fn length(self: ref Self) -> float {
     // ...
   }
 }
@@ -628,9 +629,9 @@ struct Vec2(
 
 Receivers in v1:
 - `self` (by value; move/copy)
-- `&self` (read-only view)
+- `self: ref Self` (read-only view)
 
-There is no `&mut self` in v1. In-place mutation APIs should use `box<Self>` parameters (or be expressed as free functions taking `box<T>`).
+There is no `self: ref mut Self` in v1. In-place mutation APIs should use `box<Self>` parameters (or be expressed as free functions taking `box<T>`).
 
 ### 11.3 Construction
 Struct values are constructed by calling the struct name:
@@ -671,17 +672,17 @@ Rationale:
 Form:
 ```p7
 proto Printable {
-  fn print(&self) -> unit;
+  fn print(self: ref Self) -> unit;
 }
 ```
 
 Rules:
 - Method name must match exactly.
 - Parameter types and return type must match exactly.
-- Receiver must be `&self` in v1.
+- Receiver must be `self: ref Self` in v1.
 
 Restrictions in v1:
-- Proto methods must use `&self` receiver only.
+- Proto methods must use `self: ref Self` receiver only.
 - Proto methods must not mention `Self` as a type (in parameters or return types). [[TODO]] may be added later.
 - Overloads in proto are [[TODO]] (recommended: disallow in v1).
 
@@ -700,7 +701,7 @@ struct[Printable] Vec2(
   x: float,
   y: float,
 ) {
-  pub fn print(&self) -> unit { ... }
+  pub fn print(self: ref Self) -> unit { ... }
 }
 
 let v = box(Vec2(1, 2));
@@ -920,7 +921,7 @@ Host may register functions callable by p7.
 
 Requirements:
 - Interop supports `?T` mapping to/from host null.
-- Borrowed views (`&T`) do not cross the boundary as persistent values.
+- Borrowed views (`ref T`) do not cross the boundary as persistent values.
   They may be passed to host only for the duration of a call, or disallowed entirely in v1 [[TODO]].
 - Boxes (`box<T>`) are the primary mechanism for passing identity/mutable objects across the boundary.
 - Proto boxes (`box<P>`) are the primary mechanism for passing dynamically-dispatched objects across the boundary.
@@ -935,7 +936,7 @@ Requirements:
 
 - Move-by-default (§6.1).
 - Nullability uses `?T` prefix (sugar for `nullable<T>`) (§3.4).
-- `&T` exists as read-only non-escapable view; no `&mut` (§3.5, §7).
+- `ref T` exists as read-only non-escapable view; no `ref mut` (§3.5, §7).
 - Shared mutation and escaping references use `box<T>` (§3.6, §7.4).
 - Reassignment is not supported; `let` is single-assignment (§5.1).
 - Shadowing ("rebind") is supported: `let a = ...; let a = ...;` in inner scopes (§5.2).
@@ -978,10 +979,10 @@ Requirements:
 12) Finalize proto cast syntax (`box<T>` -> `box<P>`) and runtime dispatch table caching
 13) Define precise semantics of `*box` read/write and member auto-deref (including reads of non-`Copy` from a box)
 14) Finalize shadowing type rule (whether explicit annotation may change type)
-15) Finalize whether `&` can be taken of temporaries
+15) Finalize whether `ref` can be taken of temporaries
 16) Precisely define coercion sites for implicit `box<T> -> box<P>` when `T` declares `[P]`
 18) Specify whether `try` can narrow thrown enum types in match-like else blocks
-19) Fiber extension: specify borrow/view restrictions across `yield` (recommended: disallow `&T` live across `yield`)
+19) Fiber extension: specify borrow/view restrictions across `yield` (recommended: disallow `ref T` live across `yield`)
 
 ---
 
@@ -1011,6 +1012,11 @@ Properties:
 - Fiber functions may suspend execution via `yield;`.
 - Fiber functions are cooperatively scheduled: they run until they explicitly `yield`, `return`, or `throw`.
 - Fibers are single-threaded and non-preemptive at the language level: the runtime does not interrupt execution in the middle of a statement/expression.
+
+**Borrowed view restrictions in fiber functions (v1)**:
+- Fiber functions must not use `ref T` types in parameters or local variables.
+- The `ref x` view-taking expression is disallowed in fiber function bodies.
+- Rationale: Borrowed views are stack-bound and non-escapable. Suspending execution via `yield` would allow views to outlive their referents across suspension points, violating safety guarantees. This matches common restrictions in languages like C# where ref-like stack-bound values are disallowed in `async`/`yield` resumable bodies.
 
 Calling convention constraints:
 - `yield` is only valid inside a `fiber fn` function body.
@@ -1114,14 +1120,16 @@ Example host policy for games:
 - Host resumes selected fibers at most once per frame (or on a fixed tick).
 - `yield;` represents a cooperative checkpoint; a frame-based policy can treat each yield as "pause until next frame".
 
-### 20.8 Interaction with `&T` borrowed views
-Because `yield` suspends execution, values of type `&T` must not escape across suspension points.
+### 20.8 Interaction with `ref T` borrowed views
+Because `yield` suspends execution, values of type `ref T` must not escape across suspension points.
 
 In v1, to avoid introducing lifetime tracking, implementations must enforce a conservative restriction such as:
 
-- A value of type `&T` must not be live across a `yield;` within a fiber function.
+- A value of type `ref T` must not be live across a `yield;` within a fiber function.
 
-[[TODO]]: finalize and specify the exact static restriction enforced by the compiler (e.g. ban `&` entirely in `fiber fn` in v1, or ban only across yield).
+[[TODO]]: finalize and specify the exact static restriction enforced by the compiler (e.g. ban `ref` entirely in `fiber fn` in v1, or ban only across yield).
+
+As specified in §20.2, the recommended restriction for v1 is to disallow `ref` usage entirely in fiber functions (no parameters/locals of type `ref T`, no `ref x` view-taking). This matches common restrictions in languages like C# where ref-like stack-bound views are disallowed in resumable (`async`/`yield`) bodies.
 
 ---
 End.
