@@ -87,20 +87,30 @@ pub enum Instruction {
     #[brw(magic = 25u8)]
     Throw,
 
+    // Check if top of stack is an exception. If so, jump to address.
+    // Used in try-else blocks to detect exceptions.
+    #[brw(magic = 26u8)]
+    CheckException(u32),
+
+    // Convert Exception back to its inner value for pattern matching.
+    // Used in else blocks to extract the exception value.
+    #[brw(magic = 27u8)]
+    UnwrapException,
+
     // Load a field from a struct value on the stack.
     // Expects: [..., struct_value] -> pops struct_value and pushes the requested field value.
-    #[brw(magic = 26u8)]
+    #[brw(magic = 28u8)]
     Ldfield(u32),
 
     // Store a field into a struct value on the stack.
     // Expects: [..., struct_value, field_value] -> pops both and pushes updated struct_value.
-    #[brw(magic = 27u8)]
+    #[brw(magic = 29u8)]
     Stfield(u32),
 
     // Create a new struct on the heap.
     // Expects: [..., field0, field1, ..., fieldN] (N = field_count) on stack
     // Pops N field values, creates struct on heap, pushes StructRef
-    #[brw(magic = 28u8)]
+    #[brw(magic = 30u8)]
     NewStruct(u32),
 }
 

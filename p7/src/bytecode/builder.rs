@@ -151,6 +151,14 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::Throw);
     }
 
+    pub fn check_exception(&mut self, address: u32) {
+        self.add_instruction(Instruction::CheckException(address));
+    }
+
+    pub fn unwrap_exception(&mut self) {
+        self.add_instruction(Instruction::UnwrapException);
+    }
+
     pub fn patch_jump_address(&mut self, instruction_address: u32, jump_target_address: u32) {
         let current_pos = self.writer.position();
         self.writer.set_position(instruction_address as u64 + 1);
