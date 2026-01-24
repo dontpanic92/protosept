@@ -42,7 +42,7 @@ Top-level executable statements are not allowed in v1; execution begins by calli
 Identifiers start with `_` or a letter and continue with letters, digits, or `_`.
 
 ### 2.2 Keywords (reserved)
-`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `fiber`, `yield`, `ref`
+`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `fiber`, `yield`, `ref`
 
 [[TODO]]: confirm final keyword set; keep minimal.
 Note: `fiber` and `yield` are reserved even though they are only valid when the Fiber extension is enabled (§20).
@@ -70,23 +70,68 @@ p7 provides the following primitive types:
   Boolean. Values: `true`, `false`.  
   [[TODO]]: confirm literals exist as keywords or identifiers.
 
+- `char`  
+  A Unicode scalar value (i.e. a Unicode code point excluding surrogate range).  
+  Intended for character-oriented scripting and iteration over `string`.  
+  [[TODO]]: specify literal syntax (recommended: single quotes, e.g. `'a'`, `'\n'`, `'\u{1F600}'`).
+
 - `unit`  
   The unit type, representing "no value". The only value is `()` [[TODO]] or implicit.
 
 ### 3.2 String type
 - `string` is a built-in **immutable value type** representing textual data.
+- The encoding is UTF-8.
+- The semantic unit of iteration is `char` (Unicode scalar value).
 - Copy/move semantics are defined in §6.
 - `string` may internally share storage (e.g. copy-on-write), but this is not semantically observable.
 
-[[TODO]]: encoding (UTF-8 recommended), indexing semantics (bytes vs codepoints).
+Operations (v1 minimum):
+- `len_chars(s: string) -> int` returns the number of `char` values in the string.  
+  Note: this may be O(n) in the length of the string.
+- `get_char(s: string, i: int) -> ?char` returns the `i`th character (0-based) or `null` if out of bounds.  
+  Note: this may be O(n).
+- `concat(a: string, b: string) -> string` returns concatenation. [[TODO]] exact spelling.
+
+Indexing policy:
+- p7 does not provide `s[i]` syntax for strings in v1.
+  Rationale: character indexing is not naturally constant-time for UTF-8 strings; using an explicit function makes cost visible.
+
+[[TODO]]: slicing semantics and APIs.
 
 ### 3.3 Array type
 - `array<T>` is a built-in **immutable value type** representing a sequence of `T`.
 - Value arrays cannot be mutated in place.
 - In-place mutation and identity/aliasing are provided by `box<array<T>>` (§3.6, §7.4).
 
-[[TODO]]: surface syntax for array literals, indexing, length, iteration.
+[[TODO]]: surface syntax for array indexing assignment is illegal for value arrays.
 [[TODO]]: define boxed array mutation APIs (e.g., push/pop/set) and their signatures.
+
+#### 3.3.1 Array literals (v1)
+Array literals use square brackets:
+
+- `[e1, e2, e3]` creates an `array<T>` where `T` is the element type.
+- `[]` is permitted only when a contextual type is available (e.g. via annotation).
+
+Type rule (v1):
+- All elements in an array literal must have the same type `T` (after inference). No implicit numeric widening inside literals in v1. [[TODO]] numeric coercions.
+
+Examples:
+```p7
+let xs = [1, 2, 3];              // array<int>
+let ys: array<string> = [];      // ok
+```
+
+#### 3.3.2 Array indexing (v1)
+Two ways to index arrays are provided:
+
+1) Trap indexing:
+- `a[i]` reads the element at index `i` (0-based).
+- If `i` is out of bounds, evaluation traps (runtime error).
+
+2) Checked indexing:
+- `a.get(i)` returns `?T`, yielding `null` when out of bounds.
+
+[[TODO]]: specify whether negative indices trap / return null (recommended: treat as out of bounds).
 
 ### 3.4 Nullable types
 - `?T` is a nullable type: value is either `null` or a non-null `T`.
@@ -97,11 +142,11 @@ This aligns with a generic spelling `nullable<T>`:
 Rules:
 - `null` is only assignable to `?T`.
 - `T` is not implicitly convertible to `?T` unless explicitly wrapped/promoted by a rule [[TODO]].
-- Unwrapping rules are in §9.
+- Unwrapping rules are in §15.2.
 
 Examples:
 - `let x: ?int = null;`
-- `let y: int = x;`  // error unless proven non-null via control flow [[TODO]]
+- `let y: int = x;`  // error unless proven non-null via control flow
 
 ### 3.5 Borrow (reference view) type: `ref T`
 p7 has **borrowed reference views**:
@@ -206,7 +251,7 @@ There is no direct in-place mutation of value structs:
 - `s.x = 1` is illegal when `s: Struct` (non-box).
 
 There is no direct in-place mutation of value arrays:
-- in-place update of `a[i] = v` is illegal when `a: array<T>` (non-box) [[TODO]] (pending final indexing syntax).
+- in-place update of `a[i] = v` is illegal when `a: array<T>` (non-box).
 
 ---
 
@@ -273,7 +318,7 @@ When a value of type `T` is copied:
 - Boxes: copying a `box<T>` copies the handle (aliases the same boxed cell). This is a shallow copy of the handle, not a deep copy of `T`.
 
 #### 6.3.2 Copy-eligibility
-- `int`, `float`, `bool`, `unit` are Copy-eligible.
+- `int`, `float`, `bool`, `char`, `unit` are Copy-eligible.
 - `box<T>` is Copy-eligible (handle copy) and is `Copy` by default.
 - `?T` is Copy-eligible iff `T` is Copy-eligible.
 - `ref T` is not `Copy` (and views are non-escapable regardless; §7.3).
@@ -285,7 +330,7 @@ User-defined structs:
 - A struct is treated as `Copy` (i.e. copies implicitly) only if it declares `[Copy]`.
 
 Policy choices:
-- `array<T>` default: if `array<T>` is Copy-eligible, it may be `Copy` by default or require explicit opt-in; [[TODO]] decide. (If defaulting to Copy, prefer doing so only when `T` is Copy-eligible.)
+- `array<T>` default: if `array<T>` is Copy-eligible, it may be `Copy` by default or require explicit opt-in; [[TODO]] decide. (Recommended: do not default arrays to implicit Copy in v1.)
 
 ### 6.4 Explicit copying
 p7 provides an explicit copying operation:
@@ -342,13 +387,19 @@ A `box<T>` contains a `T` and provides:
 
 Operations (surface syntax TBD):
 - Construction: `box(expr)` allocates a new boxed cell containing `expr`.
-- Read/deref: `*b` reads the inner `T` (by move or copy depending on `T`) [[TODO]].
 - Write/set: `*b = expr` writes a new `T` into the cell [[TODO]].
+- Read/deref:
+  - If `T` is `Copy`, `*b` yields a value copy of type `T`.
+  - If `T` is not `Copy`, reading the inner value by move is **not allowed** via `*b` in v1.
+    Rationale: `box<T>` is an aliasable handle; allowing implicit move-out would require defining "moved-out" states or uniqueness.
+- Replace (v1):
+  - `replace(b, new_value)` writes `new_value` into the box and returns the previous value.
+  - This permits moving non-`Copy` values out of a box without leaving it uninitialized.
 - Member access auto-deref: `b.field` and `b.method(...)` access the inner value. [[TODO]] (recommended: yes).
 - Field assignment: `b.field = expr` updates the inner struct field **in-place** (only valid when `b: box<S>`).
   - This is a direct interior update of the boxed cell's contents, not a desugaring to read-modify-write of `S`.
 
-[[TODO]]: define the precise semantics of `*box` read/write and member auto-deref, including rules for reading/moving non-`Copy` values out of a box.
+[[TODO]]: define the precise semantics of `*box` read/write and member auto-deref, including views of boxed contents (e.g. `ref *b`).
 
 ---
 
@@ -477,7 +528,7 @@ A loop expression does not complete normally by reaching the end of its body; it
 - `continue` **does** execute the `step` clause.
 
 #### 8.5.7 Interaction with `ref T` views
-Because shadowing creates new bindings (new slots), a view `ref x` taken in one iteration refers to that iteration's binding and must not escape (§7). Views cannot be stored for use across iterations.
+Because shadowing creates new bindings (new slots), a view `ref x` taken in one iteration refers to that iteration's binding and must not escape (§7). Views cannot be stored for use across iterations [[TODO]].
 
 ### 8.6 `try` expressions
 See §14.
@@ -491,8 +542,9 @@ See §14.
 - expression statement: `expr;`
 - `return expr;` or `return;` (returns `unit`)
 - `throw expr;` (only valid in functions declared with `throws`; §14)
-- `break;` and `break expr;` (only valid inside `loop`)
-- `continue;` (only valid inside `loop`)
+- `break;` and `break expr;` (only valid inside `loop` / `for`)
+- `continue;` (only valid inside `loop` / `for`)
+- `for` statement: `for x in expr { ... }` (§9.3)
 - `yield;` (only valid in `fiber fn` when Fiber extension is enabled; §20)
 - declarations (functions/types) [[TODO]] where allowed
 
@@ -502,6 +554,36 @@ Functions return the value of:
 - the last expression of the function body block (if not terminated by `;`), otherwise `unit`.
 
 [[TODO]]: decide whether implicit return is allowed for all functions; recommended yes (script-friendly).
+
+### 9.3 `for` statement (v1)
+p7 provides a `for` statement for iteration over arrays and strings.
+
+Form:
+```p7
+for x in expr { body }
+```
+
+Where:
+- `expr` must have type `array<T>` or `string`.
+- If `expr` is `array<T>`, then `x` has type `T`.
+- If `expr` is `string`, then `x` has type `char`.
+
+Semantics:
+- `for` evaluates `expr` once.
+- It then executes `body` once per element/character, in order.
+- `break` and `continue` behave as in `loop`:
+  - `break;` exits the loop.
+  - `continue;` skips to the next iteration.
+
+Binding behavior:
+- `x` is a new binding each iteration (single-assignment, like all `let` bindings).
+- Move/copy rules apply normally when binding `x` from the iterated value.
+
+Desugaring (informative):
+- `for` may be implemented equivalently to a `loop` over an internal index and repeated `get`/trap indexing.
+
+Rationale:
+- Adds essential scripting ergonomics without introducing a general iterator protocol in v1.
 
 ---
 
@@ -875,12 +957,34 @@ Recommendation for scripting:
 - allow implicit `int -> float` promotion in arithmetic/comparison
 - require explicit conversion elsewhere
 
-### 15.2 Nullability checks
+### 15.2 Nullability checks (v1 concrete rules)
 Rules for using `?T`:
-- You cannot use a `?T` where `T` is required unless:
-  - you check for non-null in control flow and the compiler narrows the type, or
-  - you use an explicit unwrap operator `!` [[TODO]].
-- Provide `??` operator: `x ?? default` [[TODO]].
+
+#### 15.2.1 Control-flow narrowing (v1)
+If `x` has type `?T`, then in:
+
+```p7
+if x != null { ... } else { ... }
+```
+
+Inside the `then` branch, `x` is treated as type `T` (non-null).  
+Inside the `else` branch, `x` is treated as `null`.
+
+Narrowing applies only when `x` is a simple identifier (not an arbitrary expression) in v1.
+
+#### 15.2.2 Null-coalescing (v1)
+`x ?? default_expr`:
+- If `x` is non-null, yields the inner `T`.
+- Otherwise yields `default_expr`.
+
+Type rule (v1):
+- `default_expr` must have type `T`.
+
+#### 15.2.3 Force unwrap (v1)
+`x!`:
+- Requires `x: ?T`.
+- If `x` is non-null, yields the inner `T`.
+- If `x` is `null`, evaluation traps (runtime error).
 
 ---
 
@@ -894,7 +998,7 @@ p7 uses a GC-based runtime. However, the language semantics are defined in terms
 Implementation may represent values on stack or heap; this is not semantically observable.
 
 [[TODO]]: specify runtime value set for host interop:
-- int/float/bool/unit/null
+- int/float/bool/char/unit/null
 - string
 - array
 - struct instances (values)
@@ -942,6 +1046,7 @@ Requirements:
 - Shadowing ("rebind") is supported: `let a = ...; let a = ...;` in inner scopes (§5.2).
 - `loop` is an expression and supports `break value` (§8.5).
 - `loop (init; step)` uses exactly one `let` in init and step, and `step` must bind the same name as `init` (§8.5.1).
+- `for x in expr { ... }` iterates arrays and strings (§9.3).
 - Field assignment is allowed only through `box<Struct>` (§5.3, §7.4, §11.4).
 - Arrays and strings are **immutable value types**; in-place mutation requires boxing (e.g. `box<array<T>>`) (§3.2, §3.3, §5.3).
 - `box<T>` mutation is **in-place** and visible through all aliases (§7.4).
@@ -960,6 +1065,8 @@ Requirements:
 - Function qualifiers use keyword-based syntax (§10.2):
   - Execution qualifiers (`fiber`) appear before `fn`.
   - Effect qualifiers (`throws`, `throws<E>`) appear after the return type.
+- Added `char` primitive and defined strings as UTF-8 with `char` iteration (§3.1, §3.2).
+- Defined array literals and indexing (`a[i]` traps; `a.get(i)` returns `?T`) (§3.3).
 
 ---
 
@@ -968,21 +1075,20 @@ Requirements:
 1) Decide float NaN/Inf behavior details and conversions
 2) Decide `string` default Copy policy (recommended: Copy by default)
 3) Decide `copy(x)` surface syntax and naming
-4) Decide `array<T>` default Copy policy
-5) Define arrays: literal syntax, indexing, bounds behavior
-6) Define boxed array mutation APIs and semantics
-7) Define string: encoding, indexing, slicing
-8) Define enum payload variants (if any)
-9) Define error model: thrown value types, matching/patterns (now constrained to enums)
-10) Define module system & visibility
-11) Define host ABI/value representation and ownership transfer
-12) Finalize proto cast syntax (`box<T>` -> `box<P>`) and runtime dispatch table caching
-13) Define precise semantics of `*box` read/write and member auto-deref (including reads of non-`Copy` from a box)
-14) Finalize shadowing type rule (whether explicit annotation may change type)
-15) Finalize whether `ref` can be taken of temporaries
-16) Precisely define coercion sites for implicit `box<T> -> box<P>` when `T` declares `[P]`
-18) Specify whether `try` can narrow thrown enum types in match-like else blocks
-19) Fiber extension: specify borrow/view restrictions across `yield` (recommended: disallow `ref T` live across `yield`)
+4) Decide `array<T>` default Copy policy (recommended: not Copy by default)
+5) Define boxed array mutation APIs and semantics
+6) Define string: escapes, concatenation spelling, slicing APIs
+7) Define enum payload variants (if any)
+8) Define error model: thrown value types, matching/patterns (now constrained to enums)
+9) Define module system & visibility
+10) Define host ABI/value representation and ownership transfer
+11) Finalize proto cast syntax (`box<T>` -> `box<P>`) and runtime dispatch table caching
+12) Define precise semantics of `*box` read/write and member auto-deref (including views of boxed contents)
+13) Finalize shadowing type rule (whether explicit annotation may change type)
+14) Finalize whether `ref` can be taken of temporaries
+15) Precisely define coercion sites for implicit `box<T> -> box<P>` when `T` declares `[P]`
+16) Specify whether `try` can narrow thrown enum types in match-like else blocks
+17) Fiber extension: specify borrow/view restrictions across `yield` (recommended: disallow `ref T` live across `yield`)
 
 ---
 
@@ -1016,7 +1122,7 @@ Properties:
 **Borrowed view restrictions in fiber functions (v1)**:
 - Fiber functions must not use `ref T` types in parameters or local variables.
 - The `ref x` view-taking expression is disallowed in fiber function bodies.
-- Rationale: Borrowed views are stack-bound and non-escapable. Suspending execution via `yield` would allow views to outlive their referents across suspension points, violating safety guarantees. This matches common restrictions in languages like C# where ref-like stack-bound values are disallowed in `async`/`yield` resumable bodies.
+- Rationale: Borrowed views are stack-bound and non-escapable. Suspending execution via `yield` would allow views to outlive their referents across suspension points, violating safety guarantees.
 
 Calling convention constraints:
 - `yield` is only valid inside a `fiber fn` function body.
@@ -1111,10 +1217,10 @@ Semantics:
 - The host may record the handle and decide scheduling policy externally.
 
 Constraints:
-- The hook must not itself resume the new fiber re-entrantly while `spawn` is still executing, unless the implementation explicitly guarantees re-entrancy safety. [[TODO]] decide (recommended for v1: disallow).
+- The hook must not itself resume the new fiber re-entrantly while `spawn` is still executing, unless the implementation explicitly guarantees re-entrancy safety. [[TODO]] decide (recommended for v1: disallow re-entrant resume).
 
 ### 20.7 Scheduling policy (informative)
-Scheduling is not part of the core language semantics. A fiber yields control only at explicit `yield`, `return`, or `throw` boundaries; when and whether it is resumed is controlled by the host/runtime.
+Scheduling is not part of the core language semantics. A fiber yields control only at explicit `yield`, `return`, or `throw` boundaries; when and whether it is resumed is controlled by the host/runtime policy.
 
 Example host policy for games:
 - Host resumes selected fibers at most once per frame (or on a fixed tick).
@@ -1127,9 +1233,7 @@ In v1, to avoid introducing lifetime tracking, implementations must enforce a co
 
 - A value of type `ref T` must not be live across a `yield;` within a fiber function.
 
-[[TODO]]: finalize and specify the exact static restriction enforced by the compiler (e.g. ban `ref` entirely in `fiber fn` in v1, or ban only across yield).
-
-As specified in §20.2, the recommended restriction for v1 is to disallow `ref` usage entirely in fiber functions (no parameters/locals of type `ref T`, no `ref x` view-taking). This matches common restrictions in languages like C# where ref-like stack-bound views are disallowed in resumable (`async`/`yield`) bodies.
+As specified in §20.2, the recommended restriction for v1 is to disallow `ref` usage entirely in fiber functions (no parameters/locals of type `ref T`, no `ref x` view-taking). This matches common restrictions in simple coroutine runtimes.
 
 ---
 End.
