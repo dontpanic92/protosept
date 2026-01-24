@@ -253,7 +253,7 @@ Notes:
 ### 6.3 The `Copy` marker conformance
 `Copy` indicates that *implicit duplication* is allowed for a type.
 
-Copy is **structural**: a type is **Copy-eligible** if it can be duplicated by duplicating its parts (per the rules below). However, a type is treated as `Copy` (i.e. participates in implicit copy behavior) only if it:
+Copy is **structural**: a type is **Copy-eligible** if it can be duplicated by duplicating its parts (per the rules below). However, a type is treated as `Copy` (i.e. participates in implicit behavior) only if it:
 - is Copy-eligible, and
 - declares `Copy` in `struct[...]`.
 
@@ -718,7 +718,7 @@ Semantics:
 - or `v as box<Printable>`
 - or `to_proto<Printable>(v)`
 
-[[TODO]]: precisely define the set of coercion sites for implicit `box<T> -> box<P>`.
+[[TODO]]: precisely define the set of coercion sites for implicit `box<T> -> box<P>` when `T` declares `[P]`.
 
 ### 12.4 Dynamic dispatch
 Calling a proto method on `box<P>` performs dynamic dispatch:
@@ -783,7 +783,16 @@ fn do_something() throws {
 ```
 
 ### 14.2 Try expressions
-Form:
+`try` is used both to **propagate** and to **handle** thrown enum values. Calls that may throw must be wrapped in a `try` form; there is no implicit propagation.
+
+Forms:
+
+1) **Propagation**:
+- `try expr`
+
+If `expr` throws, the thrown enum value is propagated out of the current function.
+
+2) **Handling**:
 - `try expr else fallback_expr`
 - or a match-like else block:
 ```p7
@@ -796,18 +805,51 @@ let v = try f() else {
 Rules:
 - `try` is an expression.
 - If `expr` completes normally, its value is the result of the `try`.
-- If `expr` throws, the `else` branch is evaluated.
+- In the **handling** form, if `expr` throws, the `else` branch is evaluated and becomes the result of the `try`.
+- In the **propagation** form, if `expr` throws, evaluation of the current function aborts and the thrown value is propagated to the caller.
 - Pattern syntax and matching rules are [[TODO]].
-- Type of the `try` expression is the common type of normal result and else result.
+- Type of a `try` expression is the common type of the normal result and the else result (handling form). In the propagation form, the type is the type of `expr`.
 
-### 14.3 Calling `throws` functions (propagation vs handling)
-Calling a function declared with `throws` is permitted only if:
-1) The call is within the dynamic extent of a `try ... else ...` expression which handles any thrown value, or
-2) The enclosing function is also declared with `throws` and the thrown type is compatible.
+Examples:
+
+Handling in a non-`throws` function:
+```p7
+fn b() -> int {
+  let x = try a() else 0;
+  x
+}
+```
+
+Propagation from a `throws` function:
+```p7
+fn c() -> int throws {
+  let x = try a(); // propagate if a() throws
+  x
+}
+```
+
+### 14.3 Calling `throws` functions (explicit propagation and handling)
+Calling a function declared with `throws` or `throws<E>` requires an explicit `try` at the call site.
+
+Rules:
+
+1) **In non-`throws` functions**:
+- A call to a `throws` / `throws<E>` function is permitted only in the **handling** form:
+  - `try call_expr else ...`
+- The propagation form `try call_expr` is a compile-time error in a non-`throws` function.
+
+2) **In `throws` / `throws<E>` functions**:
+- A call to a `throws` / `throws<E>` function must appear in one of the `try` forms:
+  - `try call_expr` (propagate), or
+  - `try call_expr else ...` (handle)
+
+3) **Bare calls are not allowed**:
+- Calling a `throws` function without `try` (e.g. `a()`) is a compile-time error, even inside a `throws` function.
 
 Compatibility rule (recommended for v1):
-- A function with `throws<E>` may be called only from a function also declared `throws<E>` (exact match), unless handled by `try`.
-- A function with `throws` (unconstrained) may be called only from a function also declared `throws` (unconstrained), unless handled by `try`.
+- A function with `throws<E>` may propagate only from a function also declared `throws<E>` (exact match), unless handled locally.
+- A function with `throws` (unconstrained) may propagate only from a function also declared `throws` (unconstrained), unless handled locally.
+- Any thrown value may be handled locally using `try ... else ...` regardless of the enclosing function's `throws` annotation.
 
 ---
 
@@ -913,6 +955,7 @@ Requirements:
   - explicit `as box<P>` is available when `T` implements `P` (§12.3).
 - Structs are tuple-like only for fields; blocks are only for methods (§11).
 - `throw` is restricted to enum values and only permitted in functions declared with `throws` (§14.1).
+- Calling a `throws` function requires `try` at the call site: `try expr` propagates (only from `throws` functions), and `try expr else ...` handles (§14.2, §14.3).
 - Function qualifiers use keyword-based syntax (§10.2):
   - Execution qualifiers (`fiber`) appear before `fn`.
   - Effect qualifiers (`throws`, `throws<E>`) appear after the return type.
@@ -1062,7 +1105,7 @@ Semantics:
 - The host may record the handle and decide scheduling policy externally.
 
 Constraints:
-- The hook must not itself resume the new fiber re-entrantly while `spawn` is still executing, unless the implementation explicitly guarantees re-entrancy safety. [[TODO]] decide (recommended for v1: disallow re-entrant resume).
+- The hook must not itself resume the new fiber re-entrantly while `spawn` is still executing, unless the implementation explicitly guarantees re-entrancy safety. [[TODO]] decide (recommended for v1: disallow).
 
 ### 20.7 Scheduling policy (informative)
 Scheduling is not part of the core language semantics. A fiber yields control only at explicit `yield`, `return`, or `throw` boundaries; when and whether it is resumed is controlled by the host/runtime.
