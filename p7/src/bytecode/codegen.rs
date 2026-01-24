@@ -160,7 +160,25 @@ impl Generator {
                 named_pattern,
                 expression,
             } => {
-                unimplemented!("branching not implemented {:?} {:?}", named_pattern, expression);
+                // Statement::Branch is used in try-else blocks for pattern matching
+                // on thrown exceptions.
+                
+                // TODO: Implement proper pattern matching and exception value binding.
+                // For now, we generate a simple implementation that evaluates the expression.
+                // A complete implementation would need:
+                // 1. Exception handling bytecode instructions
+                // 2. Pattern matching logic to compare the caught exception
+                // 3. Variable binding for named patterns
+                
+                // If there's a name in the pattern, we would need to bind the exception
+                // value to a local variable. However, without proper exception handling
+                // infrastructure in the bytecode, we skip this for now.
+                let _named_pattern = named_pattern; // Acknowledge the pattern exists
+                
+                // Generate the expression that handles this branch
+                let expr_type = self.generate_expression(expression)?;
+                
+                Ok(expr_type)
             }
             Statement::Return(expression) => {
                 self.generate_expression(*expression)?;
