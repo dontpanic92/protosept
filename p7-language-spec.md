@@ -60,7 +60,7 @@ p7 provides the following primitive types:
 
 - `int`  
   Signed 64-bit two's-complement integer (i64).  
-  **Overflow**: traps (runtime error) in v1 (§15.1).
+  **Overflow**: traps (unrecoverable panic; see §14.0) in v1 (§15.1).
 
 - `float`  
   IEEE-754 binary64 floating-point (f64).  
@@ -126,7 +126,7 @@ Two ways to index arrays are provided:
 
 1) Trap indexing:
 - `a[i]` reads the element at index `i` (0-based).
-- If `i` is out of bounds, evaluation traps (runtime error).
+- If `i` is out of bounds, evaluation traps (unrecoverable panic; see §14.0).
 
 2) Checked indexing:
 - `a.get(i)` returns `?T`, yielding `null` when out of bounds.
@@ -840,6 +840,33 @@ Enum variants are referenced as:
 
 ## 14. Error handling (`throw`, `try`) and typed throws
 
+### 14.0 Two failure channels: traps vs throws
+
+p7 distinguishes between two kinds of runtime failures:
+
+1. **Traps (panics)**: Unrecoverable runtime failures representing bugs or contract violations.
+   - Examples: integer overflow, array out-of-bounds indexing (`a[i]`), force unwrap of `null` (`x!`).
+   - A trap indicates a programming error: the preconditions of an operation were not met.
+   - Traps **cannot be caught** by `try`. They propagate to the host/runtime as an unrecoverable error (panic).
+   - The host/runtime may terminate execution, log an error, or take other appropriate action (e.g., triggering a debugger).
+   
+2. **Throws (typed errors)**: Recoverable errors represented by `enum` values.
+   - Examples: parse failures, validation errors, domain-specific error conditions.
+   - Thrown errors are **expected** and can be handled or propagated using `try` (§14.2, §14.3).
+   - The type system tracks which functions may throw and what error types they throw (`throws` or `throws<E>`).
+
+**Key distinction**:
+- `try` expressions handle only **thrown** enum values. They **cannot catch traps**.
+- If code traps during evaluation of a `try` expression, the trap propagates to the host (bypassing the `try`).
+
+**Host-visible behavior** (v1):
+When calling into p7 from the host, the host must be able to distinguish three outcomes:
+- Normal return (function completed successfully with a value).
+- Threw (function threw an enum value; this is recoverable and the host may handle it).
+- Trapped/panicked (unrecoverable failure; host should treat as a fatal error or bug).
+
+[[TODO]]: specify exact host API surface for observing these outcomes and their representation in the host runtime.
+
 ### 14.1 Throwing
 `throw expr;` aborts evaluation and transfers control to the nearest enclosing `try`.
 
@@ -942,7 +969,7 @@ Compatibility rule (recommended for v1):
 
 #### 15.1.1 Integer overflow
 For `int` arithmetic operations (`+`, `-`, `*`, and any other fixed-width integer arithmetic operators added in v1):
-- If the mathematical result does not fit in signed 64-bit range, evaluation **traps** (runtime error).
+- If the mathematical result does not fit in signed 64-bit range, evaluation **traps** (unrecoverable panic; see §14.0).
 
 A standard library (or prelude) function is provided for wraparound addition:
 - `wrapping_add(a: int, b: int) -> int` computes `(a + b) mod 2^64`, interpreted as a signed two's-complement `int`.
@@ -984,7 +1011,7 @@ Type rule (v1):
 `x!`:
 - Requires `x: ?T`.
 - If `x` is non-null, yields the inner `T`.
-- If `x` is `null`, evaluation traps (runtime error).
+- If `x` is `null`, evaluation traps (unrecoverable panic; see §14.0).
 
 ---
 
