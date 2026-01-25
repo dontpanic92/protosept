@@ -1472,9 +1472,7 @@ Rationale:
 
 When a thread completes execution (reaches the end of its function), the outcome is one of:
 
-1. **Returned(value)**: The function returned a value. 
-   - If the return type satisfies `Send`, the host can observe and retrieve the value across the thread boundary.
-   - If the return type does not satisfy `Send`, it is a compile-time error. The function used with `spawn_thread` must have a return type that satisfies `Send` (or returns `unit`).
+1. **Returned(value)**: The function returned a value. The function used with `spawn_thread` must have a return type that satisfies `Send` (or returns `unit`), otherwise it is a compile-time error. If the return type satisfies `Send`, the host can observe and retrieve the value across the thread boundary.
 
 2. **Threw(error_enum)**: The function threw an error (§14.1). The thrown enum type must satisfy `Send` for the host to observe the error details. If the enum does not satisfy `Send`, this is a compile-time error (all throwable enums used in threaded functions must be `Send`).
 
@@ -1540,7 +1538,8 @@ The host/runtime must be able to observe when a thread completes and its outcome
 Example use case (informative, host-side pseudo-code):
 ```
 // Host code (not p7 syntax)
-let handle = p7_eval("spawn_thread worker_fn(42);");
+// After p7 script executes: spawn_thread worker_fn(42);
+let handle = /* obtained from on_thread_spawn hook */;
 match wait_for_thread(handle) {
   ThreadResult.Returned(val) => { /* use val */ },
   ThreadResult.Threw(err) => { /* handle error */ },
