@@ -379,7 +379,7 @@ The following types do **not** satisfy `Send`:
 
 - Struct authors must explicitly declare `Send` conformance using the conformance syntax:
   ```p7
-  struct MyData[Send](x: int, y: string) { }
+  struct[Send] MyData(x: int, y: string) { }
   ```
 - The compiler must verify that all fields satisfy `Send` before allowing the conformance.
 - If any field does not satisfy `Send` (e.g., the struct transitively contains a `box<T>` or `ref T`), declaring `[Send]` is a compile-time error.
