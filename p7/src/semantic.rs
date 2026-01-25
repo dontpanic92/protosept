@@ -166,7 +166,7 @@ impl ToString for Type {
                 PrimitiveType::String => "string".to_string(),
                 PrimitiveType::Unit => "unit".to_string(),
             },
-            Type::Reference(r) => format!("&{}", r.to_string()),
+            Type::Reference(r) => format!("ref {}", r.to_string()),
             Type::Array(a) => format!("[{}]", a.to_string()),
             Type::Function(f) => format!("function({})", f.to_string()),
             Type::Enum(e) => format!("enum({})", e.to_string()),

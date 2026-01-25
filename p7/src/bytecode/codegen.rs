@@ -1,7 +1,8 @@
 use crate::errors::SourcePos;
 use crate::{
     ast::{
-        Expression, FunctionCall, FunctionDeclaration, Identifier, Pattern, Statement, Type as ParsedType,
+        Expression, FunctionCall, FunctionDeclaration, Identifier, Pattern, Statement,
+        Type as ParsedType,
     },
     bytecode::builder::ByteCodeBuilder,
     lexer::TokenType,
@@ -59,14 +60,16 @@ impl Generator {
         }
 
         let mut ty = Type::Primitive(PrimitiveType::Unit);
-        
+
         // Check if this block contains Branch statements (pattern matching)
-        let has_branches = statements.iter().any(|s| matches!(s, Statement::Branch { .. }));
-        
+        let has_branches = statements
+            .iter()
+            .any(|s| matches!(s, Statement::Branch { .. }));
+
         if has_branches {
             // Special handling for blocks with pattern matching branches
             let mut end_jumps = Vec::new();
-            
+
             for statement in statements {
                 if let Statement::Branch { .. } = statement {
                     // Generate the branch, collecting end jump addresses
@@ -75,7 +78,7 @@ impl Generator {
                     ty = self.generate_statement(statement)?;
                 }
             }
-            
+
             // Patch all end jumps to point here
             let end_address = self.builder.next_address();
             for jump_address in end_jumps {
@@ -115,30 +118,34 @@ impl Generator {
         statement: Statement,
         end_jumps: &mut Vec<u32>,
     ) -> SaResult<Type> {
-        if let Statement::Branch { named_pattern, expression } = statement {
+        if let Statement::Branch {
+            named_pattern,
+            expression,
+        } = statement
+        {
             // The exception value is on top of the stack (already unwrapped)
-            
+
             match &named_pattern.pattern {
                 Pattern::FieldAccess { object, field } => {
                     // Enum variant pattern like "SomeErrors.NumberIsNot42"
-                    
+
                     // Duplicate the exception value for comparison
                     self.builder.dup();
-                    
+
                     // Generate code to load the enum variant index
                     let pattern_expr = self.pattern_to_expression(&named_pattern.pattern)?;
                     self.generate_expression(pattern_expr)?;
-                    
+
                     // Compare: are they equal?
                     self.builder.eq();
-                    
+
                     // Negate the result: 1 if not equal, 0 if equal
                     self.builder.not();
-                    
+
                     // If not equal (result is 1 after not), jump to next branch
                     let no_match_jump_placeholder = self.builder.next_address();
                     self.builder.jif(0); // Placeholder
-                    
+
                     // Pattern matched!
                     // Bind to variable if there's a name
                     if let Some(name) = &named_pattern.name {
@@ -159,25 +166,26 @@ impl Generator {
                         // No name binding, pop the exception value
                         self.builder.pop();
                     }
-                    
+
                     // Generate the expression for this branch
                     let expr_type = self.generate_expression(expression)?;
-                    
+
                     // Jump to end of all branches
                     let end_jump_address = self.builder.next_address();
                     self.builder.jmp(0); // Placeholder
                     end_jumps.push(end_jump_address);
-                    
+
                     // Patch the no-match jump to point here (next branch)
                     let next_branch_address = self.builder.next_address();
-                    self.builder.patch_jump_address(no_match_jump_placeholder, next_branch_address);
-                    
+                    self.builder
+                        .patch_jump_address(no_match_jump_placeholder, next_branch_address);
+
                     Ok(expr_type)
                 }
                 Pattern::Identifier(identifier) => {
                     // Wildcard pattern (_) - matches everything
                     // This is typically the last branch, no jump needed
-                    
+
                     // Bind to variable if named
                     if identifier.name == "_" {
                         // Wildcard, just pop the exception value if not bound
@@ -185,7 +193,7 @@ impl Generator {
                             self.builder.pop();
                         }
                     }
-                    
+
                     if let Some(name) = &named_pattern.name {
                         let var_id = self
                             .local_scope
@@ -202,14 +210,15 @@ impl Generator {
                         self.builder.stvar(var_id);
                     } else if identifier.name != "_" {
                         // Not a wildcard and not a named binding - this is an error in the pattern
-                        return Err(SemanticError::Other(
-                            format!("Identifier pattern '{}' must be '_' or bound to a name", identifier.name)
-                        ));
+                        return Err(SemanticError::Other(format!(
+                            "Identifier pattern '{}' must be '_' or bound to a name",
+                            identifier.name
+                        )));
                     }
-                    
+
                     // Generate the expression
                     let expr_type = self.generate_expression(expression)?;
-                    
+
                     Ok(expr_type)
                 }
                 Pattern::IntegerLiteral(_)
@@ -217,7 +226,7 @@ impl Generator {
                 | Pattern::StringLiteral(_)
                 | Pattern::BooleanLiteral(_) => {
                     return Err(SemanticError::Other(
-                        "Pattern matching for literal patterns not yet implemented".to_string()
+                        "Pattern matching for literal patterns not yet implemented".to_string(),
                     ));
                 }
             }
@@ -261,7 +270,11 @@ impl Generator {
                 self.builder.throw();
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
-            Statement::EnumDeclaration { name, attributes, values } => {
+            Statement::EnumDeclaration {
+                name,
+                attributes,
+                values,
+            } => {
                 let qualified_name = self
                     .symbol_table
                     .get_new_symbol_qualified_name(name.name.clone());
@@ -326,7 +339,7 @@ impl Generator {
                 // when they appear in a pattern matching context.
                 // If we reach here, it's an error - branches should only appear in try-else blocks
                 return Err(SemanticError::Other(
-                    "Branch statements can only appear in try-else blocks".to_string()
+                    "Branch statements can only appear in try-else blocks".to_string(),
                 ));
             }
             Statement::Return(expression) => {
@@ -395,6 +408,35 @@ impl Generator {
 
                 Ok(ty)
             }
+            Expression::Ref(identifier) => {
+                // `ref` is only meaningful at call sites (enforced there).
+                // Treat it as loading the underlying slot value.
+                if let Some(var_id) = self
+                    .local_scope
+                    .as_mut()
+                    .unwrap()
+                    .find_variable(&identifier.name)
+                {
+                    self.builder.ldvar(var_id);
+                    Ok(self.local_scope.as_ref().unwrap().get_variable_type(var_id))
+                } else if let Some(param_id) = self
+                    .local_scope
+                    .as_mut()
+                    .unwrap()
+                    .find_param(&identifier.name)
+                {
+                    self.builder.ldpar(param_id);
+                    Ok(self.local_scope.as_ref().unwrap().get_param_type(param_id))
+                } else {
+                    Err(SemanticError::VariableNotFound {
+                        name: identifier.name,
+                        pos: Some(SourcePos {
+                            line: identifier.line,
+                            col: identifier.col,
+                        }),
+                    })
+                }
+            }
             Expression::Binary {
                 left,
                 operator,
@@ -414,7 +456,17 @@ impl Generator {
                                 .unwrap()
                                 .find_variable(&identifier.name)
                             {
-                                // Store into local variable
+                                // `ref` is read-only: disallow assignment to ref locals.
+                                if matches!(
+                                    self.local_scope.as_ref().unwrap().get_variable_type(var_id),
+                                    Type::Reference(_)
+                                ) {
+                                    return Err(SemanticError::Other(format!(
+                                        "Cannot assign to read-only ref '{}'",
+                                        identifier.name
+                                    )));
+                                }
+
                                 self.builder.stvar(var_id);
                                 return Ok(Type::Primitive(PrimitiveType::Unit));
                             } else if let Some(param_id) = self
@@ -423,6 +475,17 @@ impl Generator {
                                 .unwrap()
                                 .find_param(&identifier.name)
                             {
+                                // `ref` is read-only: disallow assignment to ref parameters.
+                                if matches!(
+                                    self.local_scope.as_ref().unwrap().get_param_type(param_id),
+                                    Type::Reference(_)
+                                ) {
+                                    return Err(SemanticError::Other(format!(
+                                        "Cannot assign to read-only ref parameter '{}'",
+                                        identifier.name
+                                    )));
+                                }
+
                                 // Store into parameter slot (no separate stpar instruction exists;
                                 // emit Stvar to simplify codegen — runtime layout may treat params differently)
                                 self.builder.stvar(param_id);
@@ -440,10 +503,17 @@ impl Generator {
                         Expression::FieldAccess { object, field } => {
                             let object_ty = self.generate_expression(*object.clone())?;
                             let _rhs_ty = self.generate_expression(*right.clone())?;
-                            
-                            if let Type::Reference(struct_ref) = &object_ty
-                                && let Type::Struct(type_id) = **struct_ref
-                            {
+
+                            // `ref` is read-only: disallow `ref_struct.field = ...`.
+                            if matches!(object_ty, Type::Reference(_)) {
+                                return Err(SemanticError::Other(format!(
+                                    "Cannot assign through read-only ref '{}.{}'",
+                                    object.get_name(),
+                                    field.name
+                                )));
+                            }
+
+                            if let Type::Struct(type_id) = object_ty {
                                 let udt = self.symbol_table.get_udt(type_id);
                                 if let UserDefinedType::Struct(struct_def) = udt {
                                     if let Some((idx, (_fname, _ftype))) = struct_def
@@ -477,16 +547,16 @@ impl Generator {
                                         "Internal error: Type ID resolved to non-Struct UDT"
                                     );
                                 }
-                            } else {
-                                return Err(SemanticError::TypeMismatch {
-                                    lhs: object_ty.to_string(),
-                                    rhs: "Struct instance".to_string(),
-                                    pos: Some(SourcePos {
-                                        line: field.line,
-                                        col: field.col,
-                                    }),
-                                });
                             }
+
+                            return Err(SemanticError::TypeMismatch {
+                                lhs: object_ty.to_string(),
+                                rhs: "Struct instance".to_string(),
+                                pos: Some(SourcePos {
+                                    line: field.line,
+                                    col: field.col,
+                                }),
+                            });
                         }
                         _ => {
                             // Other lvalues (like indexing, deref) not supported yet.
@@ -618,6 +688,11 @@ impl Generator {
                         (self.generate_expression(*object)?, false)
                     };
 
+                let object_ty = match object_ty {
+                    Type::Reference(inner) => *inner,
+                    other => other,
+                };
+
                 match object_ty {
                     Type::Enum(type_id) => {
                         let udt = self.symbol_table.get_udt(type_id);
@@ -727,47 +802,52 @@ impl Generator {
             } => {
                 // Generate the try block expression
                 let ty = self.generate_expression(*try_block)?;
-                
+
                 if let Some(else_block) = else_block {
                     // After try_block, check if result is an exception
                     // If exception, jump to else_block handler
                     let check_exception_placeholder = self.builder.next_address();
                     self.builder.check_exception(0); // Placeholder address
-                    
+
                     // Normal path: no exception, jump over else block
                     let jump_over_else_placeholder = self.builder.next_address();
                     self.builder.jmp(0); // Placeholder address
-                    
+
                     // Exception handler starts here
                     let else_block_address = self.builder.next_address();
-                    self.builder.patch_jump_address(check_exception_placeholder, else_block_address);
-                    
+                    self.builder
+                        .patch_jump_address(check_exception_placeholder, else_block_address);
+
                     // Unwrap the exception value for the else block to use
                     self.builder.unwrap_exception();
-                    
+
                     // Check if else_block has pattern matching (Branch statements)
-                    let has_pattern_matching = if let Expression::Block(statements) = else_block.as_ref() {
-                        statements.iter().any(|s| matches!(s, Statement::Branch { .. }))
-                    } else {
-                        false
-                    };
-                    
+                    let has_pattern_matching =
+                        if let Expression::Block(statements) = else_block.as_ref() {
+                            statements
+                                .iter()
+                                .any(|s| matches!(s, Statement::Branch { .. }))
+                        } else {
+                            false
+                        };
+
                     // If no pattern matching, pop the exception value since we won't use it
                     if !has_pattern_matching {
                         self.builder.pop();
                     }
-                    
+
                     // Generate the else block (which may contain Statement::Branch for pattern matching)
                     self.generate_expression(*else_block)?;
-                    
+
                     // End of exception handler
                     let end_address = self.builder.next_address();
-                    self.builder.patch_jump_address(jump_over_else_placeholder, end_address);
+                    self.builder
+                        .patch_jump_address(jump_over_else_placeholder, end_address);
                 } else {
                     // No else block - if there's an exception, it propagates
                     // The exception is already on the stack, so it will return to caller
                 }
-                
+
                 Ok(ty)
             }
             Expression::BlockValue(expression) => {
@@ -830,7 +910,11 @@ impl Generator {
 
         self.local_scope = Some(LocalSymbolScope::new(params.clone()));
         let ty = self.generate_block(declaration.body, vec![])?;
+        // Always emit Ret so unit-returning functions don't fall-through into subsequent code.
+        // The VM `Ret` handler is responsible for popping the frame even if there's no value.
         if ty != Type::Primitive(PrimitiveType::Unit) {
+            self.builder.ret();
+        } else {
             self.builder.ret();
         }
 
@@ -846,7 +930,7 @@ impl Generator {
         let arguments = call.arguments;
         let (call_line, call_col) = callee_expr.get_pos();
         let call_name = callee_expr.get_name();
-        
+
         // Handle field-call (method or static method) specially.
         if let Expression::FieldAccess { object, field } = callee_expr {
             // Case 1: Static method call like `Type.method(...)` (object is identifier referring to a type)
@@ -864,20 +948,19 @@ impl Generator {
                                     col: field.col,
                                 }),
                             })?;
-    
+
                         let struct_symbol = self.symbol_table.get_symbol(struct_symbol_id).unwrap();
-                        let method_symbol_id = struct_symbol
-                            .children
-                            .get(&field.name)
-                            .cloned()
-                            .ok_or(SemanticError::FunctionNotFound {
-                                name: format!("{}.{}", ident.name, field.name),
-                                pos: Some(SourcePos {
-                                    line: field.line,
-                                    col: field.col,
-                                }),
-                            })?;
-    
+                        let method_symbol_id =
+                            struct_symbol.children.get(&field.name).cloned().ok_or(
+                                SemanticError::FunctionNotFound {
+                                    name: format!("{}.{}", ident.name, field.name),
+                                    pos: Some(SourcePos {
+                                        line: field.line,
+                                        col: field.col,
+                                    }),
+                                },
+                            )?;
+
                         let method_symbol = self.symbol_table.get_symbol(method_symbol_id).unwrap();
                         let (addr, type_id) = match method_symbol.kind {
                             SymbolKind::Function { address, type_id } => (address, type_id),
@@ -891,7 +974,7 @@ impl Generator {
                                 });
                             }
                         };
-    
+
                         let function_udt = match self.symbol_table.get_udt(type_id) {
                             UserDefinedType::Function(f) => f,
                             _ => {
@@ -904,11 +987,12 @@ impl Generator {
                                 });
                             }
                         };
-    
+
                         let param_names: Vec<String> = function_udt.param_names.clone();
-                        let param_defaults: Vec<Option<Expression>> = function_udt.param_defaults.clone();
+                        let param_defaults: Vec<Option<Expression>> =
+                            function_udt.param_defaults.clone();
                         let ret_type = function_udt.return_type.clone();
-    
+
                         // Static method: process all args normally (no receiver pre-pushed)
                         let ordered_exprs = self.process_arguments(
                             &format!("{}.{}", ident.name, field.name),
@@ -918,19 +1002,19 @@ impl Generator {
                             &param_names,
                             &param_defaults,
                         )?;
-    
+
                         self.push_argument_list(ordered_exprs)?;
                         self.builder.call(method_symbol_id);
-    
+
                         return Ok(ret_type);
                     }
                 }
             }
-    
+
             // Case 2: Instance method call like `obj.method(...)`
             // Generate the object expression first (pushes receiver on stack)
             let object_ty = self.generate_expression(*object)?;
-    
+
             // Resolve underlying struct TypeId
             let struct_type_id = if let Type::Reference(boxed) = &object_ty {
                 if let Type::Struct(id) = **boxed {
@@ -943,7 +1027,7 @@ impl Generator {
             } else {
                 None
             };
-    
+
             if struct_type_id.is_none() {
                 return Err(SemanticError::TypeMismatch {
                     lhs: object_ty.to_string(),
@@ -954,9 +1038,9 @@ impl Generator {
                     }),
                 });
             }
-    
+
             let type_id = struct_type_id.unwrap();
-    
+
             // Find the struct symbol corresponding to the TypeId
             let struct_symbol_id_opt = self
                 .symbol_table
@@ -968,7 +1052,7 @@ impl Generator {
                     _ => false,
                 })
                 .map(|(i, _)| i as u32);
-    
+
             let struct_symbol_id = struct_symbol_id_opt.ok_or(SemanticError::FunctionNotFound {
                 name: field.name.clone(),
                 pos: Some(SourcePos {
@@ -976,20 +1060,18 @@ impl Generator {
                     col: field.col,
                 }),
             })?;
-    
+
             let struct_symbol = self.symbol_table.get_symbol(struct_symbol_id).unwrap();
-            let method_symbol_id = struct_symbol
-                .children
-                .get(&field.name)
-                .cloned()
-                .ok_or(SemanticError::FunctionNotFound {
+            let method_symbol_id = struct_symbol.children.get(&field.name).cloned().ok_or(
+                SemanticError::FunctionNotFound {
                     name: field.name.clone(),
                     pos: Some(SourcePos {
                         line: field.line,
                         col: field.col,
                     }),
-                })?;
-    
+                },
+            )?;
+
             let method_symbol = self.symbol_table.get_symbol(method_symbol_id).unwrap();
             let (_, method_type_id) = match method_symbol.kind {
                 SymbolKind::Function { address, type_id } => (address, type_id),
@@ -1003,7 +1085,7 @@ impl Generator {
                     });
                 }
             };
-    
+
             let function_udt = match self.symbol_table.get_udt(method_type_id) {
                 UserDefinedType::Function(f) => f.clone(),
                 _ => {
@@ -1016,12 +1098,12 @@ impl Generator {
                     });
                 }
             };
-    
+
             // For instance methods the first parameter is the receiver (self) which we've already pushed.
             // So process remaining parameters (skip first).
             let param_names_full: Vec<String> = function_udt.param_names.clone();
             let param_defaults_full: Vec<Option<Expression>> = function_udt.param_defaults.clone();
-    
+
             if param_names_full.is_empty() {
                 // No params declared (we still pushed receiver) - ensure no args provided
                 if !arguments.is_empty() {
@@ -1034,16 +1116,16 @@ impl Generator {
                         }),
                     });
                 }
-    
+
                 // Call method (receiver already on stack)
                 self.builder.call(method_symbol_id);
                 return Ok(function_udt.return_type.clone());
             }
-    
+
             // Skip receiver param
             let param_names_tail = &param_names_full[1..];
             let param_defaults_tail = &param_defaults_full[1..];
-    
+
             // Process only the provided arguments (not including receiver)
             let ordered_exprs = self.process_arguments(
                 &format!("{}.{}", struct_symbol.name, field.name),
@@ -1053,11 +1135,11 @@ impl Generator {
                 param_names_tail,
                 param_defaults_tail,
             )?;
-    
+
             // This will generate remaining arguments and push them after the receiver.
             self.push_argument_list(ordered_exprs)?;
             self.builder.call(method_symbol_id);
-    
+
             Ok(function_udt.return_type.clone())
         } else {
             // Non-field callee: top-level function or constructor by name
@@ -1066,23 +1148,37 @@ impl Generator {
             if let Some(ty) = self.symbol_table.find_type_in_scope(&call_name)
                 && let Type::Struct(type_id) = ty
             {
-                return self.generate_struct_from_call(crate::ast::FunctionCall {
-                    callee: Box::new(Expression::Identifier(crate::ast::Identifier { name: call_name.clone(), line: call_line, col: call_col })),
-                    arguments,
-                }, type_id);
+                return self.generate_struct_from_call(
+                    crate::ast::FunctionCall {
+                        callee: Box::new(Expression::Identifier(crate::ast::Identifier {
+                            name: call_name.clone(),
+                            line: call_line,
+                            col: call_col,
+                        })),
+                        arguments,
+                    },
+                    type_id,
+                );
             }
-    
+
             if let Some(symbol_id) = self.symbol_table.find_symbol_in_scope(&call_name) {
                 let symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
-    
+
                 // Check if this is a struct initialization (struct name used as a function)
                 if let SymbolKind::Struct(type_id) = symbol.kind {
-                    return self.generate_struct_from_call(crate::ast::FunctionCall {
-                        callee: Box::new(Expression::Identifier(crate::ast::Identifier { name: call_name.clone(), line: call_line, col: call_col })),
-                        arguments,
-                    }, type_id);
+                    return self.generate_struct_from_call(
+                        crate::ast::FunctionCall {
+                            callee: Box::new(Expression::Identifier(crate::ast::Identifier {
+                                name: call_name.clone(),
+                                line: call_line,
+                                col: call_col,
+                            })),
+                            arguments,
+                        },
+                        type_id,
+                    );
                 }
-    
+
                 let (_, type_id) = match symbol.kind {
                     SymbolKind::Function { address, type_id } => (address, type_id),
                     _ => {
@@ -1095,7 +1191,7 @@ impl Generator {
                         });
                     }
                 };
-    
+
                 let function_udt = match self.symbol_table.get_udt(type_id) {
                     UserDefinedType::Function(function) => function,
                     _ => {
@@ -1108,10 +1204,10 @@ impl Generator {
                         });
                     }
                 };
-    
+
                 let param_names: Vec<String> = function_udt.param_names.clone();
                 let param_defaults: Vec<Option<Expression>> = function_udt.param_defaults.clone();
-    
+
                 // Use shared argument processing logic
                 let ordered_exprs = self.process_arguments(
                     &call_name,
@@ -1121,10 +1217,10 @@ impl Generator {
                     &param_names,
                     &param_defaults,
                 )?;
-    
+
                 self.push_argument_list(ordered_exprs)?;
                 self.builder.call(symbol_id);
-    
+
                 let ty = self.symbol_table.get_udt(type_id);
                 match ty {
                     UserDefinedType::Function(function) => Ok(function.return_type.clone()),
@@ -1249,7 +1345,7 @@ impl Generator {
     fn generate_struct_from_call(&mut self, call: FunctionCall, type_id: TypeId) -> SaResult<Type> {
         // Get struct definition
         let (call_name, (call_line, call_col)) = (call.callee.get_name(), call.callee.get_pos());
-    
+
         let struct_def = match self.symbol_table.get_udt(type_id) {
             UserDefinedType::Struct(s) => s.clone(),
             _ => {
@@ -1263,14 +1359,14 @@ impl Generator {
                 });
             }
         };
-    
+
         let field_names: Vec<String> = struct_def
             .fields
             .iter()
             .map(|(name, _)| name.clone())
             .collect();
         let field_defaults: Vec<Option<Expression>> = struct_def.field_defaults.clone();
-    
+
         // Process arguments using shared logic
         let ordered_exprs = self.process_arguments(
             &call_name,
@@ -1280,10 +1376,10 @@ impl Generator {
             &field_names,
             &field_defaults,
         )?;
-    
+
         self.push_argument_list(ordered_exprs)?;
         self.builder.newstruct(struct_def.fields.len() as u32);
-    
+
         Ok(Type::Struct(type_id))
     }
 

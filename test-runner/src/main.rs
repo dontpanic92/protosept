@@ -2,7 +2,7 @@ use p7::{
     ast::{Attribute, Expression},
     errors::Proto7Error,
     interpreter::context::Data as P7Value,
-    semantic::{UserDefinedType, SymbolKind},
+    semantic::{SymbolKind, UserDefinedType},
 };
 use std::{fs, path::PathBuf};
 
@@ -13,6 +13,7 @@ enum FailureReason {
     TypeMismatch { expected: String, found: String },
     ValueMismatch { expected: String, found: String },
     InvalidTestAttribute(String),
+    CompileDidNotFail,
 }
 
 #[derive(Debug)]
@@ -122,7 +123,9 @@ fn run_test_case(
             .map_or(false, |expected_val| actual_val == expected_val),
         P7Value::Float(actual_val) => expected_value_str
             .parse::<f64>()
-            .map_or(false, |expected_val| (actual_val - expected_val).abs() < 1e-9),
+            .map_or(false, |expected_val| {
+                (actual_val - expected_val).abs() < 1e-9
+            }),
         _ => {
             let actual_value = format!("{:?}", p7_result);
             actual_value == *expected_value_str
@@ -148,6 +151,24 @@ fn run_test_case(
 fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestResult)>> {
     let content = fs::read_to_string(file_path)?;
 
+    // Compile-fail tests: add `// compile_fail` anywhere in the file.
+    if content
+        .lines()
+        .any(|l| l.trim_start().starts_with("// compile_fail"))
+    {
+        match p7::compile(content.clone()) {
+            Ok(_) => {
+                return Ok(vec![(
+                    "compile_fail".to_string(),
+                    TestResult::Failure(FailureReason::CompileDidNotFail),
+                )]);
+            }
+            Err(_) => {
+                return Ok(vec![("compile_fail".to_string(), TestResult::Success)]);
+            }
+        }
+    }
+
     // Compile the p7 code
     let module = match p7::compile(content.clone()) {
         Ok(m) => m,
@@ -155,7 +176,7 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
             return Ok(vec![(
                 "compile".to_string(),
                 TestResult::Failure(FailureReason::ExecutionError(e)),
-            )])
+            )]);
         }
     };
 

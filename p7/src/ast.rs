@@ -19,7 +19,7 @@ impl Type {
         match self {
             Type::Identifier(identifier) => identifier.name.clone(),
             Type::Reference(r) => {
-                format!("&{}", r.get_name())
+                format!("ref {}", r.get_name())
             }
             Type::Array(a) => {
                 format!("{}[]", a.get_name())
@@ -111,6 +111,8 @@ pub enum Expression {
         else_block: Option<Box<Expression>>,
     },
 
+    Ref(Identifier),
+
     BlockValue(Box<Expression>),
 }
 
@@ -168,6 +170,7 @@ impl Expression {
             Expression::FieldAccess { object, field } => {
                 format!("{}.{}", object.get_name(), field.name)
             }
+            Expression::Ref(identifier) => format!("ref {}", identifier.name),
             _ => "".to_string(),
         }
     }
@@ -177,6 +180,7 @@ impl Expression {
             Expression::Identifier(identifier) => (identifier.line, identifier.col),
             Expression::FunctionCall(function_call) => function_call.callee.get_pos(),
             Expression::FieldAccess { object: _, field } => (field.line, field.col),
+            Expression::Ref(identifier) => (identifier.line, identifier.col),
             _ => (0, 0),
         }
     }

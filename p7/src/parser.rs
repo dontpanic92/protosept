@@ -7,12 +7,7 @@ use crate::ast::{
 use crate::errors::{ParseError, SourcePos};
 use crate::lexer::{Token, TokenType};
 
-const UNARY_OPERATIONS: &[TokenType] = &[
-    TokenType::Not,
-    TokenType::Plus,
-    TokenType::Minus,
-    TokenType::Ampersand,
-];
+const UNARY_OPERATIONS: &[TokenType] = &[TokenType::Not, TokenType::Plus, TokenType::Minus];
 
 type ParseResult<T> = Result<T, ParseError>;
 pub struct Parser {
@@ -186,6 +181,11 @@ impl Parser {
                 TokenType::If => {
                     return self.parse_if_expression();
                 }
+                TokenType::Ref => {
+                    self.consume();
+                    let ident = self.parse_identifier()?;
+                    Expression::Ref(ident)
+                }
                 _ => {
                     return Err(ParseError::UnexpectedToken {
                         found: format!("{:?}", token.token_type),
@@ -210,16 +210,16 @@ impl Parser {
 
     fn parse_function_call(&mut self, identifier: Expression) -> ParseResult<Expression> {
         self.consume_match(TokenType::OpenParen)?;
-    
+
         let mut arguments = Vec::new();
         while let Some(token) = self.peek() {
             if token.token_type == TokenType::CloseParen {
                 self.consume();
                 break;
             }
-    
+
             let expr = self.parse_expression()?;
-    
+
             let arg = if let Expression::Binary {
                 left,
                 operator:
@@ -235,24 +235,26 @@ impl Parser {
             } else {
                 (None, expr)
             };
-    
+
             arguments.push(arg);
-    
+
             let comma = self.consume_match(TokenType::Comma);
             if !self.peek_match(TokenType::CloseParen) {
                 comma?;
             }
         }
-    
+
         match identifier {
             Expression::Identifier(identifier) => Ok(Expression::FunctionCall(FunctionCall {
                 callee: Box::new(Expression::Identifier(identifier)),
                 arguments,
             })),
-            Expression::FieldAccess { object, field } => Ok(Expression::FunctionCall(FunctionCall {
-                callee: Box::new(Expression::FieldAccess { object, field }),
-                arguments,
-            })),
+            Expression::FieldAccess { object, field } => {
+                Ok(Expression::FunctionCall(FunctionCall {
+                    callee: Box::new(Expression::FieldAccess { object, field }),
+                    arguments,
+                }))
+            }
             other => Ok(Expression::FunctionCall(FunctionCall {
                 callee: Box::new(other),
                 arguments,
@@ -285,8 +287,10 @@ impl Parser {
             TokenType::Or => 2,
             TokenType::And => 3,
             TokenType::Equals | TokenType::NotEquals => 4,
-            TokenType::GreaterThan | TokenType::GreaterThanOrEqual |
-            TokenType::LessThan | TokenType::LessThanOrEqual => 5,
+            TokenType::GreaterThan
+            | TokenType::GreaterThanOrEqual
+            | TokenType::LessThan
+            | TokenType::LessThanOrEqual => 5,
             TokenType::Plus | TokenType::Minus => 6,
             TokenType::Multiply | TokenType::Divide => 7,
             _ => 0,
@@ -492,24 +496,41 @@ impl Parser {
 
             let parameter = match_token! {
                 self.peek(),
-                TokenType::Ampersand => {
-                    // &self: no default allowed
+                TokenType::Ref => {
+                    // Receiver shortcut: `ref self` == `self: ref Self`
                     self.consume();
-                    self.consume_match(TokenType::Identifier("self".to_string()))?;
-                    Ok(Parameter {
-                        name: Identifier { name: "self".to_string(), line: 0, col: 0 },
-                        arg_type: Type::Reference(Box::new(Type::Identifier(Identifier { name: "Self".to_string(), line: 0, col: 0 }))),
-                        default_value: None,
-                     })
+                    let name = self.parse_identifier()?;
+                    if name.name != "self" {
+                        return Err(ParseError::UnexpectedToken {
+                            found: format!("{:?}", TokenType::Identifier(name.name)),
+                            pos: Some(SourcePos { line: name.line, col: name.col }),
+                        });
+                    }
+
+                    let arg_type = Type::Reference(Box::new(Type::Identifier(Identifier {
+                        name: "Self".to_string(),
+                        line: name.line,
+                        col: name.col,
+                    })));
+
+                    Ok(Parameter { name, arg_type, default_value: None })
                 },
                 TokenType::Identifier(ref ident) if ident == "self" => {
-                    // self: no default allowed
-                    self.consume();
-                    Ok(Parameter {
-                        name: Identifier { name: "self".to_string(), line: 0, col: 0 },
-                        arg_type: Type::Identifier(Identifier { name: "Self".to_string(), line: 0, col: 0 }),
-                        default_value: None,
-                    })
+                    // `self` receiver; optional explicit type via `self: ...`.
+                    let (line, col) = match self.consume() {
+                        Some(t) => (t.line, t.col),
+                        None => return Err(ParseError::UnexpectedEof { pos: self.peek_previous().map(|t| SourcePos { line: t.line, col: t.col }) }),
+                    };
+
+                    let name = Identifier { name: "self".to_string(), line, col };
+
+                    let arg_type = if self.consume_match(TokenType::Colon).is_ok() {
+                        self.parse_type()?
+                    } else {
+                        Type::Identifier(Identifier { name: "Self".to_string(), line, col })
+                    };
+
+                    Ok(Parameter { name, arg_type, default_value: None })
                 },
                 TokenType::Identifier(_) => {
                     let name = self.parse_identifier()?;
@@ -537,23 +558,23 @@ impl Parser {
     fn parse_attribute(&mut self) -> ParseResult<Attribute> {
         // Expect @ token
         self.consume_match(TokenType::At)?;
-        
+
         // Parse attribute name (must be an identifier)
         let name = self.parse_identifier()?;
-        
+
         // Parse arguments (same as struct construction / function call)
         self.consume_match(TokenType::OpenParen)?;
         let mut arguments = Vec::new();
-        
+
         while let Some(token) = self.peek() {
             if token.token_type == TokenType::CloseParen {
                 self.consume();
                 break;
             }
-            
+
             // Parse expression, which might be "name = value" or just "value"
             let expr = self.parse_expression()?;
-            
+
             // Check if the expression is a named argument (name = value)
             let arg = if let Expression::Binary {
                 left,
@@ -570,26 +591,26 @@ impl Parser {
             } else {
                 (None, expr)
             };
-            
+
             arguments.push(arg);
-            
+
             // Handle comma separator
             let comma = self.consume_match(TokenType::Comma);
             if !self.peek_match(TokenType::CloseParen) {
                 comma?;
             }
         }
-        
+
         Ok(Attribute { name, arguments })
     }
 
     fn parse_attributes(&mut self) -> ParseResult<Vec<Attribute>> {
         let mut attributes = Vec::new();
-        
+
         while self.peek_match(TokenType::At) {
             attributes.push(self.parse_attribute()?);
         }
-        
+
         Ok(attributes)
     }
 
@@ -615,7 +636,11 @@ impl Parser {
             }
         }
 
-        Ok(Statement::EnumDeclaration { name, attributes, values })
+        Ok(Statement::EnumDeclaration {
+            name,
+            attributes,
+            values,
+        })
     }
 
     fn parse_struct_field(&mut self) -> ParseResult<StructField> {
@@ -711,7 +736,10 @@ impl Parser {
         }
     }
 
-    fn parse_function_declaration(&mut self, attributes: Vec<Attribute>) -> ParseResult<FunctionDeclaration> {
+    fn parse_function_declaration(
+        &mut self,
+        attributes: Vec<Attribute>,
+    ) -> ParseResult<FunctionDeclaration> {
         self.consume_match(TokenType::Fn)?;
 
         let name = self.parse_identifier()?;
@@ -749,7 +777,7 @@ impl Parser {
     fn parse_type(&mut self) -> ParseResult<Type> {
         if let Some(token) = self.peek() {
             match &token.token_type {
-                TokenType::Ampersand => {
+                TokenType::Ref => {
                     self.consume();
                     let ty = self.parse_type()?;
                     Ok(Type::Reference(Box::new(ty)))
@@ -785,7 +813,7 @@ impl Parser {
     fn parse_statement(&mut self) -> ParseResult<Statement> {
         // First, try to parse attributes
         let attributes = self.parse_attributes()?;
-        
+
         match self.peek().map(|t| t.token_type.clone()) {
             Some(TokenType::Fn) => self
                 .parse_function_declaration(attributes)

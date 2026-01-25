@@ -20,6 +20,7 @@ pub enum TokenType {
     Throws,
     Try,
     Else,
+    Ref,
 
     // Identifiers and Literals
     Identifier(String),
@@ -367,6 +368,7 @@ impl Lexer {
                         "throws" => TokenType::Throws,
                         "try" => TokenType::Try,
                         "else" => TokenType::Else,
+                        "ref" => TokenType::Ref,
                         _ => TokenType::Identifier(ident),
                     }
                 } else if c.is_numeric() {

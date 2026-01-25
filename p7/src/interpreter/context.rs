@@ -386,11 +386,11 @@ impl Context {
                         .push(Data::StructRef(struct_ref));
                 }
                 Instruction::Ret => {
-                    if self.stack_frame()?.stack.len() > 0 {
-                        let return_value = self.stack_frame_mut()?.stack.pop();
-                        self.stack.pop();
-                        if let Some(value) = return_value {
-                            self.stack_frame_mut()?.stack.push(value);
+                    let return_value = self.stack_frame_mut()?.stack.pop();
+                    self.stack.pop();
+                    if let Some(value) = return_value {
+                        if let Ok(frame) = self.stack_frame_mut() {
+                            frame.stack.push(value);
                         }
                     }
                 }

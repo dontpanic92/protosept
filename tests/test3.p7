@@ -1,0 +1,12 @@
+// compile_fail: `ref` is read-only, so assigning through a `ref` parameter must be rejected.
+
+fn assign42(a: ref float) {
+    a = 42;
+}
+
+fn test() -> float {
+    let a = 1.0;
+    assign42(ref a);
+
+    a
+}

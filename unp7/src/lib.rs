@@ -230,10 +230,7 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
                 .get(*symbol_id as usize)
                 .map(|symbol| format!("; name={}", symbol.qualified_name));
             if let Some(annotation) = annotation {
-                format!(
-                    "{}  call {}  {}",
-                    offset_hex, symbol_id, annotation
-                )
+                format!("{}  call {}  {}", offset_hex, symbol_id, annotation)
             } else {
                 format!("{}  call {}", offset_hex, symbol_id)
             }
@@ -259,8 +256,8 @@ fn hex_offset(offset: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::disassemble_module;
-    use p7::bytecode::builder::ByteCodeBuilder;
     use p7::bytecode::Module;
+    use p7::bytecode::builder::ByteCodeBuilder;
 
     #[test]
     fn disassembles_basic_instructions() {

@@ -25,7 +25,7 @@ fn[throws] test42(a: float) -> float {
     a
 }
 
-fn assign42(a: &float) {
+fn assign42(a: ref float) {
     a = 42;
 }
 
@@ -42,7 +42,7 @@ struct Vec2(
         self.secret
     }
 
-    pub fn set_secret(&self, value: int) {
+    pub fn set_secret(self: ref Self, value: int) {
         self.secret = value;
     }
 }
@@ -59,7 +59,7 @@ fn test() -> float {
 
     let f = try test42(d) else 0;
 
-    assign42(&f);
+    assign42(ref f);
 
     f
 }
