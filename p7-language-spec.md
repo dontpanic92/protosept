@@ -30,9 +30,136 @@ A program is a sequence of top-level items:
 - Enum declarations: `enum ...`
 - Proto declarations: `proto ...`
 
-[[TODO]]: module/import system and visibility rules at module boundaries.
-
 Top-level executable statements are not allowed in v1; execution begins by calling an entrypoint function via host embedding (e.g., `run_p7_code(contents, "main")`).
+
+---
+
+## 1.1 Packages, modules, and imports
+
+### 1.1.1 Packages
+
+A **package** is the unit of compilation and dependency distribution in p7.
+
+- Package names are chosen by the host or tooling (e.g., build system, IDE, compiler invocation).
+- The compiler accepts a package name and a set of source files (modules) that comprise that package.
+- A package may depend on other packages; dependencies are also specified by the host/tooling.
+
+### 1.1.2 Modules
+
+A **module** is a single source file.
+
+- Each source file in a package corresponds to one module.
+- The **module path** is derived from the file's path within the package.
+- Recommended mapping: file path separators (`/`) on disk become package-qualified path separators (`.`) in module paths.
+  - Example: a file `src/util/string.p7` might correspond to module path `mypackage.src.util.string`.
+  - Exact mapping is determined by host/tooling conventions.
+
+All modules within a package are importable across packages, subject to visibility rules (§1.1.6).
+
+### 1.1.3 Absolute module paths
+
+An **absolute module path** begins with a package name and uses `.` as a separator.
+
+Examples:
+- `std.collections.list`
+- `myapp.services.auth`
+
+Absolute paths are usable in:
+- **Import statements** (§1.1.4)
+- **Type positions** (e.g., `let x: std.collections.List<int>;`)
+- **Expression positions** (e.g., `std.math.sqrt(4.0)`)
+- **Any name position** where a qualified name is permitted
+
+### 1.1.4 Import statements
+
+The `import` statement brings module contents into scope.
+
+**Syntax:**
+```p7
+import <module-path>;
+import <module-path> as <name>;
+```
+
+Where `<module-path>` is either:
+1. An **absolute module path** (starts with a package name), or
+2. A **relative module path** starting with `.` (leading-`.` relative; see §1.1.5)
+
+**Binding rules:**
+- `import P;` binds the **last segment** of `P` to the current scope.
+  - Example: `import std.collections.list;` binds the name `list`.
+- `import P as N;` binds the name `N` to the current scope.
+  - Example: `import std.collections.list as MyList;` binds the name `MyList`.
+
+After an import, the bound name (the last segment or the alias) refers to the imported module, and its public (`pub`) declarations are accessible via the bound name.
+
+**Examples:**
+```p7
+// Import absolute module path
+import std.collections.list;
+// Now `list` is available; access items like `list.List`, `list.new_list()`
+
+// Import with alias
+import myapp.services.auth as Auth;
+// Now `Auth` is available; access items like `Auth.login(...)`
+
+// Import relative module (see §1.1.5)
+import .sibling;
+// Binds `sibling` (last segment)
+```
+
+### 1.1.5 Relative module paths
+
+**Relative module paths** starting with `.` are permitted **only** in `import` statements.
+
+- A leading `.` indicates a path relative to the **current module's path**.
+- `.foo` refers to a sibling module `foo` in the same directory.
+- `.sub.bar` refers to a module `bar` in a subdirectory `sub` relative to the current module.
+
+**Restriction:**
+- Relative paths (leading-`.`) are **not** permitted in type positions, expression positions, or any other name positions.
+- They exist solely as a convenience for `import` statements.
+
+**Examples:**
+```p7
+// In module `myapp.services.auth`
+import .helpers;        // imports `myapp.services.helpers`
+import ..util.logging;  // imports `myapp.util.logging` (parent directory)
+```
+
+Note: The exact syntax for parent-relative paths (e.g., `..`) is [[TODO]]. In v1, only sibling and subdirectory relative imports (single `.` prefix) may be supported.
+
+### 1.1.6 Visibility rules
+
+By default, all declarations (functions, structs, enums, protos) in a module are **module-private**.
+
+- A declaration marked with `pub` is visible **outside the module** (to other modules in the same package and to modules in other packages that import this module).
+- Module-private declarations are accessible only within the same source file.
+
+**Example:**
+```p7
+// In module `myapp.util.helpers`
+
+pub fn public_helper() { ... }   // Visible to importers
+
+fn private_helper() { ... }       // Only visible within this module
+```
+
+From another module:
+```p7
+import myapp.util.helpers;
+
+helpers.public_helper();   // OK
+helpers.private_helper();  // Compile error: private_helper is not visible
+```
+
+### 1.1.7 Compilation and host interop
+
+The p7 compiler is designed to:
+- Accept a package name, a set of source files (modules) for that package, and a set of dependencies (other packages with their modules).
+- Compile the package into a single VM-loadable artifact (recommended), or produce multiple artifacts as needed by the host.
+- Support host-chosen entrypoints: any `pub` function may serve as an entrypoint, subject to ABI compatibility and host requirements.
+
+Host interop details (§17) define how the host invokes p7 code, handles dependencies, and manages package/module resolution.
 
 ---
 
@@ -42,7 +169,7 @@ Top-level executable statements are not allowed in v1; execution begins by calli
 Identifiers start with `_` or a letter and continue with letters, digits, or `_`.
 
 ### 2.2 Keywords (reserved)
-`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`
+`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`, `import`, `as`
 
 [[TODO]]: confirm final keyword set; keep minimal.
 Note: `suspend` and `yield` are reserved even though they are only valid when the Fiber extension is enabled (§21).
