@@ -72,6 +72,13 @@ pub struct StructMethod {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct ProtoMethod {
+    pub name: Identifier,
+    pub parameters: Vec<Parameter>,
+    pub return_type: Option<Type>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct EnumValue {
     pub name: String,
 }
@@ -154,6 +161,11 @@ pub enum Statement {
         attributes: Vec<Attribute>,
         fields: Vec<StructField>,
         methods: Vec<StructMethod>,
+    },
+    ProtoDeclaration {
+        name: Identifier,
+        attributes: Vec<Attribute>,
+        methods: Vec<ProtoMethod>,
     },
     Branch {
         named_pattern: NamedPattern,

@@ -1,0 +1,21 @@
+// Define the test attribute struct
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// Test proto declaration
+proto Printable {
+  fn print(self: ref Printable) -> unit;
+  fn display(self: ref Printable) -> string;
+}
+
+struct Vec2(
+  x: float,
+  y: float,
+);
+
+@test(expected_type = "int", expected_value = "42")
+fn test_proto() -> int {
+  42
+}

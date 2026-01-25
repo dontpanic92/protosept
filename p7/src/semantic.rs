@@ -14,6 +14,7 @@ pub enum SymbolKind {
     Function { type_id: TypeId, address: u32 },
     Enum(TypeId),
     Struct(TypeId),
+    Proto(TypeId),
     Module,
 }
 
@@ -35,6 +36,10 @@ impl SymbolKind {
 
     pub fn discriminant_of_struct() -> std::mem::Discriminant<SymbolKind> {
         std::mem::discriminant(&SymbolKind::Struct(0))
+    }
+
+    pub fn discriminant_of_proto() -> std::mem::Discriminant<SymbolKind> {
+        std::mem::discriminant(&SymbolKind::Proto(0))
     }
 }
 
@@ -70,6 +75,7 @@ impl Symbol {
             SymbolKind::Function { type_id, .. } => Some(*type_id),
             SymbolKind::Enum(type_id) => Some(*type_id),
             SymbolKind::Struct(type_id) => Some(*type_id),
+            SymbolKind::Proto(type_id) => Some(*type_id),
             _ => None,
         }
     }
@@ -100,6 +106,13 @@ pub struct Struct {
     pub attributes: Vec<crate::ast::Attribute>,
 }
 
+#[derive(Debug, Clone)]
+pub struct Proto {
+    pub qualified_name: String,
+    pub methods: Vec<(String, Vec<Type>, Option<Type>)>, // (name, params, return_type)
+    pub attributes: Vec<crate::ast::Attribute>,
+}
+
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum PrimitiveType {
     Int,
@@ -120,6 +133,7 @@ pub enum Type {
     Function(TypeId),
     Enum(TypeId),
     Struct(TypeId),
+    Proto(TypeId),
 }
 
 impl Type {
@@ -137,6 +151,7 @@ impl Clone for Type {
             Type::Function(f) => Type::Function(*f),
             Type::Enum(e) => Type::Enum(*e),
             Type::Struct(s) => Type::Struct(*s),
+            Type::Proto(p) => Type::Proto(*p),
         }
     }
 }
@@ -150,6 +165,7 @@ impl PartialEq for Type {
             (Type::Function(a), Type::Function(b)) => *a == *b,
             (Type::Enum(a), Type::Enum(b)) => *a == *b,
             (Type::Struct(a), Type::Struct(b)) => *a == *b,
+            (Type::Proto(a), Type::Proto(b)) => *a == *b,
             _ => false,
         }
     }
@@ -171,6 +187,7 @@ impl ToString for Type {
             Type::Function(f) => format!("function({})", f.to_string()),
             Type::Enum(e) => format!("enum({})", e.to_string()),
             Type::Struct(s) => format!("struct({})", s.to_string()),
+            Type::Proto(p) => format!("proto({})", p.to_string()),
         }
     }
 }
@@ -180,6 +197,7 @@ pub enum UserDefinedType {
     Function(Function),
     Enum(Enum),
     Struct(Struct),
+    Proto(Proto),
 }
 
 pub struct SymbolTable {
@@ -279,6 +297,7 @@ impl SymbolTable {
         match symbol.kind {
             SymbolKind::Enum(id) => Some(Type::Enum(id)),
             SymbolKind::Struct(id) => Some(Type::Struct(id)),
+            SymbolKind::Proto(id) => Some(Type::Proto(id)),
             SymbolKind::Function { type_id, .. } => Some(Type::Function(type_id)),
             _ => None,
         }
