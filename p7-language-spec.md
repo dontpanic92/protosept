@@ -1398,8 +1398,8 @@ A type satisfies `Send` (is Send-eligible) if it represents a **deep-copyable pu
 **Send-eligible types**:
 - All primitive types (`int`, `float`, `bool`, `char`, `unit`) satisfy `Send`.
 - `string` satisfies `Send` (strings are immutable values).
-- `array<T>` satisfies `Send` if and only if `T` satisfies `Send` (arrays are immutable values).
-- `enum` types satisfy `Send` if and only if all payload types (if any) satisfy `Send`.
+- `array<T>` satisfies `Send` iff `T` satisfies `Send` (arrays are immutable values).
+- `enum` types satisfy `Send` iff all payload types (if any) satisfy `Send`.
 - User-defined `struct` types may satisfy `Send` as specified in §21.2.1.
 
 **Non-Send types**:
