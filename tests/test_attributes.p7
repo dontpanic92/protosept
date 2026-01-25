@@ -1,0 +1,48 @@
+/*
+[testcase]
+entrypoint = "main"
+expected_type = "int"
+expected_value = "42"
+*/
+
+// Test struct for defining attributes
+struct route(
+  pub path: string,
+  pub method: string,
+);
+
+struct doc(
+  pub text: string,
+);
+
+struct export(
+  pub name: string,
+);
+
+// Test enum with attributes
+@doc(text = "HTTP methods")
+enum HttpMethod {
+  GET,
+  POST
+}
+
+// Test function with single attribute
+@route(path = "/users", method = "GET")
+fn list_users() -> int {
+  return 10;
+}
+
+// Test function with multiple attributes
+@doc(text = "Main entry point")
+@export(name = "main")
+fn main() -> int {
+  return 42;
+}
+
+// Test struct with attributes
+@doc(text = "User data structure")
+struct User(
+  pub name: string,
+  pub age: int,
+);
+

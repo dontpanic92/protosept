@@ -1,8 +1,8 @@
 use std::ops::Deref;
 
 use crate::ast::{
-    EnumValue, Expression, FunctionCall, FunctionDeclaration, Identifier, NamedPattern, Parameter,
-    Pattern, Statement, StatementBlock, StructField, StructMethod, Type,
+    Attribute, EnumValue, Expression, FunctionCall, FunctionDeclaration, Identifier, NamedPattern,
+    Parameter, Pattern, Statement, StatementBlock, StructField, StructMethod, Type,
 };
 use crate::errors::{ParseError, SourcePos};
 use crate::lexer::{Token, TokenType};
@@ -167,6 +167,10 @@ impl Parser {
                 TokenType::Float(value) => {
                     self.consume();
                     Expression::FloatLiteral(*value)
+                }
+                TokenType::StringLiteral(value) => {
+                    self.consume();
+                    Expression::StringLiteral(value.clone())
                 }
                 TokenType::Identifier(_) => {
                     let identifier = self.parse_identifier()?;
@@ -530,7 +534,66 @@ impl Parser {
         Ok(parameters)
     }
 
-    fn parse_enum_declaration(&mut self) -> ParseResult<Statement> {
+    fn parse_attribute(&mut self) -> ParseResult<Attribute> {
+        // Expect @ token
+        self.consume_match(TokenType::At)?;
+        
+        // Parse attribute name (must be an identifier)
+        let name = self.parse_identifier()?;
+        
+        // Parse arguments (same as struct construction / function call)
+        self.consume_match(TokenType::OpenParen)?;
+        let mut arguments = Vec::new();
+        
+        while let Some(token) = self.peek() {
+            if token.token_type == TokenType::CloseParen {
+                self.consume();
+                break;
+            }
+            
+            // Parse expression, which might be "name = value" or just "value"
+            let expr = self.parse_expression()?;
+            
+            // Check if the expression is a named argument (name = value)
+            let arg = if let Expression::Binary {
+                left,
+                operator:
+                    Token {
+                        token_type: TokenType::Assignment,
+                        ..
+                    },
+                right,
+            } = &expr
+                && let Expression::Identifier(ident) = left.as_ref()
+            {
+                (Some(ident.clone()), right.deref().clone())
+            } else {
+                (None, expr)
+            };
+            
+            arguments.push(arg);
+            
+            // Handle comma separator
+            let comma = self.consume_match(TokenType::Comma);
+            if !self.peek_match(TokenType::CloseParen) {
+                comma?;
+            }
+        }
+        
+        Ok(Attribute { name, arguments })
+    }
+
+    fn parse_attributes(&mut self) -> ParseResult<Vec<Attribute>> {
+        let mut attributes = Vec::new();
+        
+        while self.peek_match(TokenType::At) {
+            attributes.push(self.parse_attribute()?);
+        }
+        
+        Ok(attributes)
+    }
+
+    fn parse_enum_declaration(&mut self, attributes: Vec<Attribute>) -> ParseResult<Statement> {
         self.consume_match(TokenType::Enum)?;
         let name = self.parse_identifier()?;
 
@@ -552,7 +615,7 @@ impl Parser {
             }
         }
 
-        Ok(Statement::EnumDeclaration { name, values })
+        Ok(Statement::EnumDeclaration { name, attributes, values })
     }
 
     fn parse_struct_field(&mut self) -> ParseResult<StructField> {
@@ -600,7 +663,7 @@ impl Parser {
 
     fn parse_struct_method(&mut self) -> ParseResult<StructMethod> {
         let is_pub = self.consume_match(TokenType::Pub).is_ok();
-        let function = self.parse_function_declaration()?;
+        let function = self.parse_function_declaration(vec![])?;
 
         Ok(StructMethod { is_pub, function })
     }
@@ -625,7 +688,7 @@ impl Parser {
         Ok(methods)
     }
 
-    fn parse_struct_declaration(&mut self) -> ParseResult<Statement> {
+    fn parse_struct_declaration(&mut self, attributes: Vec<Attribute>) -> ParseResult<Statement> {
         self.consume_match(TokenType::Struct)?;
         let name = self.parse_identifier()?;
 
@@ -639,16 +702,16 @@ impl Parser {
             self.peek(),
             TokenType::Semicolon => {
                 self.consume();
-                return Ok(Statement::StructDeclaration { name, fields, methods: vec![] });
+                return Ok(Statement::StructDeclaration { name, attributes, fields, methods: vec![] });
             },
             TokenType::OpenBrace => {
                 let methods = self.parse_struct_method_list()?;
-                return Ok(Statement::StructDeclaration { name, fields, methods });
+                return Ok(Statement::StructDeclaration { name, attributes, fields, methods });
             },
         }
     }
 
-    fn parse_function_declaration(&mut self) -> ParseResult<FunctionDeclaration> {
+    fn parse_function_declaration(&mut self, attributes: Vec<Attribute>) -> ParseResult<FunctionDeclaration> {
         self.consume_match(TokenType::Fn)?;
         let mut effects = vec![];
         if self.consume_match(TokenType::OpenBracket).is_ok() {
@@ -678,6 +741,7 @@ impl Parser {
 
         Ok(FunctionDeclaration {
             name,
+            attributes,
             effects,
             parameters,
             body,
@@ -722,26 +786,56 @@ impl Parser {
     }
 
     fn parse_statement(&mut self) -> ParseResult<Statement> {
+        // First, try to parse attributes
+        let attributes = self.parse_attributes()?;
+        
         match self.peek().map(|t| t.token_type.clone()) {
             Some(TokenType::Fn) => self
-                .parse_function_declaration()
+                .parse_function_declaration(attributes)
                 .map(Statement::FunctionDeclaration),
-            Some(TokenType::Enum) => self.parse_enum_declaration(),
-            Some(TokenType::Struct) => self.parse_struct_declaration(),
+            Some(TokenType::Enum) => self.parse_enum_declaration(attributes),
+            Some(TokenType::Struct) => self.parse_struct_declaration(attributes),
             // Some(TokenType::If) => self.parse_if_expression().map(Statement::Expression),
             Some(TokenType::Return) => {
+                if !attributes.is_empty() {
+                    return Err(ParseError::UnexpectedToken {
+                        found: "attributes on return statement".to_string(),
+                        pos: Some(SourcePos {
+                            line: attributes[0].name.line,
+                            col: attributes[0].name.col,
+                        }),
+                    });
+                }
                 self.consume();
                 let expr = self.parse_expression()?;
                 self.consume_match(TokenType::Semicolon)?;
                 Ok(Statement::Return(Box::new(expr)))
             }
             Some(TokenType::Throw) => {
+                if !attributes.is_empty() {
+                    return Err(ParseError::UnexpectedToken {
+                        found: "attributes on throw statement".to_string(),
+                        pos: Some(SourcePos {
+                            line: attributes[0].name.line,
+                            col: attributes[0].name.col,
+                        }),
+                    });
+                }
                 self.consume();
                 let expr = self.parse_expression()?;
                 self.consume_match(TokenType::Semicolon)?;
                 Ok(Statement::Throw(expr))
             }
             Some(TokenType::Let) => {
+                if !attributes.is_empty() {
+                    return Err(ParseError::UnexpectedToken {
+                        found: "attributes on let statement".to_string(),
+                        pos: Some(SourcePos {
+                            line: attributes[0].name.line,
+                            col: attributes[0].name.col,
+                        }),
+                    });
+                }
                 self.consume();
 
                 let identifier = self.parse_identifier()?;
@@ -755,6 +849,15 @@ impl Parser {
                 })
             }
             _ => {
+                if !attributes.is_empty() {
+                    return Err(ParseError::UnexpectedToken {
+                        found: "attributes on expression statement".to_string(),
+                        pos: Some(SourcePos {
+                            line: attributes[0].name.line,
+                            col: attributes[0].name.col,
+                        }),
+                    });
+                }
                 let expression = self.parse_expression()?;
                 let ends_with_brace = self.ends_with_brace();
 

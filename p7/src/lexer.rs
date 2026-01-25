@@ -56,6 +56,7 @@ pub enum TokenType {
     CloseBracket,
     RightArrow,
     FatRightArrow,
+    At,
 
     // End of File
     EOF,
@@ -336,6 +337,10 @@ impl Lexer {
             Some(']') => {
                 self.read_char();
                 TokenType::CloseBracket
+            }
+            Some('@') => {
+                self.read_char();
+                TokenType::At
             }
             Some('"') => match self.read_string() {
                 Ok(string) => TokenType::StringLiteral(string),
