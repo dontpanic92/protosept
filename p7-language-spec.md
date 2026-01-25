@@ -369,7 +369,7 @@ A type satisfies `Send` (is Send-eligible) if it is a pure value that can be dee
 
 The following types do **not** satisfy `Send`:
 
-- `box<T>`: Boxes have identity and support mutation (§3.6, §7.4). A `box<T>` represents a handle to shared, mutable state, which could lead to aliasing if transferred between isolated contexts (e.g., threads).
+- `box<T>`: Boxes have identity and support mutation (§3.6, §7.4). A `box<T>` represents a handle to shared, mutable state, which could lead to aliasing if transferred between isolated contexts (such as threads).
 - `ref T`: Borrowed views are non-escapable (§7.3) and tied to the lifetime of the viewed slot on the stack. They cannot safely outlive their referent or be transferred to other contexts.
 - Any user-defined type that transitively contains a field of type `box<T>` or `ref T`.
 
