@@ -1,0 +1,22 @@
+/*
+[testcase]
+entrypoint = "test_throws_no_return"
+expected_type = "int"
+expected_value = "42"
+*/
+
+enum MyError {
+    Error1,
+}
+
+fn helper() -> int {
+    42
+}
+
+fn risky_no_return() throws {
+    let x = helper();
+}
+
+fn test_throws_no_return() -> int {
+    42
+}
