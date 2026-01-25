@@ -1,0 +1,7 @@
+// compile_fail: no implicit deref from `ref T` to `T`
+fn g(x: float) -> float { x }
+
+fn test() -> float {
+    let a = 1.1;
+    g(ref a)
+}

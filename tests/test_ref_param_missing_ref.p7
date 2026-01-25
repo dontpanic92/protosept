@@ -1,0 +1,7 @@
+// compile_fail: missing `ref` at callsite
+fn id(x: ref float) -> float { *x }
+
+fn test() -> float {
+    let a = 1.1;
+    id(a)
+}

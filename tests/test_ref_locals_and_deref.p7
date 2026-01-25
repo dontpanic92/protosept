@@ -1,0 +1,13 @@
+// Define the test attribute struct
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+@test(expected_type = "float", expected_value = "1.1")
+fn test_ref_local_deref() -> float {
+    let a = 1.1;
+    let r = ref a;
+
+    *r
+}

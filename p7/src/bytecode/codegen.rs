@@ -343,7 +343,12 @@ impl Generator {
                 ));
             }
             Statement::Return(expression) => {
-                self.generate_expression(*expression)?;
+                let ty = self.generate_expression(*expression)?;
+                if matches!(ty, Type::Reference(_)) {
+                    return Err(SemanticError::Other(
+                        "Cannot return a non-escapable ref value".to_string(),
+                    ));
+                }
                 self.builder.ret();
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
@@ -399,18 +404,35 @@ impl Generator {
             Expression::Unary { operator, right } => {
                 let ty = self.generate_expression(*right)?;
                 match operator.token_type {
-                    TokenType::Minus => self.builder.neg(),
-                    TokenType::Not => self.builder.not(),
-                    _ => {
-                        unimplemented!();
+                    TokenType::Minus => {
+                        self.builder.neg();
+                        Ok(ty)
                     }
+                    TokenType::Not => {
+                        self.builder.not();
+                        Ok(ty)
+                    }
+                    TokenType::Multiply => {
+                        // `*r` where `r: ref T` yields a `T`. No runtime op yet.
+                        if let Type::Reference(inner) = ty {
+                            Ok(*inner)
+                        } else {
+                            Err(SemanticError::TypeMismatch {
+                                lhs: ty.to_string(),
+                                rhs: "ref <T>".to_string(),
+                                pos: Some(SourcePos {
+                                    line: operator.line,
+                                    col: operator.col,
+                                }),
+                            })
+                        }
+                    }
+                    _ => unimplemented!(),
                 }
-
-                Ok(ty)
             }
             Expression::Ref(identifier) => {
-                // `ref` is only meaningful at call sites (enforced there).
-                // Treat it as loading the underlying slot value.
+                // `ref x` produces a `ref T` typed value (view).
+                // Lowering is currently just loading the underlying slot value.
                 if let Some(var_id) = self
                     .local_scope
                     .as_mut()
@@ -418,7 +440,14 @@ impl Generator {
                     .find_variable(&identifier.name)
                 {
                     self.builder.ldvar(var_id);
-                    Ok(self.local_scope.as_ref().unwrap().get_variable_type(var_id))
+                    let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
+                    if matches!(ty, Type::Reference(_)) {
+                        return Err(SemanticError::Other(format!(
+                            "Cannot take ref of ref '{}'",
+                            identifier.name
+                        )));
+                    }
+                    Ok(Type::Reference(Box::new(ty)))
                 } else if let Some(param_id) = self
                     .local_scope
                     .as_mut()
@@ -426,7 +455,14 @@ impl Generator {
                     .find_param(&identifier.name)
                 {
                     self.builder.ldpar(param_id);
-                    Ok(self.local_scope.as_ref().unwrap().get_param_type(param_id))
+                    let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
+                    if matches!(ty, Type::Reference(_)) {
+                        return Err(SemanticError::Other(format!(
+                            "Cannot take ref of ref parameter '{}'",
+                            identifier.name
+                        )));
+                    }
+                    Ok(Type::Reference(Box::new(ty)))
                 } else {
                     Err(SemanticError::VariableNotFound {
                         name: identifier.name,
@@ -887,6 +923,12 @@ impl Generator {
             Type::Primitive(PrimitiveType::Unit)
         };
 
+        if matches!(return_type, Type::Reference(_)) {
+            return Err(SemanticError::Other(
+                "Functions cannot return non-escapable ref types".to_string(),
+            ));
+        }
+
         let ty = Function {
             qualified_name: qualified_name.clone(),
             params: params.iter().map(|var| var.ty.clone()).collect(),
@@ -976,7 +1018,7 @@ impl Generator {
                         };
 
                         let function_udt = match self.symbol_table.get_udt(type_id) {
-                            UserDefinedType::Function(f) => f,
+                            UserDefinedType::Function(f) => f.clone(),
                             _ => {
                                 return Err(SemanticError::FunctionNotFound {
                                     name: format!("{}.{}", ident.name, field.name),
@@ -1003,7 +1045,12 @@ impl Generator {
                             &param_defaults,
                         )?;
 
-                        self.push_argument_list(ordered_exprs)?;
+                        self.push_typed_argument_list(
+                            ordered_exprs,
+                            &function_udt.params,
+                            field.line,
+                            field.col,
+                        )?;
                         self.builder.call(method_symbol_id);
 
                         return Ok(ret_type);
@@ -1137,7 +1184,12 @@ impl Generator {
             )?;
 
             // This will generate remaining arguments and push them after the receiver.
-            self.push_argument_list(ordered_exprs)?;
+            self.push_typed_argument_list(
+                ordered_exprs,
+                &function_udt.params[1..],
+                field.line,
+                field.col,
+            )?;
             self.builder.call(method_symbol_id);
 
             Ok(function_udt.return_type.clone())
@@ -1193,7 +1245,7 @@ impl Generator {
                 };
 
                 let function_udt = match self.symbol_table.get_udt(type_id) {
-                    UserDefinedType::Function(function) => function,
+                    UserDefinedType::Function(function) => function.clone(),
                     _ => {
                         return Err(SemanticError::FunctionNotFound {
                             name: call_name.clone(),
@@ -1218,7 +1270,7 @@ impl Generator {
                     &param_defaults,
                 )?;
 
-                self.push_argument_list(ordered_exprs)?;
+                self.push_typed_argument_list(ordered_exprs, &function_udt.params, call_line, call_col)?;
                 self.builder.call(symbol_id);
 
                 let ty = self.symbol_table.get_udt(type_id);
@@ -1386,6 +1438,70 @@ impl Generator {
     fn push_argument_list(&mut self, arguments: Vec<Expression>) -> SaResult<()> {
         for expr in arguments {
             self.generate_expression(expr)?;
+        }
+
+        Ok(())
+    }
+
+    fn push_typed_argument_list(
+        &mut self,
+        arguments: Vec<Expression>,
+        param_types: &[Type],
+        call_line: usize,
+        call_col: usize,
+    ) -> SaResult<()> {
+        if arguments.len() != param_types.len() {
+            return Err(SemanticError::TypeMismatch {
+                lhs: format!("{} args expected", param_types.len()),
+                rhs: format!("{} provided", arguments.len()),
+                pos: Some(SourcePos {
+                    line: call_line,
+                    col: call_col,
+                }),
+            });
+        }
+
+        for (expr, param_ty) in arguments.into_iter().zip(param_types.iter()) {
+            let arg_ty = self.generate_expression(expr)?;
+
+            match (param_ty, &arg_ty) {
+                (Type::Reference(param_inner), Type::Reference(arg_inner)) => {
+                    if **param_inner != **arg_inner {
+                        return Err(SemanticError::TypeMismatch {
+                            lhs: arg_ty.to_string(),
+                            rhs: param_ty.to_string(),
+                            pos: Some(SourcePos {
+                                line: call_line,
+                                col: call_col,
+                            }),
+                        });
+                    }
+                }
+                (Type::Reference(_), _) => {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: arg_ty.to_string(),
+                        rhs: param_ty.to_string(),
+                        pos: Some(SourcePos {
+                            line: call_line,
+                            col: call_col,
+                        }),
+                    });
+                }
+                (_, Type::Reference(_)) => {
+                    // No implicit deref: `ref` values cannot be passed to non-ref parameters.
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: arg_ty.to_string(),
+                        rhs: param_ty.to_string(),
+                        pos: Some(SourcePos {
+                            line: call_line,
+                            col: call_col,
+                        }),
+                    });
+                }
+                _ => {
+                    // Keep existing loose typing rules for non-ref parameters for now.
+                }
+            }
         }
 
         Ok(())

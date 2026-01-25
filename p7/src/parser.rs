@@ -7,7 +7,12 @@ use crate::ast::{
 use crate::errors::{ParseError, SourcePos};
 use crate::lexer::{Token, TokenType};
 
-const UNARY_OPERATIONS: &[TokenType] = &[TokenType::Not, TokenType::Plus, TokenType::Minus];
+const UNARY_OPERATIONS: &[TokenType] = &[
+    TokenType::Not,
+    TokenType::Plus,
+    TokenType::Minus,
+    TokenType::Multiply, // unary `*` for deref of `ref T`
+];
 
 type ParseResult<T> = Result<T, ParseError>;
 pub struct Parser {
