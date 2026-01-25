@@ -168,6 +168,10 @@ impl Parser {
                     self.consume();
                     Expression::FloatLiteral(*value)
                 }
+                TokenType::StringLiteral(value) => {
+                    self.consume();
+                    Expression::StringLiteral(value.clone())
+                }
                 TokenType::Identifier(_) => {
                     let identifier = self.parse_identifier()?;
                     Expression::Identifier(identifier)
@@ -537,7 +541,7 @@ impl Parser {
         // Parse attribute name (must be an identifier)
         let name = self.parse_identifier()?;
         
-        // Parse arguments (same as struct construction)
+        // Parse arguments (same as struct construction / function call)
         self.consume_match(TokenType::OpenParen)?;
         let mut arguments = Vec::new();
         
@@ -547,20 +551,27 @@ impl Parser {
                 break;
             }
             
-            // Check if this is a named argument (identifier = expression)
-            let mut arg_name = None;
-            if let TokenType::Identifier(_) = token.token_type {
-                let ident = self.parse_identifier()?;
-                if self.consume_match(TokenType::Assignment).is_ok() {
-                    arg_name = Some(ident);
-                } else {
-                    // It was just the start of an expression, unconsume
-                    self.unconsume();
-                }
-            }
-            
+            // Parse expression, which might be "name = value" or just "value"
             let expr = self.parse_expression()?;
-            arguments.push((arg_name, expr));
+            
+            // Check if the expression is a named argument (name = value)
+            let arg = if let Expression::Binary {
+                left,
+                operator:
+                    Token {
+                        token_type: TokenType::Assignment,
+                        ..
+                    },
+                right,
+            } = &expr
+                && let Expression::Identifier(ident) = left.as_ref()
+            {
+                (Some(ident.clone()), right.deref().clone())
+            } else {
+                (None, expr)
+            };
+            
+            arguments.push(arg);
             
             // Handle comma separator
             let comma = self.consume_match(TokenType::Comma);
