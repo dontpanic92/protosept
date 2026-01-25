@@ -9,7 +9,7 @@ enum MyError {
     SomeError,
 }
 
-fn[throws] may_throw(value: int) -> int {
+fn may_throw(value: int) -> int throws {
     if value == 0 {
         throw MyError.SomeError;
     }

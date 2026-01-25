@@ -1,0 +1,22 @@
+/*
+[testcase]
+entrypoint = "test_throws_syntax"
+expected_type = "int"
+expected_value = "5"
+*/
+
+enum MyError {
+    Error1,
+}
+
+fn safe_function() -> int {
+    5
+}
+
+fn risky_function() -> int throws {
+    10
+}
+
+fn test_throws_syntax() -> int {
+    safe_function()
+}

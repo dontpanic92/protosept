@@ -10,7 +10,7 @@ enum ErrorType {
     ErrorB,
 }
 
-fn[throws] thrower(value: int) -> int {
+fn thrower(value: int) -> int throws {
     if value == 1 {
         throw ErrorType.ErrorA;
     }

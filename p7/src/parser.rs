@@ -650,21 +650,6 @@ impl Parser {
 
     fn parse_function_declaration(&mut self) -> ParseResult<FunctionDeclaration> {
         self.consume_match(TokenType::Fn)?;
-        let mut effects = vec![];
-        if self.consume_match(TokenType::OpenBracket).is_ok() {
-            loop {
-                effects.push(self.parse_identifier()?);
-
-                let comma = self.consume_match(TokenType::Comma);
-                if !self.peek_match(TokenType::CloseBracket) {
-                    comma?;
-                } else {
-                    break;
-                }
-            }
-
-            self.consume_match(TokenType::CloseBracket)?;
-        }
 
         let name = self.parse_identifier()?;
         let parameters = self.parse_argument_list()?;
@@ -673,6 +658,18 @@ impl Parser {
         } else {
             None
         };
+
+        // Parse effect qualifiers (throws) after return type or parameters
+        let mut effects = vec![];
+        if self.peek_match(TokenType::Throws) {
+            if let Some(token) = self.consume() {
+                effects.push(Identifier {
+                    name: "throws".to_string(),
+                    line: token.line,
+                    col: token.col,
+                });
+            }
+        }
 
         let body = self.parse_block()?;
 

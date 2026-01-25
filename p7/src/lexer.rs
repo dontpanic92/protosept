@@ -17,6 +17,7 @@ pub enum TokenType {
     Return,
     If,
     Throw,
+    Throws,
     Try,
     Else,
 
@@ -357,6 +358,7 @@ impl Lexer {
                         "return" => TokenType::Return,
                         "if" => TokenType::If,
                         "throw" => TokenType::Throw,
+                        "throws" => TokenType::Throws,
                         "try" => TokenType::Try,
                         "else" => TokenType::Else,
                         _ => TokenType::Identifier(ident),
