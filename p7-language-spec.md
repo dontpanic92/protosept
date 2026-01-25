@@ -160,7 +160,7 @@ Views compose naturally with nullability:
 
 > Important: `ref T` is *not* a heap box and is *not* an owned reference.
 
-There is **no** `ref mut T` in v1. All shared mutation and escaping references are done via `box<T>` (§3.6, §7.4).
+All shared mutation and escaping references are done via `box<T>` (§3.6, §7.4).
 
 ### 3.6 Owned heap (box) type: `box<T>`
 `box<T>` is an **owned heap-allocated container** that stores a `T` and provides **stable identity** and **shared, escapable reference-like semantics**.
@@ -179,7 +179,7 @@ Properties:
 ### 3.7 User-defined types
 - `struct Name(...) { ... }` defines a nominal product type with fields (tuple-like) and an optional method block.
 - `enum Name { ... }` defines a nominal sum type.
-- `proto Name { ... }` defines a structural interface for dynamic dispatch (§12).
+- `proto Name { ... }` defines a **conformance interface** for compile-time checking, and optionally a boxed dynamic-dispatch interface (§12).
 
 No inheritance.
 
@@ -237,7 +237,7 @@ This is **shadowing**, not mutation:
 - the new binding is visible only within its scope
 
 Type rule (v1):
-- If a name is shadowed, the new binding must have the **same type** as the shadowed binding (after inference), unless an explicit type annotation is provided on the new binding. [[TODO]] finalize whether explicit annotation may change type.
+- If a name is shadowed, the new binding must have the **same type** as the shadowed binding.
 
 Rationale: keep shadowing predictable and avoid turning it into an untyped "variable reuse" mechanism.
 
@@ -280,15 +280,23 @@ struct[Conformance1, Conformance2] Name(
 }
 ```
 
-A conformance name in `struct[...]` is one of:
-- a **proto name** (e.g. `Printable`), or
-- a **built-in marker conformance** (currently: `Copy`).
+A conformance name in `struct[...]` must be the name of a **proto**.
 
-For each conformance listed, the compiler:
+In p7, protos are divided into two categories:
+
+1) **Constraint protos**:
+   - Used only for compile-time conformance checking and enabling implicit behaviors.
+   - They are *not* valid as runtime dynamic-dispatch types (they cannot appear as `box<P>`).
+
+2) **Object protos**:
+   - Used for compile-time conformance checking and enabling implicit behaviors.
+   - Additionally, they may be used as runtime dynamic-dispatch types via `box<P>` (§12).
+
+For each proto listed, the compiler:
 1) Performs a compile-time conformance check (structural).
-2) Enables certain *implicit* behaviors (coercions / operations) associated with that conformance.
+2) Enables certain *implicit* behaviors (coercions / operations) associated with that proto.
 
-If a struct lists a conformance that it does not satisfy, compilation fails.
+If a struct lists a proto that it does not satisfy, compilation fails.
 
 Notes:
 - `struct[...]` does **not** inject methods or fields into the type. It only checks and enables implicit behaviors described in this specification.
@@ -296,15 +304,14 @@ Notes:
 
 [[TODO]]: precise grammar for the bracket list, including whether duplicates are allowed (recommended: disallow) and whether order matters (recommended: no).
 
-### 6.3 The `Copy` marker conformance
-`Copy` indicates that *implicit duplication* is allowed for a type.
+### 6.3 The `Copy` proto (constraint proto)
+`Copy` is a built-in **constraint proto** that indicates that a type may be duplicated by duplicating its parts.
 
-Copy is **structural**: a type is **Copy-eligible** if it can be duplicated by duplicating its parts (per the rules below). However, a type is treated as `Copy` (i.e. participates in implicit behavior) only if it:
-- is Copy-eligible, and
-- declares `Copy` in `struct[...]`.
+- A type `T` may satisfy (implement) `Copy` structurally, independent of whether it opts into implicit copying.
+- A struct is treated as `Copy` for the purpose of *implicit* move/copy behavior only if it declares `Copy` in `struct[...]`.
 
 In other words:
-- Copy-eligible is a structural property.
+- Satisfying `Copy` is a structural property.
 - Declaring `[Copy]` opts a struct into implicit copy behavior.
 
 #### 6.3.1 Copy behavior
@@ -317,34 +324,32 @@ When a value of type `T` is copied:
   - `string` is immutable; implementations may optimize copying via shared storage (e.g. copy-on-write), but the semantics are "as if" a value copy occurred.
 - Boxes: copying a `box<T>` copies the handle (aliases the same boxed cell). This is a shallow copy of the handle, not a deep copy of `T`.
 
-#### 6.3.2 Copy-eligibility
-- `int`, `float`, `bool`, `char`, `unit` are Copy-eligible.
-- `box<T>` is Copy-eligible (handle copy) and is `Copy` by default.
-- `?T` is Copy-eligible iff `T` is Copy-eligible.
-- `ref T` is not `Copy` (and views are non-escapable regardless; §7.3).
-- `array<T>` is Copy-eligible iff `T` is Copy-eligible. [[TODO]] confirm this choice.
-- `string` is `Copy` by default (immutable value semantics; may share storage internally).
+#### 6.3.2 Structural conformance to `Copy` (Copy-eligibility)
+A type `T` satisfies `Copy` (is Copy-eligible) iff it may be duplicated structurally.
+
+- `int`, `float`, `bool`, `char`, `unit` satisfy `Copy` and is treated as `Copy` by default.
+- `box<T>` satisfies `Copy` (handle copy) and is treated as `Copy` by default.
+- `?T` satisfies `Copy` iff `T` satisfies `Copy`.
+- `ref T` does not satisfy `Copy` (and views are non-escapable regardless; §7.3).
+- `array<T>` satisfies `Copy` iff `T` satisfies `Copy`.
+- `string` satisfies `Copy` and is treated as `Copy` by default (immutable value semantics; may share storage internally).
 
 User-defined structs:
-- A struct `S(...)` is Copy-eligible iff all of its field types are Copy-eligible.
+- A struct `S(...)` satisfies `Copy` iff all of its field types satisfy `Copy`.
 - A struct is treated as `Copy` (i.e. copies implicitly) only if it declares `[Copy]`.
 
-Policy choices:
-- `array<T>` default: if `array<T>` is Copy-eligible, it may be `Copy` by default or require explicit opt-in; [[TODO]] decide. (Recommended: do not default arrays to implicit Copy in v1.)
+User-defined enums:
+- An enum satisfies `Copy` iff all payload types (if any) satisfy `Copy`.
+- Unit-only enums satisfy `Copy`.
 
 ### 6.4 Explicit copying
 p7 provides an explicit copying operation:
 
-- `copy(x)` : requires that `T` is Copy-eligible, and returns a copied value of type `T`.
+- `copy(x)` : requires that the type of `x` satisfies `Copy`, and returns a copied value of the same type.
 
-This operation may be used even if `T` does not declare `[Copy]`.
+This operation may be used even if the type does not opt into implicit copy behavior via `struct[Copy]`.
 Rationale: structural properties may be used explicitly, but implicit duplication must be opted into by declaring `[Copy]`.
 
-### 6.5 Clone
-[[TODO]]: Whether `Clone` exists in v1; recommended: postpone until needed.
-
-### 6.6 Drop / destruction
-[[TODO]]: whether p7 exposes deterministic destructors. Likely **no** in v1 (GC-based runtime).
 
 ---
 
@@ -358,8 +363,6 @@ If `r: ref T` refers to `x: T`:
 
 ### 7.2 Taking views
 - `ref x` is allowed when `x` is addressable (slot or sub-location).
-
-[[TODO]]: whether `ref` can be taken of temporaries (recommended: no in v1).
 
 ### 7.3 Non-escapable rule (hard rule in v1)
 Values of type `ref T` **must not escape** their scope.
@@ -528,7 +531,7 @@ A loop expression does not complete normally by reaching the end of its body; it
 - `continue` **does** execute the `step` clause.
 
 #### 8.5.7 Interaction with `ref T` views
-Because shadowing creates new bindings (new slots), a view `ref x` taken in one iteration refers to that iteration's binding and must not escape (§7). Views cannot be stored for use across iterations [[TODO]].
+Because shadowing creates new bindings (new slots), a view `ref x` taken in one iteration refers to that iteration's binding and must not escape (§7). Views cannot be stored for use across iterations.
 
 ### 8.6 `try` expressions
 See §14.
@@ -552,8 +555,6 @@ See §14.
 Functions return the value of:
 - an explicit `return`, or
 - the last expression of the function body block (if not terminated by `;`), otherwise `unit`.
-
-[[TODO]]: decide whether implicit return is allowed for all functions; recommended yes (script-friendly).
 
 ### 9.3 `for` statement (v1)
 p7 provides a `for` statement for iteration over arrays and strings.
@@ -734,23 +735,34 @@ p.x = 10; // ok
 
 ---
 
-## 12. Protos (structural polymorphism and dynamic dispatch)
+## 12. Protos (conformance interfaces and optional dynamic dispatch)
 
 ### 12.1 Overview
-A `proto` defines a **structural interface**: a set of required method signatures.
+A `proto` defines a **structural conformance interface**: a set of requirements that a type may satisfy.
 
-A concrete type `T` implements a proto `P` if `T` provides methods matching every required signature in `P`.
+A concrete type `T` satisfies a proto `P` if `T` provides methods matching every required signature in `P`.
 
-Proto values are **boxed-only**:
-- The only way to hold a dynamic-dispatch value of proto type `P` is via `box<P>`.
-- There is no plain value of type `P`.
+### 12.2 Proto categories: constraint protos vs object protos
+Protos are divided into two categories:
 
-Rationale:
-- keeps dispatch and ownership uniform
-- avoids hidden boxing
-- makes sharing/escaping explicit
+1) **Constraint protos**:
+   - Used only for compile-time checking and to enable implicit behaviors (via `struct[...]`).
+   - They have no runtime dynamic-dispatch representation.
+   - A constraint proto **must not** be used as a boxed proto type (`box<P>` is invalid).
 
-### 12.2 Proto declaration
+   Example (built-in): `Copy` (§6.3).
+
+2) **Object protos**:
+   - Used for compile-time checking and to enable implicit behaviors (via `struct[...]`).
+   - Additionally, they may be used as runtime dynamic-dispatch types via `box<P>`.
+
+   Example: `Printable`.
+
+- A user-declared `proto` is an object proto.
+- Built-in protos may be either constraint protos (e.g. `Copy`) or object protos (none in v1).
+- A constraint proto cannot be declared by users in v1 (only built-ins).
+
+### 12.3 Proto declaration
 Form:
 ```p7
 proto Printable {
@@ -768,14 +780,27 @@ Restrictions in v1:
 - Proto methods must not mention `Self` as a type (in parameters or return types). [[TODO]] may be added later.
 - Overloads in proto are [[TODO]] (recommended: disallow in v1).
 
-### 12.3 Converting a concrete box to a proto box
+### 12.4 Proto values (object protos only)
+Proto values are **boxed-only**:
+- The only way to hold a dynamic-dispatch value of proto type `P` is via `box<P>`.
+- There is no plain value of type `P`.
+
+This applies only to **object protos**.
+Constraint protos (e.g. `Copy`) cannot be used as `box<P>`.
+
+Rationale:
+- keeps dispatch and ownership uniform
+- avoids hidden boxing
+- makes sharing/escaping explicit
+
+### 12.5 Converting a concrete box to a proto box (object protos only)
 There are two ways to obtain a `box<P>` from a concrete `box<T>`:
 
-1) **Explicit cast** (always allowed when `T` implements `P`):
-   - A value of type `box<T>` may be converted to `box<P>` with an explicit conversion, and only if `T` implements `P` structurally.
+1) **Explicit cast** (always allowed when `T` satisfies `P`):
+   - A value of type `box<T>` may be converted to `box<P>` with an explicit conversion, and only if `T` satisfies `P` structurally.
 
 2) **Implicit coercion** (allowed only when `T` declares conformance `[P]`):
-   - If `T` declares `P` in `struct[...]`, then a value of type `box<T>` is implicitly coercible to `box<P>` at coercion sites (e.g. `let` type annotation, argument passing, return).
+   - If `T` lists `P` in `struct[...]`, then a value of type `box<T>` is implicitly coercible to `box<P>` at coercion sites (e.g. `let` type annotation, argument passing, return).
 
 Examples (cast syntax TBD):
 ```p7
@@ -789,12 +814,12 @@ struct[Printable] Vec2(
 let v = box(Vec2(1, 2));
 
 let p1: box<Printable> = v;                   // ok: implicit (Vec2 declares [Printable])
-let p2: box<Printable> = v as box<Printable>; // ok: explicit cast (always allowed if Vec2 implements Printable)
+let p2: box<Printable> = v as box<Printable>; // ok: explicit cast (always allowed if Vec2 satisfies Printable)
 ```
 
 Semantics:
 - Converting `box<T>` to `box<P>` does not allocate a new `T`; it reinterprets the existing box handle with an associated dispatch table for `P`.
-- If `T` does not implement `P`, the conversion is a compile-time error.
+- If `T` does not satisfy `P`, the conversion is a compile-time error.
 
 [[TODO]]: decide cast spelling:
 - `v as Printable` (where `Printable` is a proto)
@@ -803,16 +828,16 @@ Semantics:
 
 [[TODO]]: precisely define the set of coercion sites for implicit `box<T> -> box<P>` when `T` declares `[P]`.
 
-### 12.4 Dynamic dispatch
+### 12.6 Dynamic dispatch (object protos only)
 Calling a proto method on `box<P>` performs dynamic dispatch:
 - `p.print()` invokes the concrete implementation for the dynamic type stored in `p`.
 
-### 12.6 Downcasting / type tests
+### 12.7 Downcasting / type tests
 [[TODO]]: Provide runtime type tests and downcasts for proto boxes, e.g.:
 - `p is Vec2`
 - `p as Vec2` returning `?box<Vec2>` or throwing on failure
 
-### 12.7 Nullability
+### 12.8 Nullability
 - `?box<P>` is the nullable proto-handle type.
 - `box<P>` itself is non-null.
 
@@ -971,16 +996,11 @@ Compatibility rule (recommended for v1):
 For `int` arithmetic operations (`+`, `-`, `*`, and any other fixed-width integer arithmetic operators added in v1):
 - If the mathematical result does not fit in signed 64-bit range, evaluation **traps** (unrecoverable panic; see §14.0).
 
-A standard library (or prelude) function is provided for wraparound addition:
+A standard library (or prelude) function is provided for wraparound and checked addition:
 - `wrapping_add(a: int, b: int) -> int` computes `(a + b) mod 2^64`, interpreted as a signed two's-complement `int`.
-
-[[TODO]]: define additional wrapping/checked helpers:
-- `wrapping_sub`, `wrapping_mul`
-- `checked_add(a,b) -> ?int` (recommended; aligns with nullability)
+- `checked_add(a: int, b: int) -> ?int`
 
 #### 15.1.2 Numeric coercions
-[[TODO]]: decide numeric coercions.
-Recommendation for scripting:
 - allow implicit `int -> float` promotion in arithmetic/comparison
 - require explicit conversion elsewhere
 
@@ -1079,13 +1099,15 @@ Requirements:
 - `box<T>` mutation is **in-place** and visible through all aliases (§7.4).
 - Integer width is i64; float width is f64 (§3.1).
 - Integer overflow traps by default; wraparound addition is available via `wrapping_add` (§15.1.1).
-- Protos are structural and boxed-only (`box<P>`) (§12).
-- `struct[...]` declares conformances and enables implicit behaviors:
-  - `[Copy]` enables implicit copying for Copy-eligible structs (§6.3).
-  - `[P]` enables implicit `box<T> -> box<P>` coercions for proto `P` (§12.3).
+- Protos are structural conformance interfaces, and are divided into:
+  - constraint protos (compile-time only, e.g. `Copy`)
+  - object protos (also usable for dynamic dispatch via `box<P>`) (§6.2, §12)
+- `struct[...]` lists proto conformances and enables implicit behaviors associated with those protos (§6.2):
+  - `[Copy]` enables implicit copying for types that satisfy `Copy` (§6.3).
+  - `[P]` (for object proto `P`) enables implicit `box<T> -> box<P>` coercions (§12.5).
 - Explicit operations/casts remain available based on structural properties:
-  - `copy(x)` duplicates Copy-eligible values even without `[Copy]` (§6.4).
-  - explicit `as box<P>` is available when `T` implements `P` (§12.3).
+  - `copy(x)` duplicates values whose type satisfies `Copy`, even without `[Copy]` (§6.4).
+  - explicit `as box<P>` is available when `T` satisfies object proto `P` (§12.5).
 - Structs are tuple-like only for fields; blocks are only for methods (§11).
 - `throw` is restricted to enum values and only permitted in functions declared with `throws` (§14.1).
 - Calling a `throws` function requires `try` at the call site: `try expr` propagates (only from `throws` functions), and `try expr else ...` handles (§14.2, §14.3).
@@ -1116,6 +1138,7 @@ Requirements:
 15) Precisely define coercion sites for implicit `box<T> -> box<P>` when `T` declares `[P]`
 16) Specify whether `try` can narrow thrown enum types in match-like else blocks
 17) Fiber extension: specify borrow/view restrictions across `yield` (recommended: disallow `ref T` live across `yield`)
+18) Decide how a proto is classified as constraint vs object in the surface language (currently: only built-ins may be constraint protos) (§12.2)
 
 ---
 
@@ -1244,7 +1267,7 @@ Semantics:
 - The host may record the handle and decide scheduling policy externally.
 
 Constraints:
-- The hook must not itself resume the new fiber re-entrantly while `spawn` is still executing, unless the implementation explicitly guarantees re-entrancy safety. [[TODO]] decide (recommended for v1: disallow re-entrant resume).
+- The hook must not itself resume the new fiber re-entrantly while `spawn` is still executing, unless the implementation explicitly guarantees re-entrancy safety.
 
 ### 20.7 Scheduling policy (informative)
 Scheduling is not part of the core language semantics. A fiber yields control only at explicit `yield`, `return`, or `throw` boundaries; when and whether it is resumed is controlled by the host/runtime policy.
@@ -1314,23 +1337,23 @@ Contrast with throws:
 
 ---
 
-## 22. Future direction: Send marker conformance (non-normative draft)
+## 22. Future direction: Send proto (non-normative draft)
 
-**Status**: This section is a **non-normative design direction** for future versions of p7. It describes planned semantics for the `Send` marker conformance, which controls which types can be safely sent between threads (§21).
+**Status**: This section is a **non-normative design direction** for future versions of p7. It describes planned semantics for a built-in `Send` constraint proto, which controls which types can be safely sent between threads (§21).
 
 ### 22.1 Send-eligibility: deep-copyable pure values
 
-A type is **Send-eligible** if it represents a **deep-copyable pure value** with no identity or aliasing:
+A type satisfies `Send` (is Send-eligible) if it represents a **deep-copyable pure value** with no identity or aliasing:
 
-- All primitive types (`int`, `float`, `bool`, `char`, `unit`) are Send-eligible.
-- `string` is Send-eligible (strings are immutable values).
-- `array<T>` is Send-eligible if `T` is Send-eligible (arrays are immutable values).
-- User-defined `struct` types are Send-eligible if all fields are Send-eligible (and the struct opts into `Send`; see §22.3).
-- `enum` types are Send-eligible if all payload types (if any) are Send-eligible.
+- All primitive types (`int`, `float`, `bool`, `char`, `unit`) satisfy `Send`.
+- `string` satisfies `Send` (strings are immutable values).
+- `array<T>` satisfies `Send` iff `T` satisfies `Send` (arrays are immutable values).
+- User-defined `struct` types satisfy `Send` iff all fields satisfy `Send` (and the struct opts into `Send`; see §22.3).
+- `enum` types satisfy `Send` iff all payload types (if any) satisfy `Send`.
 
 ### 22.2 Non-Send types
 
-The following types are **not Send-eligible**:
+The following types do **not** satisfy `Send`:
 
 - `box<T>`: Boxes have identity and support shared mutation (§3.6, §7.4). Sending a `box<T>` between threads would enable shared mutable state, violating the isolation property of the threading model (§21.1).
 - `ref T`: Borrowed views are non-escapable (§7.3) and tied to the lifetime of the viewed slot. They cannot safely outlive the thread that created them.
@@ -1344,11 +1367,11 @@ In the initial design (when threading is added), `Send` will be **opt-in** for u
   ```p7
   struct MyData[Send](x: int, y: string) { }
   ```
-- The compiler verifies that all fields are Send-eligible before allowing the conformance.
-- If a field is not Send-eligible (e.g., contains a `box<T>`), declaring `[Send]` is a compile-time error.
+- The compiler verifies that all fields satisfy `Send` before allowing the conformance.
+- If a field does not satisfy `Send` (e.g., contains a `box<T>`), declaring `[Send]` is a compile-time error.
 
 [[TODO]]: **Reconsider auto-derived Send** in a future version. Potential design:
-- Automatically derive `Send` for all structs whose fields are Send-eligible (similar to how `Copy` is auto-derived for Copy-eligible structs that opt in via `[Copy]`; see §6.3).
+- Automatically derive `Send` for all structs whose fields satisfy `Send` (similar to how `Copy` is derived structurally but opted into for implicit behavior via `[Copy]`; see §6.3).
 - Provide an opt-out mechanism (e.g., `struct[!Send]`) for types that should not be Send even if fields are eligible (e.g., types representing external resources, file handles, or thread-local state).
 
 Rationale for opt-in initially:
