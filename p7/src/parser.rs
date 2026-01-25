@@ -797,18 +797,45 @@ impl Parser {
             Some(TokenType::Struct) => self.parse_struct_declaration(attributes),
             // Some(TokenType::If) => self.parse_if_expression().map(Statement::Expression),
             Some(TokenType::Return) => {
+                if !attributes.is_empty() {
+                    return Err(ParseError::UnexpectedToken {
+                        found: "attributes on return statement".to_string(),
+                        pos: Some(SourcePos {
+                            line: attributes[0].name.line,
+                            col: attributes[0].name.col,
+                        }),
+                    });
+                }
                 self.consume();
                 let expr = self.parse_expression()?;
                 self.consume_match(TokenType::Semicolon)?;
                 Ok(Statement::Return(Box::new(expr)))
             }
             Some(TokenType::Throw) => {
+                if !attributes.is_empty() {
+                    return Err(ParseError::UnexpectedToken {
+                        found: "attributes on throw statement".to_string(),
+                        pos: Some(SourcePos {
+                            line: attributes[0].name.line,
+                            col: attributes[0].name.col,
+                        }),
+                    });
+                }
                 self.consume();
                 let expr = self.parse_expression()?;
                 self.consume_match(TokenType::Semicolon)?;
                 Ok(Statement::Throw(expr))
             }
             Some(TokenType::Let) => {
+                if !attributes.is_empty() {
+                    return Err(ParseError::UnexpectedToken {
+                        found: "attributes on let statement".to_string(),
+                        pos: Some(SourcePos {
+                            line: attributes[0].name.line,
+                            col: attributes[0].name.col,
+                        }),
+                    });
+                }
                 self.consume();
 
                 let identifier = self.parse_identifier()?;
@@ -822,6 +849,15 @@ impl Parser {
                 })
             }
             _ => {
+                if !attributes.is_empty() {
+                    return Err(ParseError::UnexpectedToken {
+                        found: "attributes on expression statement".to_string(),
+                        pos: Some(SourcePos {
+                            line: attributes[0].name.line,
+                            col: attributes[0].name.col,
+                        }),
+                    });
+                }
                 let expression = self.parse_expression()?;
                 let ends_with_brace = self.ends_with_brace();
 
