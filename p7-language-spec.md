@@ -352,7 +352,7 @@ Rationale: structural properties may be used explicitly, but implicit duplicatio
 
 ### 6.5 The `Send` constraint proto
 
-`Send` is a built-in **constraint proto** (see §12.2) that indicates a type represents a **deep-copyable pure value** with no identity or aliasing.
+`Send` is a built-in **constraint proto** (see §12.2 for proto categories) that indicates a type represents a **deep-copyable pure value** with no identity or aliasing.
 
 The `Send` constraint is primarily used by the Threading extension (§21) to control which types can be safely transferred across thread boundaries. However, `Send` is always available as a core language feature, independent of any extensions.
 
@@ -369,8 +369,8 @@ A type satisfies `Send` (is Send-eligible) if it is a pure value that can be dee
 
 The following types do **not** satisfy `Send`:
 
-- `box<T>`: Boxes have identity and support mutation (§3.6, §7.4). A `box<T>` represents a handle to shared, mutable state, which could lead to aliasing if transferred between isolated contexts (such as threads).
-- `ref T`: Borrowed views are non-escapable (§7.3) and tied to the lifetime of the viewed slot on the stack. They cannot safely outlive their referent or be transferred to other contexts.
+- `box<T>`: Boxes have identity and support mutation (§3.6, §7.4). A `box<T>` represents a handle to shared, mutable state. Transferring a box between execution contexts would create aliasing (multiple handles to the same mutable state), which violates the isolation principle. Threading (§21) is the primary use case that requires this guarantee.
+- `ref T`: Borrowed views are non-escapable (§7.3) and tied to the lifetime of the viewed slot on the stack. They cannot safely outlive their referent or be transferred to other execution contexts.
 - Any user-defined type that transitively contains a field of type `box<T>` or `ref T`.
 
 #### 6.5.1 Opt-in Send conformance for user-defined types
@@ -385,11 +385,13 @@ The following types do **not** satisfy `Send`:
 - If any field does not satisfy `Send` (e.g., the struct transitively contains a `box<T>` or `ref T`), declaring `[Send]` is a compile-time error.
 
 Rationale for opt-in:
-- Explicit `[Send]` makes it visible in the struct declaration that the type is intended for use in isolated contexts (e.g., across thread boundaries).
+- Explicit `[Send]` makes it visible in the struct declaration that the type is intended for use in isolated execution contexts.
 - It prevents accidentally allowing types to cross context boundaries during prototyping.
 - It provides a conservative starting point.
 
-[[TODO]]: Consider auto-derived Send in a future version: automatically derive `Send` for all structs whose fields satisfy `Send`, with an opt-out mechanism (e.g., `struct[!Send]`) for types that should not be Send even if fields are eligible.
+Note: The primary use case for `Send` is the Threading extension (§21), where Send-eligibility controls which types can cross thread boundaries.
+
+[[TODO]]: Consider auto-derived Send in a future version: automatically derive `Send` for all structs whose fields satisfy `Send`, with an opt-out mechanism (e.g., `struct[!Send]`) for types that should not be Send even if fields are eligible. This would be particularly useful for the Threading extension.
 
 
 ---
