@@ -172,7 +172,7 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
     let mut results = Vec::new();
     for test_case in test_cases {
         // Clone module for each test
-        let test_module = match p7::compile(content.clone()) {
+        let test_module = match p7::compile(content.as_str().to_string()) {
             Ok(m) => m,
             Err(e) => {
                 results.push((
@@ -194,7 +194,6 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
 
     Ok(results)
 }
-
 
 fn main() -> std::io::Result<()> {
     let tests_dir = PathBuf::from("tests");
