@@ -42,10 +42,10 @@ Top-level executable statements are not allowed in v1; execution begins by calli
 Identifiers start with `_` or a letter and continue with letters, digits, or `_`.
 
 ### 2.2 Keywords (reserved)
-`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `fiber`, `yield`, `ref`
+`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`
 
 [[TODO]]: confirm final keyword set; keep minimal.
-Note: `fiber` and `yield` are reserved even though they are only valid when the Fiber extension is enabled (§20).
+Note: `suspend` and `yield` are reserved even though they are only valid when the Fiber extension is enabled (§20).
 
 ### 2.3 Comments
 - Line comments: `// ...`
@@ -548,7 +548,7 @@ See §14.
 - `break;` and `break expr;` (only valid inside `loop` / `for`)
 - `continue;` (only valid inside `loop` / `for`)
 - `for` statement: `for x in expr { ... }` (§9.3)
-- `yield;` (only valid in `fiber fn` when Fiber extension is enabled; §20)
+- `yield;` (only valid in `suspend fn` when Fiber extension is enabled; §20)
 - declarations (functions/types) [[TODO]] where allowed
 
 ### 9.2 Return semantics
@@ -613,11 +613,11 @@ Function declarations support two kinds of annotations that are **part of the fu
 Execution qualifiers appear as keywords **before** `fn`:
 
 ```p7
-fiber fn name(params...) -> R { ... }
+suspend fn name(params...) -> R { ... }
 ```
 
 In v1, the only execution qualifier is:
-- `fiber` — marks a fiber function (cooperative coroutine); see §20.
+- `suspend` — marks a suspendable function (cooperative coroutine); see §20.
 
 #### 10.2.2 Effect qualifiers
 
@@ -644,16 +644,16 @@ fn name(params...) throws<E> { ... }
 Qualifiers may be combined:
 
 ```p7
-fiber fn background_task() -> unit { ... }
+suspend fn background_task() -> unit { ... }
 fn risky_operation() -> int throws<MyError> { ... }
-fiber fn async_fetch() -> Data throws<NetworkError> { ... }
+suspend fn async_fetch() -> Data throws<NetworkError> { ... }
 ```
 
 Full grammar:
 ```
 function_decl := [execution_qualifier] 'fn' name '(' params ')' ['->' type] [effect_qualifier] block
 
-execution_qualifier := 'fiber'
+execution_qualifier := 'suspend'
 effect_qualifier := 'throws' | 'throws' '<' enum_type '>'
 ```
 
@@ -1233,18 +1233,18 @@ Goal:
 - Enable cooperative coroutines where script code can explicitly yield control back to the host (or a host-provided scheduler), preserving execution context and resuming later.
 
 ### 20.1 Enabling the extension
-- When the Fiber extension is not enabled, `fiber fn` and `yield` are compile-time errors.
-- When enabled, `fiber fn` and `yield` are available as specified below.
+- When the Fiber extension is not enabled, `suspend fn` and `yield` are compile-time errors.
+- When enabled, `suspend fn` and `yield` are available as specified below.
 
 [[TODO]]: define how a program declares it requires the fiber extension (compiler flag, module import, or host configuration).
 
-### 20.2 The `fiber` execution qualifier
-A function declared with `fiber fn` is a **fiber function**.
+### 20.2 The `suspend` execution qualifier
+A function declared with `suspend fn` is a **suspendable function**.
 
 Form:
 ```p7
-fiber fn name(params...) -> R { ... }
-fiber fn name(params...) -> R throws<E> { ... }
+suspend fn name(params...) -> R { ... }
+suspend fn name(params...) -> R throws<E> { ... }
 ```
 
 Properties:
@@ -1258,14 +1258,14 @@ Properties:
 - Rationale: Borrowed views are stack-bound and non-escapable. Suspending execution via `yield` would allow views to outlive their referents across suspension points, violating safety guarantees.
 
 Calling convention constraints:
-- `yield` is only valid inside a `fiber fn` function body.
+- `yield` is only valid inside a `suspend fn` function body.
 - A fiber function may be:
   - started from p7 via `spawn` (§20.5), or
   - started from the host via an embedding API (§20.4).
 
 Direct calling constraints (recommended for v1):
-- A `fiber fn` function may be called directly only from within another `fiber fn` function.
-- Attempting to call a `fiber fn` function from a non-fiber function is a compile-time error.
+- A `suspend fn` function may be called directly only from within another `suspend fn` function.
+- Attempting to call a `suspend fn` function from a non-suspend function is a compile-time error.
 Rationale:
 - `yield` requires a fiber resumption context.
 
@@ -1282,11 +1282,11 @@ Typing:
 - `yield;` is a statement. It yields no value to p7 code (no resume inputs in v1).
 
 Restrictions:
-- `yield;` is only permitted inside a `fiber fn` function.
+- `yield;` is only permitted inside a `suspend fn` function.
 
 ### 20.4 Host interop requirements for fibers
 When the Fiber extension is enabled, the host/runtime must support:
-- Creating a fiber execution from a `fiber fn` function and its arguments (start/spawn).
+- Creating a fiber execution from a `suspend fn` function and its arguments (start/spawn).
 - Resuming a fiber execution.
 
 A minimal host-driven protocol is:
@@ -1312,7 +1312,7 @@ spawn f(arg1, arg2, ...);
 ```
 
 Where:
-- `f` must refer to a function declared with `fiber fn`.
+- `f` must refer to a function declared with `suspend fn`.
 - `spawn` is a statement (returns `unit`) in v1.
 
 Semantics:
@@ -1366,7 +1366,7 @@ In v1, to avoid introducing lifetime tracking, implementations must enforce a co
 
 - A value of type `ref T` must not be live across a `yield;` within a fiber function.
 
-As specified in §20.2, the recommended restriction for v1 is to disallow `ref` usage entirely in fiber functions (no parameters/locals of type `ref T`, no `ref x` view-taking). This matches common restrictions in simple coroutine runtimes.
+As specified in §20.2, the recommended restriction for v1 is to disallow `ref` usage entirely in fiber functions (no parameters/locals of type `ref T`, no `ref x` view-taking). This matches common restrictions in coroutine-based systems.
 
 ---
 
