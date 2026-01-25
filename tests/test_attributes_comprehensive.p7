@@ -1,0 +1,89 @@
+/*
+[testcase]
+entrypoint = "test_all_scenarios"
+expected_type = "int"
+expected_value = "101"
+*/
+
+// Test attribute schema structs with various field types
+
+// Simple struct for attribute
+struct simple_attr(
+  pub value: int,
+);
+
+// Struct with multiple fields
+struct multi_field(
+  pub name: string,
+  pub count: int,
+  pub enabled: int,
+);
+
+// Test 1: Empty attribute (parentheses required)
+struct empty_attr();
+
+@empty_attr()
+fn test_empty_attr() -> int {
+  return 1;
+}
+
+// Test 2: Single attribute on function
+@simple_attr(value = 10)
+fn test_single_attr() -> int {
+  return 10;
+}
+
+// Test 3: Multiple attributes on function (order preserved)
+@simple_attr(value = 1)
+@multi_field(name = "test", count = 2, enabled = 1)
+fn test_multiple_attrs() -> int {
+  return 20;
+}
+
+// Test 4: Attribute on struct declaration
+@simple_attr(value = 5)
+struct AnnotatedStruct(
+  pub x: int,
+  pub y: int,
+);
+
+// Test 5: Attribute on enum declaration
+@multi_field(name = "colors", count = 3, enabled = 1)
+enum Color {
+  Red,
+  Green,
+  Blue
+}
+
+// Test 6: Duplicate attributes (allowed)
+@simple_attr(value = 1)
+@simple_attr(value = 2)
+fn test_duplicate_attrs() -> int {
+  return 30;
+}
+
+// Test 7: Nested struct as attribute
+struct nested_inner(
+  pub id: int,
+);
+
+struct nested_outer(
+  pub inner: int,
+  pub label: string,
+);
+
+@nested_outer(inner = 99, label = "outer")
+fn test_nested() -> int {
+  return 40;
+}
+
+// Main test function that calls all tests
+fn test_all_scenarios() -> int {
+  let r1 = test_empty_attr();
+  let r2 = test_single_attr();
+  let r3 = test_multiple_attrs();
+  let r4 = test_duplicate_attrs();
+  let r5 = test_nested();
+  
+  return r1 + r2 + r3 + r4 + r5;  // 1 + 10 + 20 + 30 + 40 = 101
+}
