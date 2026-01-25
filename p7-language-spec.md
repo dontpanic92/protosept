@@ -126,7 +126,7 @@ import .helpers;          // imports `myapp.services.helpers` (sibling)
 import .sub.utilities;    // imports `myapp.services.sub.utilities` (subdirectory)
 ```
 
-Note: The exact syntax for parent-relative paths (e.g., `..`) is [[TODO]]. In v1, only sibling and subdirectory relative imports (single `.` prefix) may be supported.
+**Note:** The exact syntax for parent-relative paths (e.g., `..` to import from parent directories) is reserved for future specification. In v1, only sibling (`.foo`) and subdirectory (`.sub.bar`) relative imports are supported.
 
 ### 1.1.6 Visibility rules
 
