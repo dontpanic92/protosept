@@ -46,7 +46,7 @@ Identifiers start with `_` or a letter and continue with letters, digits, or `_`
 
 [[TODO]]: confirm final keyword set; keep minimal.
 Note: `suspend` and `yield` are reserved even though they are only valid when the Fiber extension is enabled (§20).
-Note: `spawn_thread` is reserved (context-dependent keyword) when the Threading extension is enabled (§21), but is not a globally reserved keyword.
+Note: `spawn_thread` is a context-dependent keyword that is recognized only when the Threading extension is enabled (§21). It is not a globally reserved keyword.
 
 ### 2.3 Comments
 - Line comments: `// ...`
@@ -1419,7 +1419,7 @@ The following types do **not** satisfy `Send`:
   struct MyData[Send](x: int, y: string) { }
   ```
 - The compiler must verify that all fields satisfy `Send` before allowing the conformance.
-- If any field does not satisfy `Send` (e.g., contains a `box<T>` or `ref T`), declaring `[Send]` is a compile-time error.
+- If any field does not satisfy `Send` (e.g., the struct transitively contains a `box<T>` or `ref T`), declaring `[Send]` is a compile-time error.
 
 [[TODO]]: Consider auto-derived Send in a future version: automatically derive `Send` for all structs whose fields satisfy `Send`, with an opt-out mechanism (e.g., `struct[!Send]`) for types that should not be Send even if fields are eligible.
 
@@ -1474,7 +1474,7 @@ When a thread completes execution (reaches the end of its function), the outcome
 
 1. **Returned(value)**: The function returned a value. The function used with `spawn_thread` must have a return type that satisfies `Send` (or returns `unit`), otherwise it is a compile-time error. If the return type satisfies `Send`, the host can observe and retrieve the value across the thread boundary.
 
-2. **Threw(error_enum)**: The function threw an error (§14.1). The thrown enum type must satisfy `Send` for the host to observe the error details. If the enum does not satisfy `Send`, this is a compile-time error (all throwable enums used in threaded functions must be `Send`).
+2. **Threw(error_enum)**: The function threw an error (§14.1). The thrown enum type must satisfy `Send`. If the enum does not satisfy `Send`, it is a compile-time error. All throwable enums used in threaded functions must be `Send`, enabling the host to observe the error details across the thread boundary.
 
 3. **Trapped(panic)**: The function trapped (§14.0). Traps are unrecoverable panics. When a thread traps:
    - The trap terminates the entire thread, including all fibers scheduled on that thread (if fibers are enabled; see §21.6).
@@ -1516,7 +1516,7 @@ Where:
 - `ThreadSpawnInfo` is implementation-defined metadata. Recommended fields:
   - spawned function name (if available)
   - optional source location (if available)
-  - optional parent thread handle (if spawned from within a thread) [[TODO]]
+  - optional parent thread handle (if spawned from within a thread) [[TODO: specify purpose - debugging/tracing or lifecycle management]]
 
 Semantics:
 - The runtime invokes the hook synchronously during `spawn_thread` execution (i.e., before `spawn_thread` completes).
