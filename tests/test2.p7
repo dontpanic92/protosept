@@ -1,9 +1,8 @@
-/*
-[testcase]
-entrypoint = "test"
-expected_type = "float"
-expected_value = "1.21"
-*/
+// Define the test attribute struct
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
 
 fn add(a: float, b: float) -> int {
     a + b
@@ -19,6 +18,7 @@ struct Vec2(
     pub y: float = 0,
 );
 
+@test(expected_type = "float", expected_value = "1.21")
 fn test() -> float {
     let a = 1.1;
     let b = 2.3;

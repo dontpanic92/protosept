@@ -82,12 +82,14 @@ pub struct Function {
     pub param_names: Vec<String>,
     pub param_defaults: Vec<Option<crate::ast::Expression>>,
     pub return_type: Type,
+    pub attributes: Vec<crate::ast::Attribute>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Enum {
     pub qualified_name: String,
     pub values: Vec<String>,
+    pub attributes: Vec<crate::ast::Attribute>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +97,7 @@ pub struct Struct {
     pub qualified_name: String,
     pub fields: Vec<(String, Type)>,
     pub field_defaults: Vec<Option<crate::ast::Expression>>,
+    pub attributes: Vec<crate::ast::Attribute>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

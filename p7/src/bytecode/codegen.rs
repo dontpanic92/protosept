@@ -258,13 +258,14 @@ impl Generator {
                 self.builder.throw();
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
-            Statement::EnumDeclaration { name, attributes: _, values } => {
+            Statement::EnumDeclaration { name, attributes, values } => {
                 let qualified_name = self
                     .symbol_table
                     .get_new_symbol_qualified_name(name.name.clone());
                 let ty = Enum {
                     qualified_name: qualified_name.clone(),
                     values: values.iter().map(|v| v.name.clone()).collect(),
+                    attributes: attributes.clone(),
                 };
                 let type_id = self.symbol_table.add_udt(UserDefinedType::Enum(ty));
 
@@ -280,7 +281,7 @@ impl Generator {
             }
             Statement::StructDeclaration {
                 name,
-                attributes: _,
+                attributes,
                 fields,
                 methods,
             } => {
@@ -300,6 +301,7 @@ impl Generator {
                     qualified_name: qualified_name.clone(),
                     fields: fields_with_types,
                     field_defaults,
+                    attributes: attributes.clone(),
                 };
                 let type_id = self.symbol_table.add_udt(UserDefinedType::Struct(ty));
 
@@ -796,6 +798,7 @@ impl Generator {
             param_names: params.iter().map(|var| var.name.clone()).collect(),
             param_defaults: param_defaults.clone(),
             return_type,
+            attributes: declaration.attributes.clone(),
         };
 
         let type_id = self.symbol_table.add_udt(UserDefinedType::Function(ty));

@@ -1,0 +1,9 @@
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+@test(expected_type = "int", expected_value = "42")
+fn simple_test() -> int {
+    42
+}

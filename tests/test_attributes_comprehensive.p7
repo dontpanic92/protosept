@@ -1,9 +1,8 @@
-/*
-[testcase]
-entrypoint = "test_all_scenarios"
-expected_type = "int"
-expected_value = "101"
-*/
+// Define the test attribute struct
+struct test(
+  pub expected_type: string,
+  pub expected_value: string,
+);
 
 // Test attribute schema structs with various field types
 
@@ -78,6 +77,7 @@ fn test_nested() -> int {
 }
 
 // Main test function that calls all tests
+@test(expected_type = "int", expected_value = "101")
 fn test_all_scenarios() -> int {
   let r1 = test_empty_attr();
   let r2 = test_single_attr();
@@ -87,3 +87,4 @@ fn test_all_scenarios() -> int {
   
   return r1 + r2 + r3 + r4 + r5;  // 1 + 10 + 20 + 30 + 40 = 101
 }
+
