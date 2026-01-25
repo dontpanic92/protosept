@@ -46,7 +46,6 @@ Identifiers start with `_` or a letter and continue with letters, digits, or `_`
 
 [[TODO]]: confirm final keyword set; keep minimal.
 Note: `suspend` and `yield` are reserved even though they are only valid when the Fiber extension is enabled (§20).
-Note: `spawn_thread` is a context-dependent keyword that is recognized only when the Threading extension is enabled (§21). It is not a globally reserved keyword.
 
 ### 2.3 Comments
 - Line comments: `// ...`
@@ -1374,9 +1373,7 @@ As specified in §20.2, the recommended restriction for v1 is to disallow `ref` 
 
 ---
 
-## 21. Threading extension (optional)
-
-Status: Extension (optional in runtime / implementation).
+## 21. Threading extension
 
 Goal:
 - Enable p7 code to request thread spawning for concurrent execution while keeping the host/runtime in full control of OS thread management, scheduling, and resource budgets.
@@ -1424,8 +1421,6 @@ The following types do **not** satisfy `Send`:
 [[TODO]]: Consider auto-derived Send in a future version: automatically derive `Send` for all structs whose fields satisfy `Send`, with an opt-out mechanism (e.g., `struct[!Send]`) for types that should not be Send even if fields are eligible.
 
 ### 21.3 Threading model: actor-like isolation
-
-The p7 threading model is inspired by actor/Erlang-process semantics:
 
 **Isolation guarantees**:
 - **No shared memory**: Threads do not share mutable state. Each thread has its own isolated memory space.
