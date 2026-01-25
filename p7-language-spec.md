@@ -1463,24 +1463,10 @@ fn inspect<T>(x: ref T) -> unit {
 
 #### 19.7.3 Generics and proto boxes (`box<P>`)
 
-Generic functions may use proto boxes for runtime polymorphism:
+For runtime polymorphism, use proto boxes (`box<P>`) directly without generics:
 
 ```p7
-fn call_print<P>(obj: box<P>) -> unit
-  where P is a proto // [[NOTE]]: `where` is not in v1 syntax; shown for clarity only
-{
-  obj.print();
-}
-```
-
-Note: In v1, without `where` clauses, proto constraints are expressed as bounds in the type parameter list:
-```p7
-// If protos could be used as bounds directly (requires T to satisfy P at instantiation):
-fn process<T: Printable>(value: T) -> unit {
-  // ... but to call proto methods, need box<Printable> or ref T with conformance ...
-}
-
-// More commonly: accept box<P> directly without generics for runtime polymorphism:
+// Accept box<P> directly without generics for runtime polymorphism:
 fn call_print(obj: box<Printable>) -> unit {
   obj.print();
 }
@@ -1488,6 +1474,17 @@ fn call_print(obj: box<Printable>) -> unit {
 
 - `box<P>` provides runtime polymorphism via dynamic dispatch (§12.6).
 - Unlike generic type parameters, `box<P>` is not monomorphized; it uses a single dispatch mechanism for all conforming types.
+
+Generic functions may also use proto boxes when the proto type itself needs to vary:
+
+```p7
+// Generic over the concrete type T (with proto bound):
+fn print_boxed<T: Printable>(value: box<T>) -> unit {
+  value.print(); // ok: T is constrained to satisfy Printable
+}
+```
+
+However, in most cases where you need runtime polymorphism, accepting `box<P>` directly (without generics) is more straightforward.
 
 ### 19.8 Limitations in v1
 
