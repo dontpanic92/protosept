@@ -45,7 +45,7 @@ Identifiers start with `_` or a letter and continue with letters, digits, or `_`
 `fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`
 
 [[TODO]]: confirm final keyword set; keep minimal.
-Note: `suspend` and `yield` are reserved even though they are only valid when the Fiber extension is enabled (§20).
+Note: `suspend` and `yield` are reserved even though they are only valid when the Fiber extension is enabled (§21).
 
 ### 2.3 Comments
 - Line comments: `// ...`
@@ -464,7 +464,7 @@ Expressions include:
 - loop expressions (`loop ...`) (§8.5)
 - `try` expressions (error handling)
 
-Note: `yield` is a statement/expression only under the Fiber extension (§20); it is not part of core expressions in v1.
+Note: `yield` is a statement/expression only under the Fiber extension (§21); it is not part of core expressions in v1.
 
 ### 8.2 Block expressions
 A block `{ ... }` contains a sequence of statements.
@@ -591,7 +591,7 @@ See §14.
 - `break;` and `break expr;` (only valid inside `loop` / `for`)
 - `continue;` (only valid inside `loop` / `for`)
 - `for` statement: `for x in expr { ... }` (§9.3)
-- `yield;` (only valid in `suspend fn` when Fiber extension is enabled; §20)
+- `yield;` (only valid in `suspend fn` when Fiber extension is enabled; §21)
 - declarations (functions/types) [[TODO]] where allowed
 
 ### 9.2 Return semantics
@@ -660,7 +660,7 @@ suspend fn name(params...) -> R { ... }
 ```
 
 In v1, the only execution qualifier is:
-- `suspend` — marks a suspendable function (cooperative coroutine); see §20.
+- `suspend` — marks a suspendable function (cooperative coroutine); see §21.
 
 #### 10.2.2 Effect qualifiers
 
@@ -1124,6 +1124,32 @@ Requirements:
 - Passing a value type `T` to host follows move/copy semantics.
 - Boxes are handles; passing `box<T>` copies/moves the handle per rules in §6.
 
+### 17.4 Generics and host interop
+
+p7 generics (§19) are compile-time only and use monomorphization:
+- **Exported entrypoints must be monomorphic**: Host-visible functions called from the host must have concrete types. Generic functions cannot be directly called from the host unless instantiated with specific type arguments at compile time.
+- **No open generics at runtime**: There is no runtime representation of generic type parameters. All generics are resolved to concrete types during compilation.
+- **Runtime polymorphism via `box<P>`**: For dynamic dispatch across the host boundary, use proto boxes (`box<P>`). Proto boxes provide runtime polymorphism without exposing generic type parameters to the host.
+
+Example:
+```p7
+// Generic function (compile-time only; cannot be called directly from host)
+fn identity<T>(x: T) -> T { return x; }
+
+// Host-callable monomorphic function (ok)
+fn identity_int(x: int) -> int { return identity(x); }
+
+// Host-callable function using runtime polymorphism (ok)
+fn process_printable(obj: box<Printable>) -> unit {
+  obj.print();
+}
+```
+
+Rationale:
+- Keeps host interop simple and predictable.
+- Avoids requiring hosts to understand p7's generic instantiation or type parameters.
+- Proto boxes (`box<P>`) serve as the stable ABI boundary for polymorphic values.
+
 ---
 
 ## 18. Attributes (declaration metadata) (v1)
@@ -1245,7 +1271,240 @@ It is a compile-time error if:
 
 ---
 
-## 19. Open items / TODO list
+## 19. Generics
+
+Status: v1 (compile-time).
+
+### 19.1 Overview and design principles
+
+p7 supports **compile-time generics** via monomorphization:
+- Generic functions, structs, and enums are parameterized by type parameters.
+- The compiler generates a distinct copy of the code for each concrete instantiation used in the program.
+- There are **no open generic types at runtime**; all generics are resolved at compile time.
+
+This design enables:
+- Zero runtime overhead for generic abstractions
+- Simple implementation without runtime type erasure or reified generics
+- Straightforward interop with host languages (see §17.4)
+
+### 19.2 Generic functions
+
+Generic functions are declared with type parameters in angle brackets after the function name:
+
+```p7
+fn identity<T>(x: T) -> T {
+  return x;
+}
+
+fn first<T>(arr: array<T>) -> ?T {
+  if arr.len() > 0 {
+    return arr[0];
+  }
+  return null;
+}
+```
+
+- Type parameters are declared in angle brackets: `<T>`, `<T, U>`, etc.
+- Type parameter names follow identifier rules (§2.1).
+- Type parameters may be used in parameter types, return types, and local variable annotations.
+
+Calling generic functions:
+- Type arguments may be inferred from the arguments: `identity(42)` infers `T = int`.
+- Type arguments may be explicitly provided [[TODO]]: `identity<int>(42)`.
+- If inference is ambiguous or fails, explicit type arguments are required [[TODO]].
+
+### 19.3 Generic structs
+
+Structs may be parameterized by type parameters:
+
+```p7
+struct Pair<T, U>(
+  first: T,
+  second: U,
+);
+
+struct Vec<T>(
+  elements: array<T>,
+) {
+  pub fn push(self: box<Self>, item: T) -> unit {
+    // ... add to self.elements ...
+  }
+  
+  pub fn get(self: ref Self, index: int) -> ?T {
+    // ... return element at index ...
+  }
+}
+```
+
+Construction:
+- Generic structs are constructed with explicit type arguments [[TODO]]: `Pair<int, string>(1, "hello")`.
+- Type inference at construction sites is [[TODO]] (may be added later).
+
+Methods on generic structs:
+- Methods may use the struct's type parameters.
+- Methods may introduce additional type parameters [[TODO]] (recommended: allowed).
+- `Self` refers to the generic struct type with its parameters (e.g., `Vec<T>`).
+
+### 19.4 Generic enums
+
+Enums may be parameterized by type parameters:
+
+```p7
+enum Option<T> {
+  Some(value: T),
+  None,
+}
+
+enum Either<A, B> {
+  Left(left: A),
+  Right(right: B),
+}
+```
+
+Note: p7 uses `throw`/`try` for error handling (§14), so `Result<T, E>` is not the primary error handling mechanism. `Option<T>` and `Either<A, B>` are shown as examples of neutral generic enums.
+
+Usage:
+```p7
+let x: Option<int> = Option::Some(42);
+let y: Option<int> = Option::None;
+
+let z: Either<int, string> = Either::Left(1);
+```
+
+[[TODO]]: Enum payload variants are still being finalized (§13.1). The syntax shown above assumes payload support.
+
+### 19.5 Type parameter bounds
+
+Type parameters may be constrained by proto bounds using the syntax `T: P`:
+
+```p7
+fn print_boxed<T: Printable>(value: box<T>) -> unit {
+  value.print();
+}
+```
+
+Rules:
+- A bound is specified as `T: P` where `P` is a proto.
+- In v1, **only a single proto constraint** is allowed per type parameter.
+- Multiple bounds (e.g., `T: P + Q`) are not supported in v1.
+- There is **no `where` clause** in v1.
+
+Semantics:
+- A bound `T: P` means that any concrete type substituted for `T` must structurally satisfy proto `P`.
+- The constraint is checked at each instantiation site.
+- Inside the generic body, methods from `P` may be called on values of type `T` or `ref T`.
+
+Constraint protos vs object protos:
+- Bounds may use **constraint protos** (e.g., `Copy`, `Send`) or **object protos** (user-defined protos).
+- Constraint protos (§12.2) are used only for compile-time checking and implicit behaviors; they do not support `box<P>`.
+- Object protos (§12.2) support both compile-time checking and runtime dynamic dispatch via `box<P>`.
+
+Example with `Copy`:
+```p7
+fn duplicate<T: Copy>(x: T) -> Pair<T, T> {
+  return Pair(x, x); // ok: x is Copy, so it can be used twice
+}
+```
+
+### 19.6 Instantiation and monomorphization
+
+Monomorphization is the process of generating specialized code for each concrete instantiation of a generic:
+
+- When a generic function/struct/enum is used with specific type arguments, the compiler generates a concrete version of the code with type parameters replaced by the actual types.
+- Each distinct instantiation produces a separate copy of the code in the compiled output.
+- Type parameters are resolved at compile time; there is no runtime representation of generic type variables.
+
+Example:
+```p7
+fn identity<T>(x: T) -> T { return x; }
+
+let a = identity(42);      // generates identity_int
+let b = identity("hi");    // generates identity_string
+```
+
+The compiler generates two distinct functions: `identity_int` and `identity_string` (conceptually).
+
+Implications:
+- Code size grows with the number of distinct instantiations.
+- No runtime type parameters or type erasure.
+- Optimal performance: no runtime dispatch overhead for generic functions (unless using `box<P>` for dynamic dispatch).
+
+### 19.7 Interaction with other features
+
+#### 19.7.1 Generics and `box<T>`
+
+Generic functions and types may use `box<T>` where `T` is a type parameter:
+
+```p7
+fn box_identity<T>(x: box<T>) -> box<T> {
+  return x;
+}
+
+struct Container<T>(
+  value: box<T>,
+);
+```
+
+- `box<T>` is a boxed handle to a heap-allocated value of type `T`.
+- When `T` is a type parameter, the box is monomorphized: each instantiation gets a distinct `box<ConcreteType>`.
+
+#### 19.7.2 Generics and `ref T`
+
+Generic functions may take borrowed views of generic types:
+
+```p7
+fn inspect<T>(x: ref T) -> unit {
+  // ... read x ...
+}
+```
+
+- `ref T` is a read-only view of a value of type `T`.
+- The same borrowing rules (§7) apply.
+
+#### 19.7.3 Generics and proto boxes (`box<P>`)
+
+Generic functions may use proto boxes for runtime polymorphism:
+
+```p7
+fn call_print<P>(obj: box<P>) -> unit
+  where P is a proto // [[NOTE]]: `where` is not in v1 syntax; shown for clarity only
+{
+  obj.print();
+}
+```
+
+Note: In v1, without `where` clauses, proto constraints are expressed as bounds in the type parameter list:
+```p7
+// If protos could be used as bounds directly (requires T to satisfy P at instantiation):
+fn process<T: Printable>(value: T) -> unit {
+  // ... but to call proto methods, need box<Printable> or ref T with conformance ...
+}
+
+// More commonly: accept box<P> directly without generics for runtime polymorphism:
+fn call_print(obj: box<Printable>) -> unit {
+  obj.print();
+}
+```
+
+- `box<P>` provides runtime polymorphism via dynamic dispatch (§12.6).
+- Unlike generic type parameters, `box<P>` is not monomorphized; it uses a single dispatch mechanism for all conforming types.
+
+### 19.8 Limitations in v1
+
+The following generic features are **not included in v1**:
+
+1. **No `where` clause**: Constraints are expressed only as bounds in the type parameter list (`T: P`).
+2. **Single proto constraint per type parameter**: `T: P + Q` is not supported; use `T: P` only.
+3. **No higher-kinded types**: Type parameters cannot themselves be generic (e.g., no `F<_>` or `F<G<T>>`).
+4. **No generic protos**: Proto declarations cannot have type parameters in v1 [[TODO]].
+5. **No associated types**: Protos cannot declare associated types in v1 [[TODO]].
+6. **Limited type inference**: Type argument inference at generic function call sites is implementation-defined [[TODO]]; explicit type arguments may be required in some cases.
+
+These features may be considered for future versions.
+
+---
+
+## 20. Open items / TODO list
 
 1) Decide float NaN/Inf behavior details and conversions
 2) Decide `string` default Copy policy (recommended: Copy by default)
@@ -1265,26 +1524,26 @@ It is a compile-time error if:
 16) Specify whether `try` can narrow thrown enum types in match-like else blocks
 17) Fiber extension: specify borrow/view restrictions across `yield` (recommended: disallow `ref T` live across `yield`)
 18) Decide how a proto is classified as constraint vs object in the surface language (currently: only built-ins may be constraint protos) (§12.2)
-19) Threading extension: Define message passing primitives (channels, send/receive APIs) and blocking/non-blocking semantics (§21.9)
-20) Threading extension: Define exact host API surface for thread management (wait, join, cancel) (§21.8)
-21) Threading extension: Decide whether `spawn_thread` should return a thread handle value to p7 code (§21.4)
+19) Threading extension: Define message passing primitives (channels, send/receive APIs) and blocking/non-blocking semantics (§22.9)
+20) Threading extension: Define exact host API surface for thread management (wait, join, cancel) (§22.8)
+21) Threading extension: Decide whether `spawn_thread` should return a thread handle value to p7 code (§22.4)
 
 ---
 
-## 20. Fiber extension (cooperative coroutines)
+## 21. Fiber extension (cooperative coroutines)
 
 Status: Extension (optional in runtime / implementation).
 
 Goal:
 - Enable cooperative coroutines where script code can explicitly yield control back to the host (or a host-provided scheduler), preserving execution context and resuming later.
 
-### 20.1 Enabling the extension
+### 21.1 Enabling the extension
 - When the Fiber extension is not enabled, `suspend fn` and `yield` are compile-time errors.
 - When enabled, `suspend fn` and `yield` are available as specified below.
 
 [[TODO]]: define how a program declares it requires the fiber extension (compiler flag, module import, or host configuration).
 
-### 20.2 The `suspend` execution qualifier
+### 21.2 The `suspend` execution qualifier
 A function declared with `suspend fn` is a **suspendable function**.
 
 Form:
@@ -1306,8 +1565,8 @@ Properties:
 Calling convention constraints:
 - `yield` is only valid inside a `suspend fn` function body.
 - A fiber function may be:
-  - started from p7 via `spawn` (§20.5), or
-  - started from the host via an embedding API (§20.4).
+  - started from p7 via `spawn` (§21.5), or
+  - started from the host via an embedding API (§21.4).
 
 Direct calling constraints (recommended for v1):
 - A `suspend fn` function may be called directly only from within another `suspend fn` function.
@@ -1315,7 +1574,7 @@ Direct calling constraints (recommended for v1):
 Rationale:
 - `yield` requires a fiber resumption context.
 
-### 20.3 `yield;` statement
+### 21.3 `yield;` statement
 Form:
 - `yield;`
 
@@ -1330,7 +1589,7 @@ Typing:
 Restrictions:
 - `yield;` is only permitted inside a `suspend fn` function.
 
-### 20.4 Host interop requirements for fibers
+### 21.4 Host interop requirements for fibers
 When the Fiber extension is enabled, the host/runtime must support:
 - Creating a fiber execution from a `suspend fn` function and its arguments (start/spawn).
 - Resuming a fiber execution.
@@ -1345,11 +1604,11 @@ A minimal host-driven protocol is:
 
 Notes:
 - After `Returned` or `Threw`, the handle is complete and cannot be resumed further.
-- A host may ignore a fiber (never resume it). If ignored, it remains suspended indefinitely unless cancelled or dropped (see §20.7).
+- A host may ignore a fiber (never resume it). If ignored, it remains suspended indefinitely unless cancelled or dropped (see §21.7).
 
 [[TODO]]: specify concrete host API surface and mapping to host language.
 
-### 20.5 Spawning fibers from p7 (`spawn`)
+### 21.5 Spawning fibers from p7 (`spawn`)
 In addition to host-started fibers, p7 code may create fibers using `spawn`.
 
 Form:
@@ -1367,7 +1626,7 @@ Semantics:
 - The act of spawning does not itself run the new fiber.
 
 Host visibility and control:
-- Every successful `spawn` triggers the host hook `on_fiber_spawn` (§20.6) with a handle for the new fiber.
+- Every successful `spawn` triggers the host hook `on_fiber_spawn` (§21.6) with a handle for the new fiber.
 - The host may choose to:
   - schedule and resume the fiber,
   - defer it,
@@ -1379,7 +1638,7 @@ Rationale:
 
 [[TODO]]: decide whether `spawn` should return a `FiberHandle` value to p7 code (recommended later; keep statement-only in v1 to minimize surface area).
 
-### 20.6 Host hook: observing fibers spawned by p7 (`on_fiber_spawn`)
+### 21.6 Host hook: observing fibers spawned by p7 (`on_fiber_spawn`)
 To preserve embedding control, runtimes that enable the Fiber extension must provide a host hook that is invoked whenever p7 code spawns a new fiber:
 
 - Hook name (conceptual): `on_fiber_spawn(handle: FiberHandle, info: FiberSpawnInfo) -> unit`
@@ -1398,31 +1657,31 @@ Semantics:
 Constraints:
 - The hook must not itself resume the new fiber re-entrantly while `spawn` is still executing, unless the implementation explicitly guarantees re-entrancy safety.
 
-### 20.7 Scheduling policy (informative)
+### 21.7 Scheduling policy (informative)
 Scheduling is not part of the core language semantics. A fiber yields control only at explicit `yield`, `return`, or `throw` boundaries; when and whether it is resumed is controlled by the host/runtime policy.
 
 Example host policy for games:
 - Host resumes selected fibers at most once per frame (or on a fixed tick).
 - `yield;` represents a cooperative checkpoint; a frame-based policy can treat each yield as "pause until next frame".
 
-### 20.8 Interaction with `ref T` borrowed views
+### 21.8 Interaction with `ref T` borrowed views
 Because `yield` suspends execution, values of type `ref T` must not escape across suspension points.
 
 In v1, to avoid introducing lifetime tracking, implementations must enforce a conservative restriction such as:
 
 - A value of type `ref T` must not be live across a `yield;` within a fiber function.
 
-As specified in §20.2, the recommended restriction for v1 is to disallow `ref` usage entirely in fiber functions (no parameters/locals of type `ref T`, no `ref x` view-taking). This matches common restrictions in coroutine-based systems.
+As specified in §21.2, the recommended restriction for v1 is to disallow `ref` usage entirely in fiber functions (no parameters/locals of type `ref T`, no `ref x` view-taking). This matches common restrictions in coroutine-based systems.
 
 ---
 
-## 21. Threading extension
+## 22. Threading extension
 
 Goal:
 - Enable p7 code to request thread spawning for concurrent execution while keeping the host/runtime in full control of OS thread management, scheduling, and resource budgets.
 - Provide actor-like isolation where threads do not share mutable state, preventing data races and simplifying reasoning about concurrent execution.
 
-### 21.1 Enabling the extension
+### 22.1 Enabling the extension
 
 - When the Threading extension is not enabled, `spawn_thread` is a compile-time error.
 - When enabled, `spawn_thread` is available as specified below.
@@ -1430,18 +1689,18 @@ Goal:
 
 [[TODO]]: define how a program declares it requires the Threading extension (compiler flag, module import, or host configuration).
 
-### 21.2 Send-gated transfer
+### 22.2 Send-gated transfer
 
 The Threading extension uses the `Send` constraint proto (defined in §6.5) to enforce compile-time safety for cross-thread value transfer.
 
 **Threading-specific Send requirements**:
-- All arguments passed to `spawn_thread` must have types that satisfy `Send` (§21.4).
-- The return type of functions used with `spawn_thread` must satisfy `Send` (or return `unit`) (§21.5).
-- Throwable enum types used in threaded functions must satisfy `Send` (§21.5).
+- All arguments passed to `spawn_thread` must have types that satisfy `Send` (§22.4).
+- The return type of functions used with `spawn_thread` must satisfy `Send` (or return `unit`) (§22.5).
+- Throwable enum types used in threaded functions must satisfy `Send` (§22.5).
 
 These requirements ensure that only deep-copyable pure values can cross thread boundaries, preventing shared mutable state and aliasing across threads.
 
-### 21.3 Threading model: actor-like isolation
+### 22.3 Threading model: actor-like isolation
 
 **Isolation guarantees**:
 - **No shared memory**: Threads do not share mutable state. Each thread has its own isolated memory space.
@@ -1450,7 +1709,7 @@ These requirements ensure that only deep-copyable pure values can cross thread b
 
 This model prevents data races by construction and simplifies reasoning about concurrent execution.
 
-### 21.4 Spawning threads from p7 (`spawn_thread`)
+### 22.4 Spawning threads from p7 (`spawn_thread`)
 
 p7 code may request creation of a new thread execution using `spawn_thread`.
 
@@ -1471,7 +1730,7 @@ Semantics:
 - The calling thread continues execution immediately after `spawn_thread` (non-blocking).
 
 Host visibility and control:
-- Every successful `spawn_thread` triggers the host hook `on_thread_spawn` (§21.7) with a handle for the new thread.
+- Every successful `spawn_thread` triggers the host hook `on_thread_spawn` (§22.7) with a handle for the new thread.
 - The host may choose to:
   - schedule the thread on an OS thread or thread pool,
   - defer its execution,
@@ -1484,7 +1743,7 @@ Rationale:
 
 [[TODO]]: decide whether `spawn_thread` should return a thread handle value to p7 code (recommended for future versions to enable waiting/joining; keep statement-only initially to minimize surface area).
 
-### 21.5 Thread completion outcomes
+### 22.5 Thread completion outcomes
 
 When a thread completes execution (reaches the end of its function), the outcome is one of:
 
@@ -1493,17 +1752,17 @@ When a thread completes execution (reaches the end of its function), the outcome
 2. **Threw(error_enum)**: The function threw an error (§14.1). The thrown enum type must satisfy `Send`. If the enum does not satisfy `Send`, it is a compile-time error. All throwable enums used in threaded functions must be `Send`, enabling the host to observe the error details across the thread boundary.
 
 3. **Trapped(panic)**: The function trapped (§14.0). Traps are unrecoverable panics. When a thread traps:
-   - The trap terminates the entire thread, including all fibers scheduled on that thread (if fibers are enabled; see §21.6).
+   - The trap terminates the entire thread, including all fibers scheduled on that thread (if fibers are enabled; see §22.6).
    - Other threads in the program are **not** affected. Traps do not propagate across thread boundaries.
-   - The host is notified of the trap outcome (host-specific mechanism; see §21.8).
+   - The host is notified of the trap outcome (host-specific mechanism; see §22.8).
 
 Contrast with single-threaded execution:
 - In single-threaded (non-extension) p7, a trap terminates the entire program.
 - In the Threading extension, a trap terminates only the current thread, enabling supervision patterns where a parent thread can monitor worker threads and take corrective action upon trap (e.g., restart the worker, log the error, shut down gracefully).
 
-### 21.6 Interaction with fibers (§20)
+### 22.6 Interaction with fibers (§21)
 
-When both the Fiber extension (§20) and the Threading extension are enabled:
+When both the Fiber extension (§21) and the Threading extension are enabled:
 
 **Fiber pinning**:
 - **Fibers are pinned to a single thread**: A fiber does not migrate between threads. Once created, a fiber remains on the thread where it was spawned.
@@ -1521,7 +1780,7 @@ Note: If a future version allows fibers to be spawned on a different thread (cro
 - If a fiber traps (§14.0), the trap terminates the entire thread, including all other fibers on that thread.
 - Fibers cannot trap in isolation; the trap propagates to the containing thread.
 
-### 21.7 Host hook: observing threads spawned by p7 (`on_thread_spawn`)
+### 22.7 Host hook: observing threads spawned by p7 (`on_thread_spawn`)
 
 To preserve embedding control, runtimes that enable the Threading extension must provide a host hook that is invoked whenever p7 code spawns a new thread:
 
@@ -1541,7 +1800,7 @@ Semantics:
 Constraints:
 - The hook must not itself start execution of the new thread re-entrantly while `spawn_thread` is still executing, unless the implementation explicitly guarantees re-entrancy safety.
 
-### 21.8 Thread completion observability (host)
+### 22.8 Thread completion observability (host)
 
 The host/runtime must be able to observe when a thread completes and its outcome:
 
@@ -1565,7 +1824,7 @@ match wait_for_thread(handle) {
 
 [[TODO]]: Define exact host API surface for thread management (wait, join, cancel). This is recommended for a future version; for now, the extension defines the language-side semantics only.
 
-### 21.9 Message passing and channels (future)
+### 22.9 Message passing and channels (future)
 
 The current Threading extension specifies thread spawning and argument passing. Future versions may add:
 
