@@ -1083,39 +1083,122 @@ Requirements:
 
 ---
 
-## 18. Summary of chosen decisions (from discussion)
+## 18. Attributes (declaration metadata) (v1)
 
-- Move-by-default (§6.1).
-- Nullability uses `?T` prefix (sugar for `nullable<T>`) (§3.4).
-- `ref T` exists as read-only non-escapable view; no `ref mut` (§3.5, §7).
-- Shared mutation and escaping references use `box<T>` (§3.6, §7.4).
-- Reassignment is not supported; `let` is single-assignment (§5.1).
-- Shadowing ("rebind") is supported: `let a = ...; let a = ...;` in inner scopes (§5.2).
-- `loop` is an expression and supports `break value` (§8.5).
-- `loop (init; step)` uses exactly one `let` in init and step, and `step` must bind the same name as `init` (§8.5.1).
-- `for x in expr { ... }` iterates arrays and strings (§9.3).
-- Field assignment is allowed only through `box<Struct>` (§5.3, §7.4, §11.4).
-- Arrays and strings are **immutable value types**; in-place mutation requires boxing (e.g. `box<array<T>>`) (§3.2, §3.3, §5.3).
-- `box<T>` mutation is **in-place** and visible through all aliases (§7.4).
-- Integer width is i64; float width is f64 (§3.1).
-- Integer overflow traps by default; wraparound addition is available via `wrapping_add` (§15.1.1).
-- Protos are structural conformance interfaces, and are divided into:
-  - constraint protos (compile-time only, e.g. `Copy`)
-  - object protos (also usable for dynamic dispatch via `box<P>`) (§6.2, §12)
-- `struct[...]` lists proto conformances and enables implicit behaviors associated with those protos (§6.2):
-  - `[Copy]` enables implicit copying for types that satisfy `Copy` (§6.3).
-  - `[P]` (for object proto `P`) enables implicit `box<T> -> box<P>` coercions (§12.5).
-- Explicit operations/casts remain available based on structural properties:
-  - `copy(x)` duplicates values whose type satisfies `Copy`, even without `[Copy]` (§6.4).
-  - explicit `as box<P>` is available when `T` satisfies object proto `P` (§12.5).
-- Structs are tuple-like only for fields; blocks are only for methods (§11).
-- `throw` is restricted to enum values and only permitted in functions declared with `throws` (§14.1).
-- Calling a `throws` function requires `try` at the call site: `try expr` propagates (only from `throws` functions), and `try expr else ...` handles (§14.2, §14.3).
-- Function qualifiers use keyword-based syntax (§10.2):
-  - Execution qualifiers (`fiber`) appear before `fn`.
-  - Effect qualifiers (`throws`, `throws<E>`) appear after the return type.
-- Added `char` primitive and defined strings as UTF-8 with `char` iteration (§3.1, §3.2).
-- Defined array literals and indexing (`a[i]` traps; `a.get(i)` returns `?T`) (§3.3).
+p7 supports **attributes**: typed metadata values attached to declarations. Attributes are intended for host interop (examining a compiled artifact) and future in-language reflection.
+
+In v1, attributes are:
+- **typed** (schema is defined by a `struct` declaration),
+- **compile-time only** (they do not evaluate at runtime),
+- **inert** (they do not affect typing or evaluation of the annotated program, except as specified by explicit future language/tooling features),
+- **preserved** in the compiled artifact in a well-defined, host-visible form.
+
+### 18.1 Where attributes may appear (v1)
+
+An attribute list may appear immediately before a top-level declaration:
+
+- `fn` declarations
+- `struct` declarations
+- `enum` declarations
+
+Attributes apply to the next declaration item.
+
+Example:
+```p7
+struct route(
+  path: string,
+  method: HttpMethod = HttpMethod.GET,
+);
+
+enum HttpMethod { GET, POST }
+
+@route(path = "/users")
+fn list_users() -> string { ... }
+```
+
+[[TODO]]: Whether attributes may be applied to `proto` declarations, struct fields, enum variants, function parameters, and local declarations.
+
+### 18.2 Syntax
+
+Attributes use `@` followed by an attribute constructor:
+
+- `@AttrName(...)`
+
+An attribute constructor has the same surface form as struct construction. The attribute name `AttrName` must resolve to a `struct` type name.
+
+- Parentheses are required even for empty attributes: `@AttrName()`.
+
+Multiple attributes are written by repeating attribute constructors:
+
+```p7
+@doc("Entrypoint")
+@export(name = "main")
+fn main() -> unit { ... }
+```
+
+### 18.3 Attribute values are typed struct literals (schema + defaults)
+
+Each attribute is an instance of a `struct` type, constructed using the normal struct construction rules:
+
+- required fields must be supplied
+- optional fields may be omitted and defaulted using field default values
+- named arguments must match declared field names
+- argument types must match declared field types (no special coercions beyond normal rules)
+
+Example (defaulted field):
+```p7
+struct route(
+  path: string,
+  method: string = "GET",
+);
+
+@route(path = "/users") // method defaults to "GET"
+fn list_users() -> string { ... }
+```
+
+### 18.4 Attribute constant restrictions (v1)
+
+Attribute constructors are restricted to **compile-time constant** arguments. In v1, the following types are permitted as attribute field types:
+
+- primitive scalar types: `int`, `float`, `bool`, `char`, `unit`
+- `string`
+- enum types (including unit-only enums in v1)
+- nullable types `?T` where `T` is a permitted attribute type
+- array types `array<T>` where `T` is a permitted attribute type
+- user-defined structs may appear as attribute field types (nested attribute objects) only if all nested fields recursively satisfy the permitted set above.
+
+### 18.5 Ordering, duplicates, and identity
+
+- Attributes are an **ordered list** attached to the declaration.
+- Duplicate attributes are allowed and order is preserved.
+  - Example: `@tag("a") @tag("b") fn f() { ... }` has two `tag` attributes in that order.
+- Attributes have no runtime identity; they are pure metadata values.
+
+### 18.6 Semantic effect (v1)
+
+Attributes are **inert metadata**:
+- They do not change typing, overload resolution, move/copy behavior, borrowing rules, or runtime semantics.
+- A conforming implementation must still parse, type-check, and preserve attributes as specified in this section.
+
+A future version of the language or toolchain may assign meaning to specific attributes (e.g. exporting entrypoints, documentation), but such behavior must be explicitly specified.
+
+### 18.7 Host visibility and compiled representation (normative)
+
+A conforming implementation that produces a compiled artifact (bytecode, native code, IR) must preserve attributes in a host-visible metadata form.
+
+For each attributed declaration, the compiled artifact must expose:
+- the declaration kind (`fn` / `struct` / `enum`)
+- the declaration name (and module qualification when modules exist)
+- the ordered list of attribute instances
+
+### 18.8 Errors
+
+It is a compile-time error if:
+- an attribute name does not resolve to a `struct` type
+- an attribute provides an unknown named field
+- a required field is omitted
+- a provided field value is not a compile-time constant
+- any attribute field type is not permitted by §X.4
 
 ---
 
