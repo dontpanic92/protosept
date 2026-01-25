@@ -1527,6 +1527,12 @@ These features may be considered for future versions.
 19) Threading extension: Define message passing primitives (channels, send/receive APIs) and blocking/non-blocking semantics (§22.9)
 20) Threading extension: Define exact host API surface for thread management (wait, join, cancel) (§22.8)
 21) Threading extension: Decide whether `spawn_thread` should return a thread handle value to p7 code (§22.4)
+22) Generics: Decide explicit type argument syntax for generic function calls (e.g., `identity<int>(42)`) (§19.2)
+23) Generics: Decide type inference rules at generic struct construction sites (e.g., `Pair(1, "hi")` vs `Pair<int, string>(1, "hi")`) (§19.3)
+24) Generics: Decide whether methods on generic structs may introduce additional type parameters (§19.3)
+25) Generics: Finalize enum payload variant syntax and integration with generics (§19.4)
+26) Generics: Consider generic protos (protos with type parameters) for future versions (§19.8)
+27) Generics: Consider associated types in protos for future versions (§19.8)
 
 ---
 
