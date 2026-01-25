@@ -54,7 +54,7 @@ A **module** is a single source file.
   - Example: a file `src/util/string.p7` might correspond to module path `mypackage.src.util.string`.
   - Exact mapping is determined by host/tooling conventions.
 
-All modules within a package are importable across packages, subject to visibility rules (§1.1.6).
+All modules within a package are importable by other packages, subject to visibility rules (§1.1.6).
 
 ### 1.1.3 Absolute module paths
 
@@ -122,8 +122,8 @@ import .sibling;
 **Examples:**
 ```p7
 // In module `myapp.services.auth`
-import .helpers;        // imports `myapp.services.helpers`
-import ..util.logging;  // imports `myapp.util.logging` (parent directory)
+import .helpers;          // imports `myapp.services.helpers` (sibling)
+import .sub.utilities;    // imports `myapp.services.sub.utilities` (subdirectory)
 ```
 
 Note: The exact syntax for parent-relative paths (e.g., `..`) is [[TODO]]. In v1, only sibling and subdirectory relative imports (single `.` prefix) may be supported.
@@ -159,7 +159,7 @@ The p7 compiler is designed to:
 - Compile the package into a single VM-loadable artifact (recommended), or produce multiple artifacts as needed by the host.
 - Support host-chosen entrypoints: any `pub` function may serve as an entrypoint, subject to ABI compatibility and host requirements.
 
-Host interop details (§17) define how the host invokes p7 code, handles dependencies, and manages package/module resolution.
+Host interop details (§17) define how the host invokes p7 code and handles dependencies.
 
 ---
 
