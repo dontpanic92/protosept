@@ -1,9 +1,7 @@
-/*
-[testcase]
-entrypoint = "test_throws_no_return"
-expected_type = "int"
-expected_value = "42"
-*/
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
 
 enum MyError {
     Error1,
@@ -17,6 +15,7 @@ fn risky_no_return() throws {
     let x = helper();
 }
 
+@test(expected_type = "int", expected_value = "42")
 fn test_throws_no_return() -> int {
     42
 }

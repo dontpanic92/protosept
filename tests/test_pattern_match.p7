@@ -1,9 +1,7 @@
-/*
-[testcase]
-entrypoint = "test_pattern_match"
-expected_type = "int"
-expected_value = "100"
-*/
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
 
 enum ErrorType {
     ErrorA,
@@ -24,6 +22,7 @@ fn thrower(value: int) -> int throws {
     value
 }
 
+@test(expected_type = "int", expected_value = "100")
 fn test_pattern_match() -> int {
     let result = try thrower(2) else {
         err: ErrorType.ErrorA => 10,

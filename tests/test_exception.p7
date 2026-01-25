@@ -1,9 +1,7 @@
-/*
-[testcase]
-entrypoint = "test_exception"
-expected_type = "int"
-expected_value = "42"
-*/
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
 
 enum MyError {
     SomeError,
@@ -16,6 +14,7 @@ fn may_throw(value: int) -> int throws {
     value
 }
 
+@test(expected_type = "int", expected_value = "42")
 fn test_exception() -> int {
     let result = try may_throw(0) else 42;
     result
