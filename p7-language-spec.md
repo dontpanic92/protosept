@@ -1472,7 +1472,9 @@ Rationale:
 
 When a thread completes execution (reaches the end of its function), the outcome is one of:
 
-1. **Returned(value)**: The function returned a value. The value's type must satisfy `Send` for the host to observe it across the thread boundary. If the return type does not satisfy `Send`, the thread completion is observable but the value is not (host-specific behavior).
+1. **Returned(value)**: The function returned a value. 
+   - If the return type satisfies `Send`, the host can observe and retrieve the value across the thread boundary.
+   - If the return type does not satisfy `Send`, it is a compile-time error. The function used with `spawn_thread` must have a return type that satisfies `Send` (or returns `unit`).
 
 2. **Threw(error_enum)**: The function threw an error (§14.1). The thrown enum type must satisfy `Send` for the host to observe the error details. If the enum does not satisfy `Send`, this is a compile-time error (all throwable enums used in threaded functions must be `Send`).
 
@@ -1495,12 +1497,11 @@ When both the Fiber extension (§20) and the Threading extension are enabled:
 - Fibers on different threads are isolated and cannot directly share memory.
 
 **Send rules for fiber arguments**:
-- When spawning a fiber using `spawn` (§20.5) from within a thread, the arguments passed to the fiber function must satisfy the same `Send` constraints as `spawn_thread` if the fiber might be invoked on a different thread.
-- However, since fibers are pinned to the thread where they are created, `spawn` within a thread does not require `Send` arguments if the fiber remains on the same thread. The requirement depends on whether the fiber is spawned from the main thread or a spawned thread:
-  - If spawned from the main thread (or same thread as caller): no `Send` requirement (local spawn).
-  - If fibers are ever to be spawned across threads (not in v1): `Send` requirement applies.
+- Fibers are always spawned on the same thread where `spawn` is called (fibers are pinned to their creation thread).
+- Because fiber spawning is always thread-local, arguments to `spawn` do not need to satisfy `Send`.
+- This is in contrast to `spawn_thread`, where arguments must satisfy `Send` because the thread may execute on a different OS thread.
 
-For simplicity in v1: `spawn` within a thread does not require `Send` arguments, as fibers are always local to the spawning thread.
+Note: If a future version allows fibers to be spawned on a different thread (cross-thread fiber creation), `Send` constraints would apply to those arguments. This is not part of v1.
 
 **Trap boundaries**:
 - If a fiber traps (§14.0), the trap terminates the entire thread, including all other fibers on that thread.
