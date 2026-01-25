@@ -350,6 +350,47 @@ p7 provides an explicit copying operation:
 This operation may be used even if the type does not opt into implicit copy behavior via `struct[Copy]`.
 Rationale: structural properties may be used explicitly, but implicit duplication must be opted into by declaring `[Copy]`.
 
+### 6.5 The `Send` constraint proto
+
+`Send` is a built-in **constraint proto** (see §12.2) that indicates a type represents a **deep-copyable pure value** with no identity or aliasing.
+
+The `Send` constraint is primarily used by the Threading extension (§21) to control which types can be safely transferred across thread boundaries. However, `Send` is always available as a core language feature, independent of any extensions.
+
+A type satisfies `Send` (is Send-eligible) if it is a pure value that can be deeply copied without aliasing concerns:
+
+**Send-eligible types**:
+- All primitive types (`int`, `float`, `bool`, `char`, `unit`) satisfy `Send`.
+- `string` satisfies `Send` (strings are immutable values).
+- `array<T>` satisfies `Send` iff `T` satisfies `Send` (arrays are immutable values).
+- `enum` types satisfy `Send` iff all payload types (if any) satisfy `Send`.
+- User-defined `struct` types may satisfy `Send` as specified in §6.5.1.
+
+**Non-Send types**:
+
+The following types do **not** satisfy `Send`:
+
+- `box<T>`: Boxes have identity and support mutation (§3.6, §7.4). A `box<T>` represents a handle to shared, mutable state, which could lead to aliasing if transferred between isolated contexts (e.g., threads).
+- `ref T`: Borrowed views are non-escapable (§7.3) and tied to the lifetime of the viewed slot on the stack. They cannot safely outlive their referent or be transferred to other contexts.
+- Any user-defined type that transitively contains a field of type `box<T>` or `ref T`.
+
+#### 6.5.1 Opt-in Send conformance for user-defined types
+
+`Send` is **opt-in** for user-defined struct types:
+
+- Struct authors must explicitly declare `Send` conformance using the conformance syntax:
+  ```p7
+  struct MyData[Send](x: int, y: string) { }
+  ```
+- The compiler must verify that all fields satisfy `Send` before allowing the conformance.
+- If any field does not satisfy `Send` (e.g., the struct transitively contains a `box<T>` or `ref T`), declaring `[Send]` is a compile-time error.
+
+Rationale for opt-in:
+- Explicit `[Send]` makes it visible in the struct declaration that the type is intended for use in isolated contexts (e.g., across thread boundaries).
+- It prevents accidentally allowing types to cross context boundaries during prototyping.
+- It provides a conservative starting point.
+
+[[TODO]]: Consider auto-derived Send in a future version: automatically derive `Send` for all structs whose fields satisfy `Send`, with an opt-out mechanism (e.g., `struct[!Send]`) for types that should not be Send even if fields are eligible.
+
 
 ---
 
@@ -1381,44 +1422,22 @@ Goal:
 
 ### 21.1 Enabling the extension
 
-- When the Threading extension is not enabled, `spawn_thread` is a compile-time error and the `Send` proto is unavailable.
-- When enabled, `spawn_thread` and `Send` are available as specified below.
+- When the Threading extension is not enabled, `spawn_thread` is a compile-time error.
+- When enabled, `spawn_thread` is available as specified below.
+- The `Send` constraint proto (§6.5) is always available, regardless of whether the Threading extension is enabled.
 
 [[TODO]]: define how a program declares it requires the Threading extension (compiler flag, module import, or host configuration).
 
-### 21.2 The `Send` constraint proto
+### 21.2 Send-gated transfer
 
-`Send` is a built-in constraint proto (see §12.2) that controls which types can be safely transferred across thread boundaries.
+The Threading extension uses the `Send` constraint proto (defined in §6.5) to enforce compile-time safety for cross-thread value transfer.
 
-A type satisfies `Send` (is Send-eligible) if it represents a **deep-copyable pure value** with no identity or aliasing:
+**Threading-specific Send requirements**:
+- All arguments passed to `spawn_thread` must have types that satisfy `Send` (§21.4).
+- The return type of functions used with `spawn_thread` must satisfy `Send` (or return `unit`) (§21.5).
+- Throwable enum types used in threaded functions must satisfy `Send` (§21.5).
 
-**Send-eligible types**:
-- All primitive types (`int`, `float`, `bool`, `char`, `unit`) satisfy `Send`.
-- `string` satisfies `Send` (strings are immutable values).
-- `array<T>` satisfies `Send` iff `T` satisfies `Send` (arrays are immutable values).
-- `enum` types satisfy `Send` iff all payload types (if any) satisfy `Send`.
-- User-defined `struct` types may satisfy `Send` as specified in §21.2.1.
-
-**Non-Send types**:
-
-The following types do **not** satisfy `Send`:
-
-- `box<T>`: Boxes have identity and support mutation (§3.6, §7.4). Allowing `box<T>` to cross thread boundaries would enable shared mutable state, violating the isolation property of the threading model.
-- `ref T`: Borrowed views are non-escapable (§7.3) and tied to the lifetime of the viewed slot on the stack. They cannot safely outlive the thread that created them.
-- Any user-defined type that transitively contains a field of type `box<T>` or `ref T`.
-
-#### 21.2.1 Opt-in Send conformance for user-defined types
-
-`Send` is **opt-in** for user-defined struct types:
-
-- Struct authors must explicitly declare `Send` conformance using the conformance syntax:
-  ```p7
-  struct MyData[Send](x: int, y: string) { }
-  ```
-- The compiler must verify that all fields satisfy `Send` before allowing the conformance.
-- If any field does not satisfy `Send` (e.g., the struct transitively contains a `box<T>` or `ref T`), declaring `[Send]` is a compile-time error.
-
-[[TODO]]: Consider auto-derived Send in a future version: automatically derive `Send` for all structs whose fields satisfy `Send`, with an opt-out mechanism (e.g., `struct[!Send]`) for types that should not be Send even if fields are eligible.
+These requirements ensure that only deep-copyable pure values can cross thread boundaries, preventing shared mutable state and aliasing across threads.
 
 ### 21.3 Threading model: actor-like isolation
 
