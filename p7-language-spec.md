@@ -1480,7 +1480,7 @@ Generic functions may also use proto boxes when the proto type itself needs to v
 ```p7
 // Generic over the concrete type T (with proto bound):
 fn print_boxed<T: Printable>(value: box<T>) -> unit {
-  value.print(); // ok: T is constrained to satisfy Printable
+  value.print(); // ok: box<T> supports proto method calls when T satisfies Printable
 }
 ```
 
