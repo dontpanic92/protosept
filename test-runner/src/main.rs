@@ -1,76 +1,96 @@
-use p7::{errors::Proto7Error, interpreter::context::Data as P7Value};
-use serde::Deserialize;
+use p7::{
+    ast::{Attribute, Expression},
+    errors::Proto7Error,
+    interpreter::context::Data as P7Value,
+    semantic::{UserDefinedType, SymbolKind},
+};
 use std::{fs, path::PathBuf};
-use toml::Value;
 
 #[derive(Debug)]
 enum FailureReason {
-    NotValidToml,
-    InvalidTomlFormat(String),
-    NoTestConfig,
+    NoTestFunctions,
     ExecutionError(Proto7Error),
     TypeMismatch { expected: String, found: String },
     ValueMismatch { expected: String, found: String },
+    InvalidTestAttribute(String),
 }
 
 #[derive(Debug)]
 enum TestResult {
     Success,
     Failure(FailureReason),
-    Error(String), // For unexpected errors during test execution
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug)]
 struct TestCase {
-    entrypoint: String,
+    function_name: String,
     expected_type: String,
     expected_value: String,
 }
 
-#[derive(Deserialize, Debug)]
-struct TestConfig {
-    testcase: TestCase,
+fn extract_string_from_expression(expr: &Expression) -> Option<String> {
+    match expr {
+        Expression::StringLiteral(s) => Some(s.clone()),
+        _ => None,
+    }
 }
 
-fn run_test(file_path: &PathBuf) -> anyhow::Result<TestResult> {
-    let content = fs::read_to_string(file_path)?;
-    let first_comment_start = content.find("/*");
-    let first_comment_end = content.find("*/");
+fn parse_test_attribute(attr: &Attribute) -> Option<(String, String)> {
+    if attr.name.name != "test" {
+        return None;
+    }
 
-    let test_config: TestConfig =
-        if let (Some(start), Some(end)) = (first_comment_start, first_comment_end) {
-            if end <= start {
-                return Ok(TestResult::Failure(FailureReason::NotValidToml));
+    let mut expected_type = None;
+    let mut expected_value = None;
+
+    for (name_opt, expr) in &attr.arguments {
+        if let Some(name) = name_opt {
+            match name.name.as_str() {
+                "expected_type" => {
+                    expected_type = extract_string_from_expression(expr);
+                }
+                "expected_value" => {
+                    expected_value = extract_string_from_expression(expr);
+                }
+                _ => {}
             }
-            let toml_content = &content[start + 2..end];
-            match toml::from_str::<Value>(toml_content) {
-                Ok(value) => match value.try_into() {
-                    Ok(config) => config,
-                    Err(e) => {
-                        return Ok(TestResult::Failure(FailureReason::InvalidTomlFormat(
-                            e.to_string(),
-                        )));
+        }
+    }
+
+    match (expected_type, expected_value) {
+        (Some(t), Some(v)) => Some((t, v)),
+        _ => None,
+    }
+}
+
+fn find_test_cases(module: &p7::bytecode::Module) -> Vec<TestCase> {
+    let mut test_cases = Vec::new();
+
+    for symbol in &module.symbols {
+        if let SymbolKind::Function { type_id, .. } = symbol.kind {
+            if let UserDefinedType::Function(func) = &module.types[type_id as usize] {
+                for attr in &func.attributes {
+                    if let Some((expected_type, expected_value)) = parse_test_attribute(attr) {
+                        test_cases.push(TestCase {
+                            function_name: symbol.name.clone(),
+                            expected_type,
+                            expected_value,
+                        });
                     }
-                },
-                Err(e) => {
-                    return Ok(TestResult::Failure(FailureReason::InvalidTomlFormat(
-                        e.to_string(),
-                    )));
                 }
             }
-        } else {
-            return Ok(TestResult::Failure(FailureReason::NoTestConfig));
-        };
+        }
+    }
 
-    // Execute the p7 code
-    let entrypoint = &test_config.testcase.entrypoint;
-    let module = match p7::compile(content.clone()) {
-        Ok(m) => m,
-        Err(e) => return Ok(TestResult::Failure(FailureReason::ExecutionError(e))),
-    };
+    test_cases
+}
 
+fn run_test_case(
+    module: p7::bytecode::Module,
+    test_case: &TestCase,
+) -> Result<TestResult, Proto7Error> {
     let disassembly = unp7::disassemble_module(&module);
-    let p7_result = match p7::run(module, entrypoint) {
+    let p7_result = match p7::run(module, &test_case.function_name) {
         Ok(value) => value,
         Err(e) => {
             println!("Disassembly of the module before error:\n{}", disassembly);
@@ -79,15 +99,12 @@ fn run_test(file_path: &PathBuf) -> anyhow::Result<TestResult> {
     };
 
     // Compare results
-    let expected_type = &test_config.testcase.expected_type;
-    let expected_value_str = &test_config.testcase.expected_value;
+    let expected_type = &test_case.expected_type;
+    let expected_value_str = &test_case.expected_value;
 
     let actual_type = match p7_result {
         P7Value::Int(_) => "int",
         P7Value::Float(_) => "float",
-        // P7Value::Bool(_) => "bool",
-        // P7Value::String(_) => "string",
-        // P7Value::Void => "void",
         _ => "unknown",
     }
     .to_string();
@@ -105,12 +122,7 @@ fn run_test(file_path: &PathBuf) -> anyhow::Result<TestResult> {
             .map_or(false, |expected_val| actual_val == expected_val),
         P7Value::Float(actual_val) => expected_value_str
             .parse::<f64>()
-            .map_or(false, |expected_val| {
-                (actual_val - expected_val).abs() < 1e-9
-            }),
-        // P7Value::Bool(b) => ("bool".to_string(), b.to_string()),
-        // P7Value::String(s) => ("string".to_string(), s),
-        // P7Value::Void => ("void".to_string(), "void".to_string()),
+            .map_or(false, |expected_val| (actual_val - expected_val).abs() < 1e-9),
         _ => {
             let actual_value = format!("{:?}", p7_result);
             actual_value == *expected_value_str
@@ -133,6 +145,56 @@ fn run_test(file_path: &PathBuf) -> anyhow::Result<TestResult> {
     Ok(TestResult::Success)
 }
 
+fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestResult)>> {
+    let content = fs::read_to_string(file_path)?;
+
+    // Compile the p7 code
+    let module = match p7::compile(content.clone()) {
+        Ok(m) => m,
+        Err(e) => {
+            return Ok(vec![(
+                "compile".to_string(),
+                TestResult::Failure(FailureReason::ExecutionError(e)),
+            )])
+        }
+    };
+
+    // Find all test cases
+    let test_cases = find_test_cases(&module);
+
+    if test_cases.is_empty() {
+        return Ok(vec![(
+            "no-tests".to_string(),
+            TestResult::Failure(FailureReason::NoTestFunctions),
+        )]);
+    }
+
+    let mut results = Vec::new();
+    for test_case in test_cases {
+        // Clone module for each test
+        let test_module = match p7::compile(content.as_str().to_string()) {
+            Ok(m) => m,
+            Err(e) => {
+                results.push((
+                    test_case.function_name.clone(),
+                    TestResult::Failure(FailureReason::ExecutionError(e)),
+                ));
+                continue;
+            }
+        };
+
+        match run_test_case(test_module, &test_case) {
+            Ok(result) => results.push((test_case.function_name.clone(), result)),
+            Err(e) => results.push((
+                test_case.function_name.clone(),
+                TestResult::Failure(FailureReason::ExecutionError(e)),
+            )),
+        }
+    }
+
+    Ok(results)
+}
+
 fn main() -> std::io::Result<()> {
     let tests_dir = PathBuf::from("tests");
     if !tests_dir.exists() || !tests_dir.is_dir() {
@@ -149,24 +211,24 @@ fn main() -> std::io::Result<()> {
         if path.is_file() {
             if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
                 if file_name.ends_with(".p7") {
-                    print!("Running test: {:?} ... ", path);
-                    match run_test(&path) {
-                        Ok(result) => match result {
-                            TestResult::Success => {
-                                println!("OK");
-                                passed_count += 1;
+                    match run_tests_in_file(&path) {
+                        Ok(results) => {
+                            for (test_name, result) in results {
+                                print!("Running test: {:?}::{} ... ", path, test_name);
+                                match result {
+                                    TestResult::Success => {
+                                        println!("OK");
+                                        passed_count += 1;
+                                    }
+                                    TestResult::Failure(reason) => {
+                                        println!("FAILED: {:?}", reason);
+                                        failed_count += 1;
+                                    }
+                                }
                             }
-                            TestResult::Failure(reason) => {
-                                println!("FAILED: {:?}", reason);
-                                failed_count += 1;
-                            }
-                            TestResult::Error(e) => {
-                                println!("ERROR: {}", e);
-                                failed_count += 1;
-                            }
-                        },
+                        }
                         Err(err) => {
-                            println!("ERROR: {:?}", err);
+                            println!("ERROR loading {:?}: {:?}", path, err);
                             failed_count += 1;
                         }
                     }
@@ -180,6 +242,10 @@ fn main() -> std::io::Result<()> {
 Test results: {} passed, {} failed.",
         passed_count, failed_count
     );
+
+    if failed_count > 0 {
+        std::process::exit(1);
+    }
 
     Ok(())
 }

@@ -1,9 +1,8 @@
-/*
-[testcase]
-entrypoint = "main"
-expected_type = "int"
-expected_value = "42"
-*/
+// Define the test attribute struct
+struct test(
+  pub expected_type: string,
+  pub expected_value: string,
+);
 
 // Test struct for defining attributes
 struct route(
@@ -35,6 +34,7 @@ fn list_users() -> int {
 // Test function with multiple attributes
 @doc(text = "Main entry point")
 @export(name = "main")
+@test(expected_type = "int", expected_value = "42")
 fn main() -> int {
   return 42;
 }

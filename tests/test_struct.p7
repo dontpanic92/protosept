@@ -1,0 +1,32 @@
+// Define the test attribute struct
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+struct Point(
+    x: int,
+    y: int,
+);
+
+@test(expected_type = "int", expected_value = "42")
+fn test_struct_init() -> int {
+    let p = Point(42, 100);
+    p.x
+}
+
+@test(expected_type = "int", expected_value = "15")
+fn test_struct_named() -> int {
+    let p = Point(y = 15, x = 10);
+    p.y
+}
+
+@test(expected_type = "int", expected_value = "142")
+fn test_struct_heap() -> int {
+    let p1 = Point(42, 100);
+    let p2 = Point(50, 200);
+    let p3 = Point(25, 75);
+    
+    // Verify each struct maintains independent values
+    p1.x + p2.y - p3.y - p3.x
+}
