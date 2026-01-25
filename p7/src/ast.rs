@@ -29,6 +29,12 @@ impl Type {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct Attribute {
+    pub name: Identifier,
+    pub arguments: Vec<(Option<Identifier>, Expression)>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct Parameter {
     pub name: Identifier,
     pub arg_type: Type,
@@ -44,6 +50,7 @@ pub struct FunctionCall {
 #[derive(Debug, PartialEq, Clone)]
 pub struct FunctionDeclaration {
     pub name: Identifier,
+    pub attributes: Vec<Attribute>,
     pub effects: Vec<Identifier>,
     pub parameters: Vec<Parameter>,
     pub return_type: Option<Type>,
@@ -137,10 +144,12 @@ pub enum Statement {
     Throw(Expression),
     EnumDeclaration {
         name: Identifier,
+        attributes: Vec<Attribute>,
         values: Vec<EnumValue>,
     },
     StructDeclaration {
         name: Identifier,
+        attributes: Vec<Attribute>,
         fields: Vec<StructField>,
         methods: Vec<StructMethod>,
     },

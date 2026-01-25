@@ -258,7 +258,7 @@ impl Generator {
                 self.builder.throw();
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
-            Statement::EnumDeclaration { name, values } => {
+            Statement::EnumDeclaration { name, attributes: _, values } => {
                 let qualified_name = self
                     .symbol_table
                     .get_new_symbol_qualified_name(name.name.clone());
@@ -280,6 +280,7 @@ impl Generator {
             }
             Statement::StructDeclaration {
                 name,
+                attributes: _,
                 fields,
                 methods,
             } => {
