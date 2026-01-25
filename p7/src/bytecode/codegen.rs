@@ -132,7 +132,10 @@ impl Generator {
                     // Compare: are they equal?
                     self.builder.eq();
                     
-                    // If not equal (result is 0), jump to next branch
+                    // Negate the result: 1 if not equal, 0 if equal
+                    self.builder.not();
+                    
+                    // If not equal (result is 1 after not), jump to next branch
                     let no_match_jump_placeholder = self.builder.next_address();
                     self.builder.jif(0); // Placeholder
                     
@@ -741,6 +744,18 @@ impl Generator {
                     
                     // Unwrap the exception value for the else block to use
                     self.builder.unwrap_exception();
+                    
+                    // Check if else_block has pattern matching (Branch statements)
+                    let has_pattern_matching = if let Expression::Block(statements) = else_block.as_ref() {
+                        statements.iter().any(|s| matches!(s, Statement::Branch { .. }))
+                    } else {
+                        false
+                    };
+                    
+                    // If no pattern matching, pop the exception value since we won't use it
+                    if !has_pattern_matching {
+                        self.builder.pop();
+                    }
                     
                     // Generate the else block (which may contain Statement::Branch for pattern matching)
                     self.generate_expression(*else_block)?;

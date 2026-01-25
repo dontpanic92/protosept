@@ -260,6 +260,7 @@ impl Lexer {
             Some('=') => {
                 self.read_char();
                 if self.peek_char() == Some('=') {
+                    self.read_char();
                     TokenType::Equals
                 } else if self.peek_char() == Some('>') {
                     self.read_char();
