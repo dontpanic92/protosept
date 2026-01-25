@@ -1273,8 +1273,6 @@ It is a compile-time error if:
 
 ## 19. Generics
 
-Status: v1 (compile-time).
-
 ### 19.1 Overview and design principles
 
 p7 supports **compile-time generics** via monomorphization:
@@ -1337,12 +1335,12 @@ struct Vec<T>(
 ```
 
 Construction:
-- Generic structs are constructed with explicit type arguments [[TODO]]: `Pair<int, string>(1, "hello")`.
+- Generic structs are constructed with explicit type arguments `Pair<int, string>(1, "hello")`.
 - Type inference at construction sites is [[TODO]] (may be added later).
 
 Methods on generic structs:
 - Methods may use the struct's type parameters.
-- Methods may introduce additional type parameters [[TODO]] (recommended: allowed).
+- Methods may introduce additional type parameters.
 - `Self` refers to the generic struct type with its parameters (e.g., `Vec<T>`).
 
 ### 19.4 Generic enums
@@ -1361,14 +1359,12 @@ enum Either<A, B> {
 }
 ```
 
-Note: p7 uses `throw`/`try` for error handling (§14), so `Result<T, E>` is not the primary error handling mechanism. `Option<T>` and `Either<A, B>` are shown as examples of neutral generic enums.
-
 Usage:
 ```p7
-let x: Option<int> = Option::Some(42);
-let y: Option<int> = Option::None;
+let x: Option<int> = Option.Some(42);
+let y: Option<int> = Option.None;
 
-let z: Either<int, string> = Either::Left(1);
+let z: Either<int, string> = Either.Left(1);
 ```
 
 [[TODO]]: Enum payload variants are still being finalized (§13.1). The syntax shown above assumes payload support.
@@ -1387,7 +1383,6 @@ Rules:
 - A bound is specified as `T: P` where `P` is a proto.
 - In v1, **only a single proto constraint** is allowed per type parameter.
 - Multiple bounds (e.g., `T: P + Q`) are not supported in v1.
-- There is **no `where` clause** in v1.
 
 Semantics:
 - A bound `T: P` means that any concrete type substituted for `T` must structurally satisfy proto `P`.
@@ -1402,7 +1397,8 @@ Constraint protos vs object protos:
 Example with `Copy`:
 ```p7
 fn duplicate<T: Copy>(x: T) -> Pair<T, T> {
-  return Pair(x, x); // ok: x is Copy, so it can be used twice
+  let dup = copy(x);  // ok: x is Copy, so it can be used twice
+  return Pair(x, x2);
 }
 ```
 
@@ -1418,8 +1414,8 @@ Example:
 ```p7
 fn identity<T>(x: T) -> T { return x; }
 
-let a = identity(42);      // generates identity_int
-let b = identity("hi");    // generates identity_string
+let a = identity(42);      // generates identity_int (conceptually)
+let b = identity("hi");    // generates identity_string (conceptually)
 ```
 
 The compiler generates two distinct functions: `identity_int` and `identity_string` (conceptually).
@@ -1427,7 +1423,6 @@ The compiler generates two distinct functions: `identity_int` and `identity_stri
 Implications:
 - Code size grows with the number of distinct instantiations.
 - No runtime type parameters or type erasure.
-- Optimal performance: no runtime dispatch overhead for generic functions (unless using `box<P>` for dynamic dispatch).
 
 ### 19.7 Interaction with other features
 
@@ -1485,19 +1480,6 @@ fn print_boxed<T: Printable>(value: box<T>) -> unit {
 ```
 
 However, in most cases where you need runtime polymorphism, accepting `box<P>` directly (without generics) is more straightforward.
-
-### 19.8 Limitations in v1
-
-The following generic features are **not included in v1**:
-
-1. **No `where` clause**: Constraints are expressed only as bounds in the type parameter list (`T: P`).
-2. **Single proto constraint per type parameter**: `T: P + Q` is not supported; use `T: P` only.
-3. **No higher-kinded types**: Type parameters cannot themselves be generic (e.g., no `F<_>` or `F<G<T>>`).
-4. **No generic protos**: Proto declarations cannot have type parameters in v1 [[TODO]].
-5. **No associated types**: Protos cannot declare associated types in v1 [[TODO]].
-6. **Limited type inference**: Type argument inference at generic function call sites is implementation-defined [[TODO]]; explicit type arguments may be required in some cases.
-
-These features may be considered for future versions.
 
 ---
 
