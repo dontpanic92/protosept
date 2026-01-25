@@ -153,7 +153,8 @@ impl Context {
         }
 
         while self.stack_frame()?.pc < self.modules[0].instructions.len() {
-            let mut reader = Cursor::new(&self.modules[0].instructions[self.stack_frame()?.pc..]);
+            let pc = self.stack_frame()?.pc;
+            let mut reader = Cursor::new(&self.modules[0].instructions[pc..]);
             let instruction = Instruction::read(&mut reader).unwrap();
 
             self.stack_frame_mut()?.pc += reader.position() as usize;
@@ -417,13 +418,13 @@ impl Context {
                                 ));
                             }
                         };
-                        // Push as exception and return immediately (unwind stack)
-                        self.stack_frame_mut()?
-                            .stack
-                            .push(Data::Exception(exception_value));
-                        // Return from function immediately when throwing
+                        // Pop the current stack frame (return from function)
                         self.stack.pop();
-                        return Ok(());
+                        // Push exception to caller's frame
+                        if let Ok(frame) = self.stack_frame_mut() {
+                            frame.stack.push(Data::Exception(exception_value));
+                        }
+                        // Don't return Ok(()), continue execution in caller
                     } else {
                         return Err(RuntimeError::StackUnderflow);
                     }
