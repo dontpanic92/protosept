@@ -350,6 +350,49 @@ p7 provides an explicit copying operation:
 This operation may be used even if the type does not opt into implicit copy behavior via `struct[Copy]`.
 Rationale: structural properties may be used explicitly, but implicit duplication must be opted into by declaring `[Copy]`.
 
+### 6.5 The `Send` constraint proto
+
+`Send` is a built-in **constraint proto** (see §12.2 for proto categories) that indicates a type represents a **deep-copyable pure value** with no identity or aliasing.
+
+The `Send` constraint is primarily used by the Threading extension (§21) to control which types can be safely transferred across thread boundaries. However, `Send` is always available as a core language feature, independent of any extensions.
+
+A type satisfies `Send` (is Send-eligible) if it is a pure value that can be deeply copied without aliasing concerns:
+
+**Send-eligible types**:
+- All primitive types (`int`, `float`, `bool`, `char`, `unit`) satisfy `Send`.
+- `string` satisfies `Send` (strings are immutable values).
+- `array<T>` satisfies `Send` iff `T` satisfies `Send` (arrays are immutable values).
+- `enum` types satisfy `Send` iff all payload types (if any) satisfy `Send`.
+- User-defined `struct` types may satisfy `Send` as specified in §6.5.1.
+
+**Non-Send types**:
+
+The following types do **not** satisfy `Send`:
+
+- `box<T>`: Boxes have identity and support mutation (§3.6, §7.4). A `box<T>` represents a handle to shared, mutable state. Transferring a box between execution contexts would create aliasing (multiple handles to the same mutable state), which violates the isolation principle. Threading (§21) is the primary use case that requires this guarantee.
+- `ref T`: Borrowed views are non-escapable (§7.3) and tied to the lifetime of the viewed slot on the stack. They cannot safely outlive their referent or be transferred to other execution contexts.
+- Any user-defined type that transitively contains a field of type `box<T>` or `ref T`.
+
+#### 6.5.1 Opt-in Send conformance for user-defined types
+
+`Send` is **opt-in** for user-defined struct types:
+
+- Struct authors must explicitly declare `Send` conformance using the conformance syntax:
+  ```p7
+  struct[Send] MyData(x: int, y: string) { }
+  ```
+- The compiler must verify that all fields satisfy `Send` before allowing the conformance.
+- If any field does not satisfy `Send` (e.g., the struct transitively contains a `box<T>` or `ref T`), declaring `[Send]` is a compile-time error.
+
+Rationale for opt-in:
+- Explicit `[Send]` makes it visible in the struct declaration that the type is intended for use in isolated execution contexts.
+- It prevents accidentally allowing types to cross context boundaries during prototyping.
+- It provides a conservative starting point.
+
+Note: The primary use case for `Send` is the Threading extension (§21), where Send-eligibility controls which types can cross thread boundaries.
+
+[[TODO]]: Consider auto-derived Send in a future version: automatically derive `Send` for all structs whose fields satisfy `Send`, with an opt-out mechanism (e.g., `struct[!Send]`) for types that should not be Send even if fields are eligible. This would be particularly useful for the Threading extension.
+
 
 ---
 
@@ -1222,6 +1265,9 @@ It is a compile-time error if:
 16) Specify whether `try` can narrow thrown enum types in match-like else blocks
 17) Fiber extension: specify borrow/view restrictions across `yield` (recommended: disallow `ref T` live across `yield`)
 18) Decide how a proto is classified as constraint vs object in the surface language (currently: only built-ins may be constraint protos) (§12.2)
+19) Threading extension: Define message passing primitives (channels, send/receive APIs) and blocking/non-blocking semantics (§21.9)
+20) Threading extension: Define exact host API surface for thread management (wait, join, cancel) (§21.8)
+21) Threading extension: Decide whether `spawn_thread` should return a thread handle value to p7 code (§21.4)
 
 ---
 
@@ -1370,97 +1416,164 @@ As specified in §20.2, the recommended restriction for v1 is to disallow `ref` 
 
 ---
 
-## 21. Future direction: Concurrency and threading (non-normative draft)
+## 21. Threading extension
 
-**Status**: This section is a **non-normative design direction** for future versions of p7. It describes planned semantics for threading and concurrency that are not yet implemented in v1.
+Goal:
+- Enable p7 code to request thread spawning for concurrent execution while keeping the host/runtime in full control of OS thread management, scheduling, and resource budgets.
+- Provide actor-like isolation where threads do not share mutable state, preventing data races and simplifying reasoning about concurrent execution.
 
-### 21.1 Threading model: actor-like isolation
+### 21.1 Enabling the extension
 
-When threading support is added to p7 (post-v1), the threading model will be inspired by actor/Erlang-process semantics:
+- When the Threading extension is not enabled, `spawn_thread` is a compile-time error.
+- When enabled, `spawn_thread` is available as specified below.
+- The `Send` constraint proto (§6.5) is always available, regardless of whether the Threading extension is enabled.
 
+[[TODO]]: define how a program declares it requires the Threading extension (compiler flag, module import, or host configuration).
+
+### 21.2 Send-gated transfer
+
+The Threading extension uses the `Send` constraint proto (defined in §6.5) to enforce compile-time safety for cross-thread value transfer.
+
+**Threading-specific Send requirements**:
+- All arguments passed to `spawn_thread` must have types that satisfy `Send` (§21.4).
+- The return type of functions used with `spawn_thread` must satisfy `Send` (or return `unit`) (§21.5).
+- Throwable enum types used in threaded functions must satisfy `Send` (§21.5).
+
+These requirements ensure that only deep-copyable pure values can cross thread boundaries, preventing shared mutable state and aliasing across threads.
+
+### 21.3 Threading model: actor-like isolation
+
+**Isolation guarantees**:
 - **No shared memory**: Threads do not share mutable state. Each thread has its own isolated memory space.
-- **Message passing only**: Communication between threads is via message passing (send/receive primitives).
-- **Immutable messages**: Only **Send-eligible** values (§22) may be sent between threads. Send-eligible values are deep-copyable pure values with no identity or aliasing.
+- **Send-gated transfer**: Only values whose type satisfies `Send` may be transferred between threads (as function arguments or eventual message passing). Attempting to pass a non-`Send` value across thread boundaries is a compile-time error.
+- **No aliasing across threads**: Because `box<T>` and `ref T` are not `Send`, there is no way for two threads to hold references to the same mutable object or stack slot.
 
-This model avoids data races and simplifies reasoning about concurrent execution.
+This model prevents data races by construction and simplifies reasoning about concurrent execution.
 
-### 21.2 Fiber pinning
+### 21.4 Spawning threads from p7 (`spawn_thread`)
 
-When both fibers (§20) and threads are supported:
+p7 code may request creation of a new thread execution using `spawn_thread`.
 
-- **Fibers are pinned to a single thread**: A fiber does not migrate between threads.
+Form:
+```p7
+spawn_thread f(arg1, arg2, ...);
+```
+
+Where:
+- `f` must refer to a function (need not be `suspend fn`; regular functions are allowed).
+- All arguments `arg1, arg2, ...` must have types that satisfy `Send`. If any argument's type does not satisfy `Send`, it is a compile-time error.
+- `spawn_thread` is a statement (returns `unit`).
+
+Semantics:
+- `spawn_thread` requests creation of a new thread execution of `f(arg1, arg2, ...)`.
+- The newly created thread is initially **runnable** and begins execution when (and only when) the host/runtime schedules it.
+- The act of spawning does not itself start the new thread execution; the host controls scheduling.
+- The calling thread continues execution immediately after `spawn_thread` (non-blocking).
+
+Host visibility and control:
+- Every successful `spawn_thread` triggers the host hook `on_thread_spawn` (§21.7) with a handle for the new thread.
+- The host may choose to:
+  - schedule the thread on an OS thread or thread pool,
+  - defer its execution,
+  - ignore it (never run it),
+  - limit the number of concurrent threads based on resource budgets.
+
+Rationale:
+- Allows scripts to request concurrency while keeping the host in full control of thread creation, scheduling, and resource limits.
+- The host can implement various threading strategies (OS threads, green threads, thread pools, etc.) without changing the p7 language semantics.
+
+[[TODO]]: decide whether `spawn_thread` should return a thread handle value to p7 code (recommended for future versions to enable waiting/joining; keep statement-only initially to minimize surface area).
+
+### 21.5 Thread completion outcomes
+
+When a thread completes execution (reaches the end of its function), the outcome is one of:
+
+1. **Returned(value)**: The function returned a value. The function used with `spawn_thread` must have a return type that satisfies `Send` (or returns `unit`), otherwise it is a compile-time error. If the return type satisfies `Send`, the host can observe and retrieve the value across the thread boundary.
+
+2. **Threw(error_enum)**: The function threw an error (§14.1). The thrown enum type must satisfy `Send`. If the enum does not satisfy `Send`, it is a compile-time error. All throwable enums used in threaded functions must be `Send`, enabling the host to observe the error details across the thread boundary.
+
+3. **Trapped(panic)**: The function trapped (§14.0). Traps are unrecoverable panics. When a thread traps:
+   - The trap terminates the entire thread, including all fibers scheduled on that thread (if fibers are enabled; see §21.6).
+   - Other threads in the program are **not** affected. Traps do not propagate across thread boundaries.
+   - The host is notified of the trap outcome (host-specific mechanism; see §21.8).
+
+Contrast with single-threaded execution:
+- In single-threaded (non-extension) p7, a trap terminates the entire program.
+- In the Threading extension, a trap terminates only the current thread, enabling supervision patterns where a parent thread can monitor worker threads and take corrective action upon trap (e.g., restart the worker, log the error, shut down gracefully).
+
+### 21.6 Interaction with fibers (§20)
+
+When both the Fiber extension (§20) and the Threading extension are enabled:
+
+**Fiber pinning**:
+- **Fibers are pinned to a single thread**: A fiber does not migrate between threads. Once created, a fiber remains on the thread where it was spawned.
 - Each thread may have multiple fibers scheduled on it (cooperative multitasking within the thread).
 - Fibers on different threads are isolated and cannot directly share memory.
 
-### 21.3 Trap boundaries and supervision
+**Send rules for fiber arguments**:
+- Fibers are always spawned on the same thread where `spawn` is called (fibers are pinned to their creation thread).
+- Because fiber spawning is always thread-local, arguments to `spawn` do not need to satisfy `Send`.
+- This is in contrast to `spawn_thread`, where arguments must satisfy `Send` because the thread may execute on a different OS thread.
 
-In the future threading model, the **trap boundary** is per-thread:
+Note: If a future version allows fibers to be spawned on a different thread (cross-thread fiber creation), `Send` constraints would apply to those arguments. This is not part of v1.
 
-- **Trap aborts the current thread**: If code traps (§14.0) within a thread, the trap terminates the entire thread, including all fibers scheduled on that thread.
-- **Other threads continue**: Traps do not propagate across thread boundaries. Other threads in the program may continue executing.
-- **Supervision**: This enables supervision patterns where a parent thread can spawn worker threads and monitor their health. If a worker thread traps (panics), the supervisor can detect the failure and take corrective action (e.g., restart the worker, log the error, or shut down gracefully).
+**Trap boundaries**:
+- If a fiber traps (§14.0), the trap terminates the entire thread, including all other fibers on that thread.
+- Fibers cannot trap in isolation; the trap propagates to the containing thread.
 
-Example use case (informative):
+### 21.7 Host hook: observing threads spawned by p7 (`on_thread_spawn`)
+
+To preserve embedding control, runtimes that enable the Threading extension must provide a host hook that is invoked whenever p7 code spawns a new thread:
+
+- Hook name (conceptual): `on_thread_spawn(handle: ThreadHandle, info: ThreadSpawnInfo) -> unit`
+
+Where:
+- `ThreadHandle` is an opaque host value that represents the thread. The host can use this handle to schedule, wait for, or cancel the thread.
+- `ThreadSpawnInfo` is implementation-defined metadata. Recommended fields:
+  - spawned function name (if available)
+  - optional source location (if available)
+  - optional parent thread handle (if spawned from within a thread) [[TODO: specify purpose - debugging/tracing or lifecycle management]]
+
+Semantics:
+- The runtime invokes the hook synchronously during `spawn_thread` execution (i.e., before `spawn_thread` completes).
+- The host may record the handle and decide scheduling policy externally.
+
+Constraints:
+- The hook must not itself start execution of the new thread re-entrantly while `spawn_thread` is still executing, unless the implementation explicitly guarantees re-entrancy safety.
+
+### 21.8 Thread completion observability (host)
+
+The host/runtime must be able to observe when a thread completes and its outcome:
+
+- The host may provide an API (host-specific, not part of p7 language) to wait for or poll thread completion.
+- When a thread completes, the host can observe:
+  - `Returned(value)`: if the return type satisfies `Send`, the host can retrieve the value.
+  - `Threw(error_enum)`: if the enum satisfies `Send`, the host can retrieve the error details.
+  - `Trapped`: the host is notified of the trap (panic). No value is returned.
+
+Example use case (informative, host-side pseudo-code):
 ```
-// Pseudo-code (not v1 syntax)
-fn supervisor() {
-  let worker_handle = spawn_thread(worker_fn);
-  match wait_for_thread(worker_handle) {
-    ThreadResult.Completed => { /* worker finished normally */ },
-    ThreadResult.Trapped => { /* worker panicked; restart it */ },
-  }
+// Host code (not p7 syntax)
+// After p7 script executes: spawn_thread worker_fn(42);
+let handle = /* obtained from on_thread_spawn hook */;
+match wait_for_thread(handle) {
+  ThreadResult.Returned(val) => { /* use val */ },
+  ThreadResult.Threw(err) => { /* handle error */ },
+  ThreadResult.Trapped => { /* log panic, restart worker, etc. */ },
 }
 ```
 
-Contrast with throws:
-- **Throws** (§14.1) are recoverable errors that can be caught and handled within the same thread using `try`.
-- **Traps** are unrecoverable and terminate the thread, but other threads remain unaffected.
+[[TODO]]: Define exact host API surface for thread management (wait, join, cancel). This is recommended for a future version; for now, the extension defines the language-side semantics only.
 
-[[TODO]]: define exact thread spawn/join APIs, message passing primitives, and supervision interfaces. This is planned for post-v1 as part of a comprehensive concurrency feature.
+### 21.9 Message passing and channels (future)
 
----
+The current Threading extension specifies thread spawning and argument passing. Future versions may add:
 
-## 22. Future direction: Send proto (non-normative draft)
+- **Channels** or **message queues** for sending messages between running threads.
+- **Receive primitives** to read messages from a channel.
+- All message types sent through channels must satisfy `Send`.
 
-**Status**: This section is a **non-normative design direction** for future versions of p7. It describes planned semantics for a built-in `Send` constraint proto, which controls which types can be safely sent between threads (§21).
-
-### 22.1 Send-eligibility: deep-copyable pure values
-
-A type satisfies `Send` (is Send-eligible) if it represents a **deep-copyable pure value** with no identity or aliasing:
-
-- All primitive types (`int`, `float`, `bool`, `char`, `unit`) satisfy `Send`.
-- `string` satisfies `Send` (strings are immutable values).
-- `array<T>` satisfies `Send` iff `T` satisfies `Send` (arrays are immutable values).
-- User-defined `struct` types satisfy `Send` iff all fields satisfy `Send` (and the struct opts into `Send`; see §22.3).
-- `enum` types satisfy `Send` iff all payload types (if any) satisfy `Send`.
-
-### 22.2 Non-Send types
-
-The following types do **not** satisfy `Send`:
-
-- `box<T>`: Boxes have identity and support shared mutation (§3.6, §7.4). Sending a `box<T>` between threads would enable shared mutable state, violating the isolation property of the threading model (§21.1).
-- `ref T`: Borrowed views are non-escapable (§7.3) and tied to the lifetime of the viewed slot. They cannot safely outlive the thread that created them.
-- Any user-defined type that transitively contains `box<T>` or `ref T` fields.
-
-### 22.3 Opt-in Send conformance
-
-In the initial design (when threading is added), `Send` will be **opt-in** for user-defined types:
-
-- Struct authors must explicitly declare `Send` conformance using the syntax:
-  ```p7
-  struct MyData[Send](x: int, y: string) { }
-  ```
-- The compiler verifies that all fields satisfy `Send` before allowing the conformance.
-- If a field does not satisfy `Send` (e.g., contains a `box<T>`), declaring `[Send]` is a compile-time error.
-
-[[TODO]]: **Reconsider auto-derived Send** in a future version. Potential design:
-- Automatically derive `Send` for all structs whose fields satisfy `Send` (similar to how `Copy` is derived structurally but opted into for implicit behavior via `[Copy]`; see §6.3).
-- Provide an opt-out mechanism (e.g., `struct[!Send]`) for types that should not be Send even if fields are eligible (e.g., types representing external resources, file handles, or thread-local state).
-
-Rationale for opt-in initially:
-- Explicit opt-in makes the threading capability of a type visible in its declaration.
-- It avoids accidentally allowing types to cross thread boundaries during prototyping phases.
-- It provides a conservative starting point that can be relaxed later.
+[[TODO]]: Define message passing primitives, channel APIs, and blocking/non-blocking receive semantics. This is deferred to a future version of the Threading extension.
 
 ---
 End.
