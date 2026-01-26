@@ -891,23 +891,50 @@ impl Generator {
             Expression::FunctionCall(call) => self.generate_function_call(call),
             Expression::FieldAccess { object, field } => {
                 let object_name = object.get_name();
-                let (object_ty, is_static_access) =
-                    if let Expression::Identifier(ref identifier) = *object {
-                        if let Some(ty) = self.symbol_table.find_type_in_scope(&identifier.name) {
-                            (ty, true) // It's a type (static) access
-                        } else {
-                            // Not a type, so it must be a variable/expression
-                            (self.generate_expression(*object)?, false)
-                        }
+                
+                // First, check if object is a GenericInstantiation (e.g., Option<int>.Some)
+                let (object_ty, is_static_access) = if let Expression::GenericInstantiation { base, type_args } = object.as_ref() {
+                    // This is a generic type access like Option<int>.Some
+                    // Try to find the base type
+                    if let Some(base_ty) = self.symbol_table.find_type_in_scope(&base.name) {
+                        // Resolve the generic type to its monomorphized version
+                        let parsed_type = crate::ast::Type::Generic {
+                            base: base.clone(),
+                            type_args: type_args.clone(),
+                        };
+                        let concrete_ty = self.get_semantic_type(&parsed_type)?;
+                        (concrete_ty, true) // It's a static access on a generic type
                     } else {
-                        // Not an identifier, so definitely an expression
-                        (self.generate_expression(*object)?, false)
-                    };
+                        return Err(SemanticError::TypeNotFound {
+                            name: base.name.clone(),
+                            pos: Some(SourcePos {
+                                line: base.line,
+                                col: base.col,
+                            }),
+                        });
+                    }
+                } else {
+                    // Check if object is a type identifier (for static access)
+                    let (object_ty, is_static_access) =
+                        if let Expression::Identifier(ref identifier) = *object {
+                            if let Some(ty) = self.symbol_table.find_type_in_scope(&identifier.name) {
+                                (ty, true) // It's a type (static) access
+                            } else {
+                                // Not a type, so it must be a variable/expression
+                                (self.generate_expression(*object)?, false)
+                            }
+                        } else {
+                            // Not an identifier, so definitely an expression
+                            (self.generate_expression(*object)?, false)
+                        };
+                    (object_ty, is_static_access)
+                };
 
                 let object_ty = match object_ty {
                     Type::Reference(inner) => *inner,
                     other => other,
                 };
+
 
                 match object_ty {
                     Type::Enum(type_id) => {
@@ -1383,7 +1410,36 @@ impl Generator {
 
         // Handle field-call (method or static method) specially.
         if let Expression::FieldAccess { object, field } = &callee_expr {
-            // Case 1: Static method call like `Type.method(...)` (object is identifier referring to a type)
+            // Case 1: Static method call or enum variant construction on a generic type
+            //         like `Option<int>.Some(...)` or `Type<T>.method(...)`
+            if let Expression::GenericInstantiation { base, type_args } = object.as_ref() {
+                // This is a generic type access like Option<int>.Some(42)
+                // Try to find the base type
+                if let Some(base_ty) = self.symbol_table.find_type_in_scope(&base.name) {
+                    // Resolve the generic type to its monomorphized version
+                    let parsed_type = crate::ast::Type::Generic {
+                        base: base.clone(),
+                        type_args: type_args.clone(),
+                    };
+                    let concrete_ty = self.get_semantic_type(&parsed_type)?;
+                    
+                    // Handle enum variant construction: Option<int>.Some(42)
+                    if let Type::Enum(type_id) = concrete_ty {
+                        return self.generate_enum_variant_from_call(
+                            callee_expr.clone(),
+                            arguments,
+                            type_id,
+                        );
+                    }
+                    
+                    // Handle struct methods on generic structs if needed
+                    if let Type::Struct(_type_id) = concrete_ty {
+                        // TODO: Handle static methods on generic structs if needed
+                    }
+                }
+            }
+            
+            // Case 2: Static method call like `Type.method(...)` (object is identifier referring to a type)
             if let Expression::Identifier(ident) = object.as_ref() {
                 if let Some(ty) = self.symbol_table.find_type_in_scope(&ident.name) {
                     if let Type::Struct(type_id) = ty {
@@ -1474,7 +1530,7 @@ impl Generator {
                 }
             }
 
-            // Case 2: Instance method call like `obj.method(...)`
+            // Case 3: Instance method call like `obj.method(...)`
             // Generate the object expression first (pushes receiver on stack)
             let object_ty = self.generate_expression(object.as_ref().clone())?;
 
@@ -2080,14 +2136,17 @@ impl Generator {
                     resolved_type_args.push(self.get_semantic_type(arg)?);
                 }
                 
-                // For now, only handle struct monomorphization
+                // For now, only handle struct and enum monomorphization
                 match base_type {
                     Type::Struct(base_type_id) => {
                         self.monomorphize_struct(base_type_id, resolved_type_args, &base.name, base.line, base.col)
                     }
+                    Type::Enum(base_type_id) => {
+                        self.monomorphize_enum(base_type_id, resolved_type_args, &base.name, base.line, base.col)
+                    }
                     _ => {
-                        // For non-struct types, just return the base type for now
-                        // TODO: implement monomorphization for functions and enums
+                        // For non-struct/enum types, just return the base type for now
+                        // TODO: implement monomorphization for other types if needed
                         Ok(base_type)
                     }
                 }
@@ -2192,6 +2251,109 @@ impl Generator {
         self.symbol_table.monomorphization_cache.insert(cache_key, new_type_id);
         
         Ok(Type::Struct(new_type_id))
+    }
+
+    fn monomorphize_enum(
+        &mut self,
+        base_type_id: TypeId,
+        type_args: Vec<Type>,
+        base_name: &str,
+        line: usize,
+        col: usize,
+    ) -> SaResult<Type> {
+        // Check cache first
+        let cache_key = (base_type_id, type_args.clone());
+        if let Some(&cached_type_id) = self.symbol_table.monomorphization_cache.get(&cache_key) {
+            return Ok(Type::Enum(cached_type_id));
+        }
+        
+        // Get the base generic enum definition
+        let base_enum = match self.symbol_table.get_udt(base_type_id) {
+            UserDefinedType::Enum(e) => e.clone(),
+            _ => {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: "enum".to_string(),
+                    rhs: "non-enum".to_string(),
+                    pos: Some(SourcePos { line, col }),
+                });
+            }
+        };
+        
+        // Validate number of type arguments matches type parameters
+        if base_enum.type_parameters.len() != type_args.len() {
+            return Err(SemanticError::TypeMismatch {
+                lhs: format!("{} type parameters", base_enum.type_parameters.len()),
+                rhs: format!("{} type arguments", type_args.len()),
+                pos: Some(SourcePos { line, col }),
+            });
+        }
+        
+        // If the enum has no type parameters, just return it as-is
+        if base_enum.type_parameters.is_empty() {
+            return Ok(Type::Enum(base_type_id));
+        }
+        
+        // Get the parsed variant field types
+        let parsed_variant_types = base_enum.generic_variant_types.as_ref().ok_or_else(|| {
+            SemanticError::TypeMismatch {
+                lhs: "generic enum".to_string(),
+                rhs: "missing generic variant types".to_string(),
+                pos: Some(SourcePos { line, col }),
+            }
+        })?;
+        
+        // Build type parameter substitution map for parsed types
+        let mut parsed_type_substitution: std::collections::HashMap<String, ParsedType> = 
+            std::collections::HashMap::new();
+        for (param_name, concrete_type) in base_enum.type_parameters.iter().zip(type_args.iter()) {
+            // Convert the semantic Type back to ParsedType for substitution
+            let parsed_type = self.type_to_parsed_type(concrete_type);
+            parsed_type_substitution.insert(param_name.clone(), parsed_type);
+        }
+        
+        // Substitute and resolve variant field types
+        let mut monomorphized_variants: Vec<(String, Vec<Type>)> = Vec::new();
+        for (i, (variant_name, _)) in base_enum.variants.iter().enumerate() {
+            let parsed_field_types = &parsed_variant_types[i];
+            let mut resolved_field_types = Vec::new();
+            
+            for parsed_field_type in parsed_field_types {
+                let substituted_parsed_type = self.substitute_parsed_type(
+                    parsed_field_type,
+                    &parsed_type_substitution
+                );
+                let resolved_type = self.get_semantic_type(&substituted_parsed_type)?;
+                resolved_field_types.push(resolved_type);
+            }
+            
+            monomorphized_variants.push((variant_name.clone(), resolved_field_types));
+        }
+        
+        // Create monomorphized enum name
+        let type_args_str = type_args
+            .iter()
+            .map(|t| t.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let monomorphized_name = format!("{}<{}>", base_enum.qualified_name, type_args_str);
+        
+        // Create the monomorphized enum
+        let monomorphized_enum = Enum {
+            qualified_name: monomorphized_name,
+            variants: monomorphized_variants,
+            attributes: base_enum.attributes.clone(),
+            type_parameters: Vec::new(), // Monomorphized enums have no type parameters
+            generic_variant_types: None,
+            monomorphization: Some((base_type_id, type_args.clone())),
+        };
+        
+        // Add to type table
+        let new_type_id = self.symbol_table.add_udt(UserDefinedType::Enum(monomorphized_enum));
+        
+        // Cache it
+        self.symbol_table.monomorphization_cache.insert(cache_key, new_type_id);
+        
+        Ok(Type::Enum(new_type_id))
     }
     
     /// Monomorphize a generic function with concrete type arguments
