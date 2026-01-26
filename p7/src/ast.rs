@@ -172,6 +172,12 @@ pub enum Pattern {
     },
 }
 
+impl Pattern {
+    pub fn is_wildcard(&self) -> bool {
+        matches!(self, Pattern::Identifier(id) if id.name == "_")
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct NamedPattern {
     pub name: Option<Identifier>,

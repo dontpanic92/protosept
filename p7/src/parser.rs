@@ -440,10 +440,9 @@ impl Parser {
         }
     }
 
-    fn parse_named_pattern(&mut self) -> ParseResult<NamedPattern> {
-        // Try to parse as "name: pattern" first
-        // We need to check if we have an identifier followed by a colon
-        let has_name_binding = if let Some(token) = self.peek() {
+    /// Helper method to check if the current position has a named pattern (identifier followed by colon)
+    fn has_named_pattern_binding(&mut self) -> bool {
+        if let Some(token) = self.peek() {
             if matches!(token.token_type, TokenType::Identifier(_)) {
                 // Look ahead to see if there's a colon after the identifier
                 let saved_pos = self.position;
@@ -456,9 +455,12 @@ impl Parser {
             }
         } else {
             false
-        };
+        }
+    }
 
-        let name = if has_name_binding {
+    fn parse_named_pattern(&mut self) -> ParseResult<NamedPattern> {
+        // Try to parse as "name: pattern" first
+        let name = if self.has_named_pattern_binding() {
             let ident = self.parse_identifier()?;
             self.consume_match(TokenType::Colon)?;
             Some(ident)

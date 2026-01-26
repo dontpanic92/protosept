@@ -632,6 +632,53 @@ impl Generator {
         }
     }
 
+    /// Helper method to bind a pattern variable if present, or pop the value if not
+    fn bind_pattern_variable(
+        &mut self,
+        pattern_name: &Option<Identifier>,
+        value_type: Type,
+    ) -> SaResult<()> {
+        if let Some(name) = pattern_name {
+            let var_id = self
+                .local_scope
+                .as_mut()
+                .unwrap()
+                .add_variable(name.name.clone(), value_type)
+                .map_err(|_| SemanticError::VariableOutsideFunction {
+                    name: name.name.clone(),
+                    pos: Some(SourcePos {
+                        line: name.line,
+                        col: name.col,
+                    }),
+                })?;
+            self.builder.stvar(var_id);
+        } else {
+            // No name binding, pop the value
+            self.builder.pop();
+        }
+        Ok(())
+    }
+
+    /// Helper method to validate and track result type across match arms
+    fn validate_match_arm_type(
+        &self,
+        result_ty: &mut Option<Type>,
+        arm_ty: Type,
+    ) -> SaResult<()> {
+        if let Some(expected_ty) = result_ty {
+            if expected_ty != &arm_ty {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: format!("{:?}", expected_ty),
+                    rhs: format!("{:?}", arm_ty),
+                    pos: None,
+                });
+            }
+        } else {
+            *result_ty = Some(arm_ty);
+        }
+        Ok(())
+    }
+
     fn generate_expression(&mut self, expression: Expression) -> SaResult<Type> {
         match expression {
             Expression::Identifier(identifier) => {
@@ -1216,10 +1263,9 @@ impl Generator {
                 for (i, arm) in arms.iter().enumerate() {
                     let is_last_arm = i == arms.len() - 1;
 
-                    // Duplicate the scrutinee value for comparison (unless it's the last/wildcard arm)
-                    let is_wildcard = matches!(&arm.pattern.pattern, Pattern::Identifier(id) if id.name == "_");
-                    
-                    if !is_wildcard {
+                    // Check if this is a wildcard pattern
+                    if !arm.pattern.pattern.is_wildcard() {
+                        // Non-wildcard pattern: need to compare
                         self.builder.dup();
 
                         // Generate code to load the pattern value
@@ -1236,42 +1282,12 @@ impl Generator {
                         let no_match_jump_placeholder = self.builder.next_address();
                         self.builder.jif(0); // Placeholder
 
-                        // Pattern matched!
-                        // Bind to variable if there's a name
-                        if let Some(name) = &arm.pattern.name {
-                            let var_id = self
-                                .local_scope
-                                .as_mut()
-                                .unwrap()
-                                .add_variable(name.name.clone(), scrutinee_ty.clone())
-                                .map_err(|_| SemanticError::VariableOutsideFunction {
-                                    name: name.name.clone(),
-                                    pos: Some(SourcePos {
-                                        line: name.line,
-                                        col: name.col,
-                                    }),
-                                })?;
-                            self.builder.stvar(var_id);
-                        } else {
-                            // No name binding, pop the scrutinee value
-                            self.builder.pop();
-                        }
+                        // Pattern matched! Bind to variable if there's a name
+                        self.bind_pattern_variable(&arm.pattern.name, scrutinee_ty.clone())?;
 
                         // Generate the expression for this arm
                         let arm_ty = self.generate_expression(arm.expression.clone())?;
-                        
-                        // Track result type (all arms should have the same type)
-                        if let Some(ref expected_ty) = result_ty {
-                            if expected_ty != &arm_ty {
-                                return Err(SemanticError::TypeMismatch {
-                                    lhs: format!("{:?}", expected_ty),
-                                    rhs: format!("{:?}", arm_ty),
-                                    pos: None,
-                                });
-                            }
-                        } else {
-                            result_ty = Some(arm_ty);
-                        }
+                        self.validate_match_arm_type(&mut result_ty, arm_ty)?;
 
                         // Jump to end of all arms (unless this is the last arm)
                         if !is_last_arm {
@@ -1286,41 +1302,11 @@ impl Generator {
                             .patch_jump_address(no_match_jump_placeholder, next_arm_address);
                     } else {
                         // Wildcard pattern - matches everything
-                        // Bind to variable if named
-                        if let Some(name) = &arm.pattern.name {
-                            let var_id = self
-                                .local_scope
-                                .as_mut()
-                                .unwrap()
-                                .add_variable(name.name.clone(), scrutinee_ty.clone())
-                                .map_err(|_| SemanticError::VariableOutsideFunction {
-                                    name: name.name.clone(),
-                                    pos: Some(SourcePos {
-                                        line: name.line,
-                                        col: name.col,
-                                    }),
-                                })?;
-                            self.builder.stvar(var_id);
-                        } else {
-                            // No name binding, pop the scrutinee value
-                            self.builder.pop();
-                        }
+                        self.bind_pattern_variable(&arm.pattern.name, scrutinee_ty.clone())?;
 
                         // Generate the expression for this arm
                         let arm_ty = self.generate_expression(arm.expression.clone())?;
-                        
-                        // Track result type
-                        if let Some(ref expected_ty) = result_ty {
-                            if expected_ty != &arm_ty {
-                                return Err(SemanticError::TypeMismatch {
-                                    lhs: format!("{:?}", expected_ty),
-                                    rhs: format!("{:?}", arm_ty),
-                                    pos: None,
-                                });
-                            }
-                        } else {
-                            result_ty = Some(arm_ty);
-                        }
+                        self.validate_match_arm_type(&mut result_ty, arm_ty)?;
                     }
                 }
 
