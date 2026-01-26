@@ -9,8 +9,43 @@ fn identity<T>(x: T) -> T {
     return x;
 }
 
-// Test calling identity with explicit type argument
+// Generic function with two type parameters
+fn first<T, U>(x: T, y: U) -> T {
+    return x;
+}
+
+// Test calling identity with explicit type argument - int
 @test(expected_type = "int", expected_value = "42")
 fn test_identity_int() -> int {
     identity<int>(42)
+}
+
+@test(expected_type = "int", expected_value = "100")
+fn test_identity_int2() -> int {
+    identity<int>(100)
+}
+
+// Test calling identity with explicit type argument - float
+@test(expected_type = "float", expected_value = "3.14")
+fn test_identity_float() -> float {
+    identity<float>(3.14)
+}
+
+// Test calling first with explicit type arguments
+@test(expected_type = "int", expected_value = "10")
+fn test_first_int_int() -> int {
+    first<int, int>(10, 20)
+}
+
+@test(expected_type = "float", expected_value = "2.5")
+fn test_first_float_int() -> float {
+    first<float, int>(2.5, 10)
+}
+
+// Test multiple calls to same monomorphization
+@test(expected_type = "int", expected_value = "99")
+fn test_multiple_calls_same_type() -> int {
+    let a = identity<int>(99);
+    let b = identity<int>(88);
+    a
 }

@@ -1,7 +1,8 @@
-// compile_fail: Generic types not fully implemented - semantic analysis will fail
+// Note: Generic functions and structs are now implemented!
 // Parser validation test for generic syntax
 // This file contains ACTUAL GENERIC SYNTAX to validate the parser
-// Expected behavior: Parser should successfully parse all generic declarations
+// Expected behavior: Parser successfully parses all generic declarations
+// Semantic analysis now works for functions and structs; enum payloads are future work
 
 // ===== TEST 1: Generic Struct Declarations =====
 
