@@ -117,6 +117,10 @@ pub enum SemanticError {
         name: String,
         pos: Option<SourcePos>,
     },
+    ImportError {
+        module_path: String,
+        pos: SourcePos,
+    },
     Other(String),
 }
 
@@ -157,6 +161,9 @@ impl fmt::Display for SemanticError {
                 ),
                 None => write!(f, "Variable cannot be defined outside functions: {}", name),
             },
+            SemanticError::ImportError { module_path, pos } => {
+                write!(f, "Cannot import module: {} at {}", module_path, pos)
+            }
             SemanticError::Other(msg) => write!(f, "Semantic error: {}", msg),
         }
     }
