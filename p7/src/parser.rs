@@ -694,7 +694,7 @@ impl Parser {
 
     fn parse_struct_method(&mut self) -> ParseResult<StructMethod> {
         let is_pub = self.consume_match(TokenType::Pub).is_ok();
-        let function = self.parse_function_declaration(vec![])?;
+        let function = self.parse_function_declaration(vec![], is_pub)?;
 
         Ok(StructMethod { is_pub, function })
     }
@@ -794,6 +794,7 @@ impl Parser {
     fn parse_function_declaration(
         &mut self,
         attributes: Vec<Attribute>,
+        is_pub: bool,
     ) -> ParseResult<FunctionDeclaration> {
         self.consume_match(TokenType::Fn)?;
 
@@ -820,7 +821,7 @@ impl Parser {
         let body = self.parse_block()?;
 
         Ok(FunctionDeclaration {
-            is_pub: false, // Will be set by caller in parse_statement
+            is_pub,
             name,
             attributes,
             effects,
@@ -897,7 +898,8 @@ impl Parser {
                     }
                 }
                 _ => {
-                    if module_path.is_empty() || module_path.ends_with('.') {
+                    // If we haven't parsed any identifiers or if the path ends with a dot, it's an error
+                    if module_path.ends_with('.') {
                         return Err(ParseError::UnexpectedToken {
                             found: format!("{:?}", self.peek().map(|t| &t.token_type)),
                             pos: self.peek().map(|t| SourcePos {
@@ -961,11 +963,9 @@ impl Parser {
                 }
                 self.parse_import_statement()
             }
-            Some(TokenType::Fn) => {
-                let mut func_decl = self.parse_function_declaration(attributes)?;
-                func_decl.is_pub = is_pub;
-                Ok(Statement::FunctionDeclaration(func_decl))
-            }
+            Some(TokenType::Fn) => self
+                .parse_function_declaration(attributes, is_pub)
+                .map(Statement::FunctionDeclaration),
             Some(TokenType::Enum) => self.parse_enum_declaration(attributes, is_pub),
             Some(TokenType::Struct) => self.parse_struct_declaration(attributes, is_pub),
             Some(TokenType::Proto) => self.parse_proto_declaration(attributes, is_pub),

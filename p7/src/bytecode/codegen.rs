@@ -417,17 +417,17 @@ impl Generator {
             Statement::Import { module_path, alias } => {
                 // For now, import statements are recorded but don't generate bytecode
                 // In a full implementation, this would:
-                // 1. Load the referenced module
-                // 2. Make its public symbols available under the alias (or last segment)
-                // 3. Validate the module exists
+                // 1. Load the referenced module from the file system
+                // 2. Resolve the module path to a module identifier
+                // 3. Add a symbol representing the imported module to the symbol table
+                // 4. Make the module's public symbols available via the binding name
+                // 5. Validate the module exists and is accessible
                 
-                // For a basic implementation, we'll just store the import info
-                // and allow qualified names to work
-                let _binding_name = alias.unwrap_or_else(|| {
-                    module_path.split('.').last().unwrap_or(&module_path).to_string()
-                });
+                // TODO: Implement module resolution and symbol table integration
+                // The binding name would be: alias.unwrap_or_else(|| last_segment_of_path)
+                // This binding would be added to the current scope's symbol table
+                let _ = (module_path, alias);
                 
-                // TODO: In full implementation, resolve module and add to symbol table
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
         }
