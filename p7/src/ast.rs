@@ -99,8 +99,9 @@ pub struct ProtoMethod {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct EnumValue {
+pub struct EnumVariant {
     pub name: String,
+    pub fields: Vec<Type>, // Empty for unit variants, contains types for payload variants
 }
 
 pub type StatementBlock = Vec<Statement>;
@@ -181,7 +182,7 @@ pub enum Statement {
         name: Identifier,
         attributes: Vec<Attribute>,
         type_parameters: Vec<TypeParameter>,
-        values: Vec<EnumValue>,
+        values: Vec<EnumVariant>,
     },
     StructDeclaration {
         is_pub: bool,

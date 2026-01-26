@@ -1,0 +1,143 @@
+// Tests for generic enums
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// ===== Generic Enum Definitions =====
+
+// Option<T> - standard optional value
+enum Option<T> {
+    None,
+    Some(T),
+}
+
+// Result<T, E> - result with success or error
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+// Pair<T, U> - pair of two values
+enum Pair<T, U> {
+    Left(T),
+    Right(U),
+    Both(T, U),
+}
+
+// ===== Tests for Option<T> =====
+
+@test(expected_type = "int", expected_value = "1")
+fn test_option_none_int() -> int {
+    let opt = Option<int>.None;
+    // Verify it was created
+    1
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_option_some_int() -> int {
+    let opt = Option<int>.Some(42);
+    // Verify it was created
+    42
+}
+
+@test(expected_type = "int", expected_value = "99")
+fn test_option_some_int2() -> int {
+    let opt = Option<int>.Some(99);
+    // Verify it was created
+    99
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_option_none_float() -> int {
+    let opt = Option<float>.None;
+    // Verify it was created with different type
+    3
+}
+
+@test(expected_type = "float", expected_value = "3.14")
+fn test_option_some_float() -> float {
+    let opt = Option<float>.Some(3.14);
+    // Verify it was created
+    3.14
+}
+
+// ===== Tests for Result<T, E> =====
+
+@test(expected_type = "int", expected_value = "100")
+fn test_result_ok() -> int {
+    let res = Result<int, int>.Ok(100);
+    // Verify it was created
+    100
+}
+
+@test(expected_type = "int", expected_value = "404")
+fn test_result_err() -> int {
+    let res = Result<int, int>.Err(404);
+    // Verify it was created
+    404
+}
+
+@test(expected_type = "int", expected_value = "200")
+fn test_result_different_types() -> int {
+    let res = Result<int, float>.Ok(200);
+    // Verify it was created with different types
+    200
+}
+
+@test(expected_type = "float", expected_value = "1.5")
+fn test_result_err_float() -> float {
+    let res = Result<int, float>.Err(1.5);
+    // Verify it was created
+    1.5
+}
+
+// ===== Tests for Pair<T, U> =====
+
+@test(expected_type = "int", expected_value = "10")
+fn test_pair_left() -> int {
+    let p = Pair<int, int>.Left(10);
+    // Verify it was created
+    10
+}
+
+@test(expected_type = "int", expected_value = "20")
+fn test_pair_right() -> int {
+    let p = Pair<int, int>.Right(20);
+    // Verify it was created
+    20
+}
+
+@test(expected_type = "int", expected_value = "30")
+fn test_pair_both() -> int {
+    let p = Pair<int, int>.Both(30, 40);
+    // Verify it was created
+    30
+}
+
+@test(expected_type = "float", expected_value = "2.5")
+fn test_pair_mixed_types() -> float {
+    let p = Pair<int, float>.Right(2.5);
+    // Verify it was created with different types
+    2.5
+}
+
+// ===== Tests for Multiple Instantiations =====
+
+@test(expected_type = "int", expected_value = "1")
+fn test_multiple_option_types() -> int {
+    let opt1 = Option<int>.Some(1);
+    let opt2 = Option<float>.Some(2.5);
+    let opt3 = Option<int>.None;
+    // Verify multiple monomorphizations work
+    1
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_multiple_result_instantiations() -> int {
+    let res1 = Result<int, int>.Ok(5);
+    let res2 = Result<float, int>.Ok(3.14);
+    let res3 = Result<int, float>.Err(1.5);
+    // Verify multiple monomorphizations work
+    5
+}

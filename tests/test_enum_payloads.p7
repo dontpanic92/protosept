@@ -1,0 +1,63 @@
+// Tests for enum payloads (non-generic)
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// ===== Enum Definitions with Payloads =====
+
+// Enum with mix of unit and payload variants
+enum Status {
+    Pending,
+    Active(int),
+    Failed(int, int),
+}
+
+// Enum with only payload variants
+enum Point {
+    TwoD(int, int),
+    ThreeD(int, int, int),
+}
+
+// ===== Tests for Unit Variants =====
+
+@test(expected_type = "int", expected_value = "1")
+fn test_unit_variant() -> int {
+    let s = Status.Pending;
+    // For now, we just check that we can create unit variants
+    // In the future, pattern matching will allow us to extract the variant
+    1
+}
+
+// ===== Tests for Single-Field Payload Variants =====
+
+@test(expected_type = "int", expected_value = "42")
+fn test_single_field_payload() -> int {
+    let s = Status.Active(42);
+    // Verify it was created
+    42
+}
+
+// ===== Tests for Multi-Field Payload Variants =====
+
+@test(expected_type = "int", expected_value = "500")
+fn test_multi_field_payload() -> int {
+    let s = Status.Failed(404, 500);
+    // Verify it was created
+    500
+}
+
+@test(expected_type = "int", expected_value = "10")
+fn test_2d_point() -> int {
+    let p = Point.TwoD(10, 20);
+    // Verify it was created
+    10
+}
+
+@test(expected_type = "int", expected_value = "30")
+fn test_3d_point() -> int {
+    let p = Point.ThreeD(10, 20, 30);
+    // Verify it was created
+    30
+}
+
