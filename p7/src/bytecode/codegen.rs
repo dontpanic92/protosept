@@ -2003,7 +2003,8 @@ impl Generator {
         }
         
         // Create the enum value with the variant index and fields
-        // For now, we'll represent enum values as arrays: [variant_index, field1, field2, ...]
+        // We represent enum values as structs where the first field is the variant index
+        // and subsequent fields are the payload values: [variant_index, field1, field2, ...]
         self.builder.newstruct((field_types.len() + 1) as u32);
 
         Ok(Type::Enum(enum_type_id))
@@ -2580,6 +2581,24 @@ impl Generator {
                     // Fallback
                     ParsedType::Identifier(Identifier {
                         name: format!("struct_{}", type_id),
+                        line: SYNTHETIC_LINE,
+                        col: SYNTHETIC_COL,
+                    })
+                }
+            }
+            Type::Enum(type_id) => {
+                // Get the enum name from the symbol table
+                let udt = self.symbol_table.get_udt(*type_id);
+                if let UserDefinedType::Enum(e) = udt {
+                    ParsedType::Identifier(Identifier {
+                        name: e.qualified_name.clone(),
+                        line: SYNTHETIC_LINE,
+                        col: SYNTHETIC_COL,
+                    })
+                } else {
+                    // Fallback
+                    ParsedType::Identifier(Identifier {
+                        name: format!("enum_{}", type_id),
                         line: SYNTHETIC_LINE,
                         col: SYNTHETIC_COL,
                     })
