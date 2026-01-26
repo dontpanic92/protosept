@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use crate::ast::{
     Attribute, EnumValue, Expression, FunctionCall, FunctionDeclaration, Identifier, NamedPattern,
-    Parameter, Pattern, Statement, StatementBlock, StructField, StructMethod, Type,
+    Parameter, Pattern, ProtoMethod, Statement, StructField, StructMethod, Type,
 };
 use crate::errors::{ParseError, SourcePos};
 use crate::lexer::{Token, TokenType};
@@ -741,6 +741,54 @@ impl Parser {
         }
     }
 
+    fn parse_proto_method(&mut self) -> ParseResult<ProtoMethod> {
+        self.consume_match(TokenType::Fn)?;
+        let name = self.parse_identifier()?;
+        let parameters = self.parse_argument_list()?;
+        let return_type = if self.consume_match(TokenType::RightArrow).is_ok() {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        self.consume_match(TokenType::Semicolon)?;
+        
+        Ok(ProtoMethod {
+            name,
+            parameters,
+            return_type,
+        })
+    }
+
+    fn parse_proto_method_list(&mut self) -> ParseResult<Vec<ProtoMethod>> {
+        self.consume_match(TokenType::OpenBrace)?;
+        let mut methods = vec![];
+        
+        while !self.peek_match(TokenType::CloseBrace) && !self.peek_match(TokenType::EOF) {
+            methods.push(self.parse_proto_method()?);
+        }
+        
+        self.consume_match(TokenType::CloseBrace)?;
+        Ok(methods)
+    }
+
+    fn parse_proto_declaration(&mut self, attributes: Vec<Attribute>) -> ParseResult<Statement> {
+        self.consume_match(TokenType::Proto)?;
+        let name = self.parse_identifier()?;
+
+        let methods = if self.peek_match(TokenType::OpenBrace) {
+            self.parse_proto_method_list()?
+        } else {
+            self.consume_match(TokenType::Semicolon)?;
+            vec![]
+        };
+
+        Ok(Statement::ProtoDeclaration {
+            name,
+            attributes,
+            methods,
+        })
+    }
+
     fn parse_function_declaration(
         &mut self,
         attributes: Vec<Attribute>,
@@ -825,6 +873,7 @@ impl Parser {
                 .map(Statement::FunctionDeclaration),
             Some(TokenType::Enum) => self.parse_enum_declaration(attributes),
             Some(TokenType::Struct) => self.parse_struct_declaration(attributes),
+            Some(TokenType::Proto) => self.parse_proto_declaration(attributes),
             // Some(TokenType::If) => self.parse_if_expression().map(Statement::Expression),
             Some(TokenType::Return) => {
                 if !attributes.is_empty() {

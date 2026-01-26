@@ -7,8 +7,8 @@ use crate::{
     bytecode::builder::ByteCodeBuilder,
     lexer::TokenType,
     semantic::{
-        Enum, Function, LocalSymbolScope, PrimitiveType, Struct, Symbol, SymbolKind, SymbolTable,
-        Type, TypeId, UserDefinedType, Variable,
+        Enum, Function, LocalSymbolScope, PrimitiveType, Proto, Struct, Symbol, SymbolKind,
+        SymbolTable, Type, TypeId, UserDefinedType, Variable,
     },
 };
 
@@ -329,6 +329,56 @@ impl Generator {
                 }
 
                 self.symbol_table.pop_symbol();
+                Ok(Type::Primitive(PrimitiveType::Unit))
+            }
+            Statement::ProtoDeclaration {
+                name,
+                attributes,
+                methods,
+            } => {
+                let qualified_name = self
+                    .symbol_table
+                    .get_new_symbol_qualified_name(name.name.clone());
+                
+                // First add the proto to the symbol table as a forward declaration
+                // so that method parameters can reference it
+                let ty = Proto {
+                    qualified_name: qualified_name.clone(),
+                    methods: vec![],
+                    attributes: attributes.clone(),
+                };
+                let type_id = self.symbol_table.add_udt(UserDefinedType::Proto(ty));
+                
+                let symbol = Symbol::new(name.name.clone(), qualified_name.clone(), SymbolKind::Proto(type_id));
+                self.symbol_table.push_symbol(symbol);
+                
+                // Now process the method signatures
+                let methods_with_types = methods
+                    .iter()
+                    .map(|m| {
+                        let params: Vec<Type> = m
+                            .parameters
+                            .iter()
+                            .map(|p| self.get_semantic_type(&p.arg_type).unwrap())
+                            .collect();
+                        let return_type = m
+                            .return_type
+                            .as_ref()
+                            .map(|t| self.get_semantic_type(t).unwrap());
+                        (m.name.name.clone(), params, return_type)
+                    })
+                    .collect();
+
+                // Update the proto with the actual method signatures
+                let ty = Proto {
+                    qualified_name: qualified_name.clone(),
+                    methods: methods_with_types,
+                    attributes: attributes.clone(),
+                };
+                self.symbol_table.types[type_id as usize] = UserDefinedType::Proto(ty);
+                
+                self.symbol_table.pop_symbol();
+
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
             Statement::Branch {
