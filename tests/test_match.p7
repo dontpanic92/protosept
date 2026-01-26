@@ -1,0 +1,132 @@
+// Tests for match expressions
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// ===== Enum Definitions =====
+
+enum Status {
+    Pending,
+    Active,
+    Failed,
+}
+
+enum Result {
+    Ok(int),
+    Err(int),
+}
+
+// ===== Tests for match with literals =====
+
+@test(expected_type = "int", expected_value = "42")
+fn test_match_int_literal() -> int {
+    let x = 42;
+    match x {
+        42 => 42,
+        _ => 0,
+    }
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_match_int_literal_second_arm() -> int {
+    let x = 10;
+    match x {
+        42 => 0,
+        10 => 1,
+        _ => 2,
+    }
+}
+
+@test(expected_type = "int", expected_value = "99")
+fn test_match_int_literal_wildcard() -> int {
+    let x = 123;
+    match x {
+        42 => 0,
+        10 => 1,
+        _ => 99,
+    }
+}
+
+// ===== Tests for match with enum variants (unit) =====
+
+@test(expected_type = "int", expected_value = "1")
+fn test_match_enum_pending() -> int {
+    let status = Status.Pending;
+    match status {
+        Status.Pending => 1,
+        Status.Active => 2,
+        Status.Failed => 3,
+    }
+}
+
+@test(expected_type = "int", expected_value = "2")
+fn test_match_enum_active() -> int {
+    let status = Status.Active;
+    match status {
+        Status.Pending => 1,
+        Status.Active => 2,
+        Status.Failed => 3,
+    }
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_match_enum_failed() -> int {
+    let status = Status.Failed;
+    match status {
+        Status.Pending => 1,
+        Status.Active => 2,
+        Status.Failed => 3,
+    }
+}
+
+@test(expected_type = "int", expected_value = "99")
+fn test_match_enum_wildcard() -> int {
+    let status = Status.Active;
+    match status {
+        Status.Pending => 1,
+        _ => 99,
+    }
+}
+
+// ===== Tests for match with enum variants (with payloads, but wildcard match) =====
+
+// Note: Full payload destructuring (e.g., Result.Ok(x) => x) is not yet implemented
+// For now, we can only match the entire value
+
+@test(expected_type = "int", expected_value = "1")
+fn test_match_enum_with_payload_wildcard() -> int {
+    let result = Result.Ok(42);
+    match result {
+        r: _ => 1,
+    }
+}
+
+// ===== Tests for match with variable binding =====
+
+@test(expected_type = "int", expected_value = "42")
+fn test_match_bind_variable() -> int {
+    let x = 42;
+    match x {
+        val: 42 => val,
+        _ => 0,
+    }
+}
+
+@test(expected_type = "int", expected_value = "999")
+fn test_match_bind_wildcard() -> int {
+    let x = 999;
+    match x {
+        42 => 42,
+        other: _ => other,
+    }
+}
+
+@test(expected_type = "int", expected_value = "123")
+fn test_match_enum_bind_wildcard() -> int {
+    let status = Status.Active;
+    match status {
+        Status.Pending => 1,
+        s: _ => 123,
+    }
+}

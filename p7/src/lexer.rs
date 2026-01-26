@@ -24,6 +24,7 @@ pub enum TokenType {
     Ref,
     Import,
     As,
+    Match,
 
     // Identifiers and Literals
     Identifier(String),
@@ -375,6 +376,7 @@ impl Lexer {
                         "ref" => TokenType::Ref,
                         "import" => TokenType::Import,
                         "as" => TokenType::As,
+                        "match" => TokenType::Match,
                         _ => TokenType::Identifier(ident),
                     }
                 } else if c.is_numeric() {
