@@ -174,14 +174,19 @@ Types in v1:
   Signed 64-bit two's-complement integer (i64). Integer overflow TRAPs (§15.1.1).
 
 - `float`  
-  IEEE-754 binary64 (f64). [[TODO]] define NaN/Inf behavior details and conversions.
+  IEEE-754 binary64 (f64). NaN/Inf behavior follows [IEEE-754](https://en.wikipedia.org/wiki/IEEE_754).
+  - NaN is unordered: `x == NaN` is false, `x != NaN` is true, and all ordered comparisons with NaN are false.
+  - Arithmetic propagates NaN and infinities per IEEE-754.
 
 - `bool`  
   Boolean. Values: `true`, `false`.
 
 - `char`  
   A Unicode scalar value (Unicode code point excluding surrogates).  
-  [[TODO]] literal syntax (recommended: `'a'`, `'\n'`, `'\u{1F600}'`).
+  Literal syntax (v1):
+  - Single-quoted: `'a'`
+  - Escapes: `\n`, `\r`, `\t`, `\0`, `\'`, `\\`
+  - Unicode scalar escape: `\u{...}` with 1–6 hex digits, value must be a Unicode scalar (no surrogates).
 
 - `unit`  
   The unit type with a single value written `()`.
@@ -305,7 +310,8 @@ Double-quoted strings: `"hello"`
 `let x = expr;` introduces an immutable slot.
 
 - Slots are single-assignment.
-- `x = expr` is always ERROR in v1.
+- Assigning to a slot (e.g., `x = expr`) is ERROR.
+- Assignment is permitted only to addressable locations that are mutable by definition (boxed contents), see §10.2.
 
 ### 5.2 Shadowing
 
@@ -531,7 +537,39 @@ Block value:
 - Branch types MUST be identical in v1 (recommended for simplicity). [[TODO]] if you later add a “common type” rule, specify it here.
 
 ### 9.3 Operators and precedence
-[[TODO]] specify operator set and precedence table.
+Operator precedence (highest to lowest):
+
+1) Postfix / primary
+- Call: `()`
+- Member access: `.`
+- Trap indexing: `[]`
+- Force unwrap: postfix `!`
+
+2) Prefix unary
+- `ref` (borrow)
+- `*` (deref)
+- Unary `-`, unary `+`
+- Logical NOT: `!` (if you choose symbolic form) or `not`
+
+3) Multiplicative: `*`, `/`, `%`
+
+4) Additive: `+`, `-`
+
+5) Comparisons: `<`, `<=`, `>`, `>=`
+
+6) Equality: `==`, `!=`
+
+7) Logical AND: `&&` (or `and`)
+
+8) Logical OR: `||` (or `or`)
+
+9) Null-coalescing: `??`
+
+10) Assignment: `=` (right-associative). Assignment is a statement form; it does not yield a value.
+
+Notes:
+- `if`, `try`, and `loop` are expression forms and bind looser than any operator above.
+- Choose either symbolic or keyword forms for logical operators and reserve the other.
 
 ### 9.4 `loop` expressions
 
@@ -581,6 +619,7 @@ Statement forms:
 - `throw expr;` (only in `throws` functions; §14)
 - `break;` / `break expr;`
 - `continue;`
+- assignment statement (§10.2)
 - `for` statement (§10.3)
 - `yield;` (Fiber extension only; §21)
 - declarations where allowed [[TODO]] (recommended: declarations only at top-level in v1)
@@ -591,7 +630,21 @@ A function returns:
 - the argument of `return expr;`, or
 - the last expression value in the function body block if it is not terminated by `;`, otherwise `()`.
 
-### 10.2 `for` statement (v1)
+### 10.2 Assignment statement
+
+Form:
+```p7
+place = expr;
+```
+
+Rules:
+- `place` MUST be an addressable location that is mutable by definition:
+  - boxed deref: `*b = expr` where `b: box<T>`
+  - boxed field: `b.field = expr` where `b: box<S>`
+- Assigning to a slot (`x = expr`) is ERROR.
+- Assignment does not produce a value.
+
+### 10.3 `for` statement (v1)
 
 Form:
 ```p7
@@ -850,6 +903,10 @@ Prelude functions (placeholder names):
 #### 15.1.2 Numeric coercions
 - Implicit `int -> float` promotion may occur in arithmetic/comparison.
 - Other numeric conversions require explicit conversion. [[TODO]] specify syntax.
+- `float -> int` is available **only** via a checked prelude function:
+  - `float_to_int_checked(x: float) -> ?int`
+  - Returns `null` if `x` is NaN, infinite, or outside the `int` range.
+  - Otherwise returns the truncated-to-zero integer value.
 
 ### 15.2 Nullability
 
