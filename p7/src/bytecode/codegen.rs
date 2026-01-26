@@ -1004,8 +1004,9 @@ impl Generator {
             Expression::GenericInstantiation { base, .. } => {
                 // GenericInstantiation is only valid as a callee in function calls (struct construction)
                 // It's not a standalone expression that can be evaluated
-                Err(SemanticError::VariableNotFound {
-                    name: format!("{} (generic instantiation not valid here)", base.name),
+                Err(SemanticError::TypeMismatch {
+                    lhs: "expression value".to_string(),
+                    rhs: format!("generic type instantiation '{}'", base.name),
                     pos: Some(SourcePos {
                         line: base.line,
                         col: base.col,

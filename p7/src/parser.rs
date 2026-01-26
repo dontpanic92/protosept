@@ -926,10 +926,14 @@ impl Parser {
     }
 
     /// Try to parse type arguments in expression context (e.g., Container<int>)
-    /// Returns Ok with type args if successful, Err otherwise
-    /// This is used to disambiguate between generic instantiation and comparison operators
+    /// Returns Ok with type args if successful, Err otherwise.
+    /// 
+    /// This is used to disambiguate between generic instantiation (`Container<int>`)
+    /// and comparison operators (`a < b`). The parser saves its position and attempts
+    /// to parse type arguments. If successful, it's a generic instantiation; if it fails,
+    /// the parser backtracks to the saved position and treats `<` as a comparison operator.
     fn try_parse_type_arguments(&mut self) -> ParseResult<Vec<Type>> {
-        // Save parser state in case we need to backtrack
+        // Save parser state for potential backtracking
         let saved_pos = self.position;
         
         // Consume the '<'
@@ -941,6 +945,16 @@ impl Parser {
         }
         self.consume();
         
+        // Check for empty type argument list: identifier<>
+        // This is not allowed (consistent with parse_type behavior)
+        if self.peek_match(TokenType::GreaterThan) {
+            self.position = saved_pos;
+            return Err(ParseError::UnexpectedToken {
+                found: "empty type argument list".to_string(),
+                pos: None,
+            });
+        }
+        
         // Try to parse type arguments
         let mut type_args = vec![];
         
@@ -949,10 +963,11 @@ impl Parser {
             match self.parse_type() {
                 Ok(ty) => type_args.push(ty),
                 Err(_) => {
-                    // Failed to parse type, restore position and fail
+                    // Failed to parse type - this might be a comparison operator
+                    // Restore position and fail gracefully
                     self.position = saved_pos;
                     return Err(ParseError::UnexpectedToken {
-                        found: "not a type".to_string(),
+                        found: "not a type argument".to_string(),
                         pos: None,
                     });
                 }
@@ -969,7 +984,7 @@ impl Parser {
         if !self.peek_match(TokenType::GreaterThan) {
             self.position = saved_pos;
             return Err(ParseError::UnexpectedToken {
-                found: "not >".to_string(),
+                found: "expected '>' to close type arguments".to_string(),
                 pos: None,
             });
         }
