@@ -170,7 +170,7 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
         .lines()
         .any(|l| l.trim_start().starts_with("// compile_fail"))
     {
-        match p7::compile_with_provider(content.clone(), &module_provider) {
+        match p7::compile_with_provider(content.clone(), Box::new(module_provider.clone())) {
             Ok(_) => {
                 return Ok(vec![(
                     "compile_fail".to_string(),
@@ -184,7 +184,7 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
     }
 
     // Compile the p7 code with the module provider
-    let module = match p7::compile_with_provider(content.clone(), &module_provider) {
+    let module = match p7::compile_with_provider(content.clone(), Box::new(module_provider.clone())) {
         Ok(m) => m,
         Err(e) => {
             return Ok(vec![(
@@ -207,7 +207,7 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
     let mut results = Vec::new();
     for test_case in test_cases {
         // Clone module for each test
-        let test_module = match p7::compile_with_provider(content.as_str().to_string(), &module_provider) {
+        let test_module = match p7::compile_with_provider(content.as_str().to_string(), Box::new(module_provider.clone())) {
             Ok(m) => m,
             Err(e) => {
                 results.push((

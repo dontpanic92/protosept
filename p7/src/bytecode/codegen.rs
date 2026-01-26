@@ -22,17 +22,17 @@ pub type SaResult<T> = Result<T, SemanticError>;
 const SYNTHETIC_LINE: usize = 0;
 const SYNTHETIC_COL: usize = 0;
 
-pub struct Generator<'a> {
+pub struct Generator {
     builder: ByteCodeBuilder,
     symbol_table: SymbolTable,
     local_scope: Option<LocalSymbolScope>,
     pending_monomorphizations: Vec<(u32, TypeId, Vec<Statement>, Vec<String>, Vec<Type>)>, // (symbol_id, type_id, body, param_names, params)
-    module_provider: &'a dyn crate::ModuleProvider,
+    module_provider: Box<dyn crate::ModuleProvider>,
     imported_modules: std::collections::HashMap<String, Module>,
 }
 
-impl<'a> Generator<'a> {
-    pub fn new(module_provider: &'a dyn crate::ModuleProvider) -> Self {
+impl Generator {
+    pub fn new(module_provider: Box<dyn crate::ModuleProvider>) -> Self {
         Generator {
             builder: ByteCodeBuilder::new(),
             symbol_table: SymbolTable::new(),
@@ -111,8 +111,8 @@ impl<'a> Generator<'a> {
             SemanticError::Other(format!("Parse error in imported module: {:?}", e))
         )?;
 
-        // Create a new generator for the imported module with the same provider
-        let mut module_gen = Generator::new(self.module_provider);
+        // Create a new generator for the imported module with a cloned provider
+        let mut module_gen = Generator::new(self.module_provider.clone_boxed());
         module_gen.generate(statements)
     }
 
