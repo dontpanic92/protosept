@@ -28,6 +28,28 @@ Normative keywords:
 - **Addressable location** (v1): a slot, or a field/sub-location of an addressable base where the language provides addressability (see §7.1, §7.2, §11.4).
 - **Copy-treated**: implicit copy occurs at value-flow sites (§6.1). (Distinct from “Copy-eligible”.)
 
+
+### 0.1 Contextual typing (bidirectional typing)
+
+The type system uses **bidirectional typing** where:
+
+- **Synthesize** (↑): the expression's type is determined from its structure and subexpression types independently of context.
+  - Example: `1 + 2` synthesizes type `int`; `"hello"` synthesizes type `string`.
+  
+- **Check** (↓): the expression is checked against an **expected type** (also called **contextual type**) provided by the surrounding context.
+  - Example: In `let x: ?int = null;`, the `null` literal is checked against the expected type `?int`.
+
+- **Expected type / Contextual type**: a type determined by the surrounding context (e.g., explicit type annotation, function parameter type, return type) that guides type checking and enables inference for expressions that cannot synthesize a type on their own.
+
+**Pragmatic inference rule**: When an expression requires type arguments (e.g., generic function calls, generic struct/enum construction), the compiler:
+1. Attempts to infer type arguments from:
+   - Argument types (for calls/construction)
+   - Expected type (if available)
+2. If a unique instantiation can be determined, the type arguments MAY be omitted.
+3. If multiple instantiations are possible or none can be determined, it is an ERROR; the compiler MUST report the ambiguity and require explicit type arguments.
+
+This approach maintains explicitness at API boundaries (function signatures remain fully annotated) while reducing ceremony at call sites when types are unambiguous.
+
 ---
 
 ## 1. Program structure
@@ -217,15 +239,23 @@ Indexing policy:
 
 ### 3.3.1 Array literals
 
-- `[e1, e2, ...]` constructs an `array<T>` where all elements have the same inferred type `T`.
-- `[]` is allowed only with a contextual type.
+- `[e1, e2, ...]` constructs an `array<T>` where all elements have the same inferred type `T`. The element type is synthesized from the element expressions.
+- `[]` (empty array literal) requires an expected type to determine `T`; otherwise ERROR.
+  - Example: `let ys: array<string> = [];` is OK (expected type provides `T=string`).
+  - Example: `let xs = [];` is ERROR (no elements, no expected type).
 
 No implicit numeric widening inside array literals.
 
 Example:
 ```p7
-let xs = [1, 2, 3];              // array<int>
-let ys: array<string> = [];      // ok
+let xs = [1, 2, 3];              // OK: synthesizes array<int>
+let ys: array<string> = [];      // OK: expected type provides T=string
+
+fn get_empty() -> array<float> {
+  return [];                     // OK: return type provides T=float
+}
+
+// let zs = [];                  // ERROR: cannot infer T (no elements, no context)
 ```
 
 ### 3.3.2 Array indexing
@@ -297,9 +327,22 @@ Double-quoted strings: `"hello"`
 `true`, `false`
 
 ### 4.5 Null literal
-`null` is valid only in a context that determines `T` for `?T`:
-- `let x: ?int = null;` ok
-- `return null;` ok only if return type is `?T`
+
+`null` requires an expected type `?T` to determine the underlying type `T`; otherwise ERROR.
+
+The `null` literal is checked against the expected type (§0.1) and cannot synthesize a type on its own.
+
+Examples:
+```p7
+let x: ?int = null;              // OK: expected type provides ?int
+let y: ?string = null;           // OK: expected type provides ?string
+
+fn maybe_int() -> ?int {
+  return null;                   // OK: return type provides ?int
+}
+
+// let z = null;                 // ERROR: cannot infer T for ?T (no context)
+```
 
 ---
 
@@ -1144,23 +1187,39 @@ Generics are monomorphized:
 fn identity<T>(x: T) -> T { return x; }
 ```
 
-#### 20.2.1 Explicit type arguments at call sites (v1)
+#### 20.2.1 Type arguments at call sites
 
 A reference to a generic function in a call position MAY be specialized with an explicit type argument list:
 
 - `name<T1, T2, ...>(args...)`
 
 Rules:
-- The number of type arguments MUST exactly match the function's type parameter list; otherwise ERROR.
-- Each provided type argument MUST be a well-formed type.
-- In v1, explicit type arguments are the *only* way to call a generic function. Type argument inference is not performed.  
-  - Therefore, `identity(1)` is ERROR.
-  - `identity<int>(1)` is OK.
+- When type arguments are provided explicitly:
+  - The number of type arguments MUST exactly match the function's type parameter list; otherwise ERROR.
+  - Each provided type argument MUST be a well-formed type.
+  
+- When type arguments are omitted, the compiler attempts to infer them (§0.1):
+  - Inference uses argument types and the expected type (if available).
+  - If a unique instantiation can be determined, the call is accepted.
+  - If multiple instantiations are possible or none can be determined, it is an ERROR. The compiler MUST report: "cannot infer type arguments for `name`; explicit type arguments required."
 
 Examples:
 ```p7
+// Explicit type arguments (always allowed)
 identity<int>(1);
 identity<string>("hi");
+
+// Inference from argument types
+let x = identity(42);        // OK: inferred as identity<int>(42)
+let s = identity("hello");   // OK: inferred as identity<string>("hello")
+
+// Inference from expected type
+fn get_default<T>() -> T { ... }
+let n: int = get_default();  // OK: inferred as get_default<int>()
+
+// Ambiguous case (ERROR)
+fn ambiguous<T>() -> T { ... }
+let y = ambiguous();         // ERROR: cannot infer T (no arguments, no expected type)
 ```
 
 ### 20.3 Generic structs
@@ -1176,22 +1235,36 @@ In a type position, type arguments use the existing type syntax:
 - `array<Pair<int, string>>`
 - `box<Pair<float, float>>`
 
-#### 20.3.2 Explicit type arguments at construction sites (v1)
+#### 20.3.2 Type arguments at construction sites
 
-Construction of a generic struct uses the struct's name specialized with an explicit type argument list:
+Construction of a generic struct uses the struct's name, optionally specialized with an explicit type argument list:
 
 - `Name<T1, T2, ...>(args...)`
+- `Name(args...)` (if type arguments can be inferred)
 
 Rules:
-- The number of type arguments MUST exactly match the struct's type parameter list; otherwise ERROR.
-- In v1, explicit type arguments are the *only* way to construct a generic struct. Type argument inference is not performed.
-  - Therefore, `Pair(1, 1)` is ERROR.
-  - `Pair<int, int>(1, 1)` is OK.
+- When type arguments are provided explicitly:
+  - The number of type arguments MUST exactly match the struct's type parameter list; otherwise ERROR.
+  
+- When type arguments are omitted, the compiler attempts to infer them (§0.1):
+  - Inference uses field argument types and the expected type (if available).
+  - If a unique instantiation can be determined, the construction is accepted.
+  - If multiple instantiations are possible or none can be determined, it is an ERROR. The compiler MUST report: "cannot infer type arguments for `Name`; explicit type arguments required."
 
 Examples:
 ```p7
+// Explicit type arguments (always allowed)
 let p = Pair<int, int>(1, 1);
 let q = Pair<string, int>("a", 2);
+
+// Inference from field argument types
+let r = Pair(42, 3.14);      // OK: inferred as Pair<int, float>(42, 3.14)
+let s = Pair("x", "y");      // OK: inferred as Pair<string, string>("x", "y")
+
+// Inference from expected type
+fn needs_pair() -> Pair<int, string> {
+  return Pair(100, "ok");    // OK: inferred from return type
+}
 ```
 
 ### 20.4 Generic enums
@@ -1212,18 +1285,26 @@ In a type position, type arguments use the existing type syntax:
 - `Result<string, Error>`
 - `array<Option<int>>`
 
-#### Type arguments at construction sites (v1)
+#### Type arguments at construction sites
 
-Construction of a generic enum variant uses the enum's name specialized with an explicit type argument list:
+Construction of a generic enum variant uses the enum's name, optionally specialized with an explicit type argument list:
 
 - `Name<T1, T2, ...>.VariantName` for unit variants
 - `Name<T1, T2, ...>.VariantName(args...)` for payload variants
+- `Name.VariantName(args...)` (if type arguments can be inferred from payload)
+- `Name.VariantName` (only if type arguments can be inferred from context)
 
 Rules:
-- The number of type arguments MUST exactly match the enum's type parameter list; otherwise ERROR.
-- In v1, explicit type arguments are the *only* way to construct a generic enum variant. Type argument inference is not performed.
-  - Therefore, `Option.Some(1)` is ERROR, even if context suggests the type.
-  - `Option<int>.Some(1)` is OK.
+- When type arguments are provided explicitly:
+  - The number of type arguments MUST exactly match the enum's type parameter list; otherwise ERROR.
+  
+- When type arguments are omitted, the compiler attempts to infer them (§0.1):
+  - For payload variants, inference uses payload argument types and the expected type (if available).
+  - For unit variants (no payload), inference requires an expected type; otherwise ERROR.
+  - If a unique instantiation can be determined, the construction is accepted.
+  - If multiple instantiations are possible or none can be determined, it is an ERROR. The compiler MUST report: "cannot infer type arguments for `Name`; explicit type arguments required."
+
+**Important**: Unit variants like `Option.None` or `Result.Err` without payload arguments MUST have type arguments determined by context (e.g., explicit type annotation, return type, parameter type). Without context, they are ambiguous and produce an ERROR.
 
 #### Example: `Option<T>`
 
@@ -1234,9 +1315,22 @@ enum Option<T> {
 }
 
 fn example() -> unit {
+  // Explicit type arguments (always allowed)
   let x = Option<int>.Some(42);
   let y = Option<string>.None;
-  let z = Option<float>.Some(3.14);
+  
+  // Inference from payload argument type
+  let a = Option.Some(42);       // OK: inferred as Option<int>.Some(42)
+  let b = Option.Some("hi");     // OK: inferred as Option<string>.Some("hi")
+  
+  // Unit variant requires context
+  let c: ?int = Option.None;     // OK: inferred from annotation as Option<int>.None
+  // let d = Option.None;         // ERROR: cannot infer T (no payload, no context)
+  
+  // Inference from expected type (return type)
+  fn get_some() -> Option<float> {
+    return Option.Some(3.14);    // OK: inferred from return type
+  }
 }
 ```
 
@@ -1249,8 +1343,22 @@ enum Result<T, E> {
 }
 
 fn example() -> unit {
+  // Explicit type arguments (always allowed)
   let success = Result<int, string>.Ok(100);
   let failure = Result<int, string>.Err("network error");
+  
+  // Inference from payload argument types
+  let r1 = Result.Ok(42);         // Partial inference: T=int, but E is unknown
+                                   // ERROR: cannot fully infer Result<T, E>
+  
+  // Inference from expected type
+  fn process() -> Result<int, string> {
+    return Result.Ok(100);         // OK: inferred as Result<int, string>.Ok(100)
+    // return Result.Err("fail");  // OK: inferred as Result<int, string>.Err("fail")
+  }
+  
+  // Mixed: one type from payload, one from context
+  let r2: Result<int, string> = Result.Ok(100);  // OK: T from payload, E from context
 }
 ```
 
