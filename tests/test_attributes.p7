@@ -1,8 +1,5 @@
-// Define the test attribute struct
-struct test(
-  pub expected_type: string,
-  pub expected_value: string,
-);
+// Test attributes functionality
+import test.test;
 
 // Test struct for defining attributes
 struct route(

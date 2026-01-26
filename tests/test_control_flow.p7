@@ -1,9 +1,6 @@
 // Comprehensive tests for control flow constructs
 // Includes if expressions, nested if, and pattern matching
-struct test(
-    pub expected_type: string,
-    pub expected_value: string,
-);
+import test.test;
 
 // ===== Basic If Expression Tests =====
 
