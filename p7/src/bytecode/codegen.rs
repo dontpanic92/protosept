@@ -573,7 +573,17 @@ impl Generator {
                             symbol.qualified_name.clone(),
                             symbol.kind.clone(),
                         );
+                        
+                        // Add symbol to the flat list and make it a child of the current scope
+                        let current_id = *self.symbol_table.symbol_chain.last().unwrap();
+                        let symbol_id = self.symbol_table.symbols.len() as u32;
                         self.symbol_table.symbols.push(new_symbol);
+                        
+                        // Add as child of current scope so it can be found by find_symbol_in_scope
+                        self.symbol_table.symbols[current_id as usize]
+                            .children
+                            .insert(binding_name.clone(), symbol_id);
+                        
                         found = true;
                         break;
                     }
