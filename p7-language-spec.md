@@ -372,7 +372,7 @@ Copy-eligible (structural `T: Copy`) in v1:
 - `?T` iff `T` is Copy-eligible
 - `array<T>` iff `T` is Copy-eligible
 - `struct` iff all fields are Copy-eligible
-- `enum` iff all payload types (if any) are Copy-eligible
+- `enum` iff all payload field types are Copy-eligible
 
 Copy-treated by default in v1:
 - Primitives
@@ -404,7 +404,7 @@ Send-eligible in v1:
 - Primitives
 - `string`
 - `array<T>` iff `T` is Send-eligible
-- `enum` iff all payload types (if any) are Send-eligible
+- `enum` iff all payload field types are Send-eligible
 - User `struct` iff it opts in with `struct[Send]` and all fields are Send-eligible
 
 Not Send-eligible:
@@ -723,20 +723,68 @@ p.x = 10; // ok
 
 ### 13.1 Declaration
 
+Enums are sum types with one or more named variants. Each variant can be:
+- A **unit variant** (no associated data), or
+- A **payload variant** (with associated data of specified types).
+
+#### Syntax
+
 ```p7
-enum SomeErrors {
-  NumberIsNot42,
+enum EnumName {
+  UnitVariant,
+  PayloadVariant(Type1, Type2, ...),
 }
 ```
 
-v1 may support unit variants only. Payload variants are [[TODO]].
+Example with unit variants only:
+```p7
+enum SomeErrors {
+  NumberIsNot42,
+  DivisionByZero,
+}
+```
 
-### 13.2 Variant naming
+Example with both unit and payload variants:
+```p7
+enum Status {
+  Pending,
+  Active(int),
+  Failed(string, int),
+}
+```
 
-Variants are referenced as:
-- `SomeErrors.NumberIsNot42`
+### 13.2 Variant naming and construction
 
-[[TODO]] whether variants are also in unqualified scope.
+Variants are always referenced qualified by the enum name:
+- `EnumName.VariantName`
+
+#### Construction syntax
+
+- **Unit variant**: `EnumName.VariantName`
+  ```p7
+  let e = SomeErrors.NumberIsNot42;
+  ```
+
+- **Payload variant**: `EnumName.VariantName(e1, e2, ...)`
+  ```p7
+  let s1 = Status.Active(42);
+  let s2 = Status.Failed("connection error", 500);
+  ```
+
+#### Typing rules
+
+- Each argument in a payload variant construction must match the corresponding payload field type.
+- The number of arguments must exactly match the number of payload fields; otherwise ERROR.
+- The result has type `EnumName`.
+
+#### Restrictions
+
+v1 does not support:
+- Pattern matching operators (`match`)
+- Variant introspection operators (`is`)
+- Payload extraction operators (`as?`)
+
+These may be added in future versions.
 
 ---
 
@@ -1090,7 +1138,70 @@ let q = Pair<string, int>("a", 2);
 ```
 
 ### 20.4 Generic enums
-[[TODO]] payload variants + generic enum syntax.
+
+Generic enums support type parameters:
+```p7
+enum Name<T, U> {
+  Variant1,
+  Variant2(T),
+  Variant3(T, U),
+}
+```
+
+#### Type arguments in type positions
+
+In a type position, type arguments use the existing type syntax:
+- `Option<int>`
+- `Result<string, Error>`
+- `array<Option<int>>`
+
+#### Type arguments at construction sites (v1)
+
+Construction of a generic enum variant uses the enum's name specialized with an explicit type argument list:
+
+- `Name<T1, T2, ...>.VariantName` for unit variants
+- `Name<T1, T2, ...>.VariantName(args...)` for payload variants
+
+Rules:
+- The number of type arguments MUST exactly match the enum's type parameter list; otherwise ERROR.
+- In v1, explicit type arguments are the *only* way to construct a generic enum variant. Type argument inference is not performed.
+  - Therefore, `Option.Some(1)` is ERROR, even if context suggests the type.
+  - `Option<int>.Some(1)` is OK.
+
+#### Example: `Option<T>`
+
+```p7
+enum Option<T> {
+  None,
+  Some(T),
+}
+
+fn example() -> unit {
+  let x = Option<int>.Some(42);
+  let y = Option<string>.None;
+  let z = Option<float>.Some(3.14);
+}
+```
+
+#### Example: `Result<T, E>`
+
+```p7
+enum Result<T, E> {
+  Ok(T),
+  Err(E),
+}
+
+fn example() -> unit {
+  let success = Result<int, string>.Ok(100);
+  let failure = Result<int, string>.Err("network error");
+}
+```
+
+Note: Without pattern matching in v1, generic enums are primarily useful for:
+- Type-safe value construction and passing
+- API design and future extensibility
+- Host interop that may inspect enum variants externally
+
 
 ### 20.5 Bounds
 
