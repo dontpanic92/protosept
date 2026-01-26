@@ -26,6 +26,7 @@ pub struct Generator {
     builder: ByteCodeBuilder,
     symbol_table: SymbolTable,
     local_scope: Option<LocalSymbolScope>,
+    pending_monomorphizations: Vec<(u32, TypeId, Vec<Statement>, Vec<String>, Vec<Type>)>, // (symbol_id, type_id, body, param_names, params)
 }
 
 impl Generator {
@@ -34,12 +35,49 @@ impl Generator {
             builder: ByteCodeBuilder::new(),
             symbol_table: SymbolTable::new(),
             local_scope: None,
+            pending_monomorphizations: Vec::new(),
         }
     }
 
     pub fn generate(&mut self, statements: Vec<Statement>) -> SaResult<Module> {
         for statement in statements {
             self.generate_statement(statement)?;
+        }
+        
+        // Generate bytecode for all pending monomorphizations
+        // These were deferred to avoid inline generation during function bodies
+        while !self.pending_monomorphizations.is_empty() {
+            // Take all pending monomorphizations
+            let pending = std::mem::take(&mut self.pending_monomorphizations);
+            
+            for (symbol_id, _type_id, body, param_names, params) in pending {
+                // Generate the monomorphized function's bytecode
+                let address = self.builder.next_address() as u32;
+                
+                // Update the symbol's address
+                if let Some(sym) = self.symbol_table.symbols.get_mut(symbol_id as usize) {
+                    if let SymbolKind::Function { address: ref mut func_addr, .. } = sym.kind {
+                        *func_addr = address;
+                    }
+                }
+                
+                // Set up local scope and generate body
+                let variables: Vec<Variable> = param_names.iter()
+                    .zip(params.iter())
+                    .map(|(name, ty)| Variable {
+                        name: name.clone(),
+                        ty: ty.clone(),
+                    })
+                    .collect();
+                
+                let saved_local_scope = self.local_scope.take();
+                self.local_scope = Some(LocalSymbolScope::new(variables));
+                
+                let _ = self.generate_block(body, vec![])?;
+                self.builder.ret();
+                
+                self.local_scope = saved_local_scope;
+            }
         }
 
         Ok(Module {
@@ -1113,6 +1151,9 @@ impl Generator {
         };
 
         let type_id = self.symbol_table.add_udt(UserDefinedType::Function(ty));
+        
+        // For generic functions, use placeholder address (no bytecode generated)
+        // For non-generic functions, capture the address where body generation will start
         let symbol = Symbol::new(
             declaration.name.name,
             qualified_name,
@@ -1178,7 +1219,7 @@ impl Generator {
                     }
                     
                     // Monomorphize the function
-                    let (addr, func_type_id) = self.monomorphize_function(
+                    let (_addr, func_type_id, symbol_id) = self.monomorphize_function(
                         type_id,
                         resolved_type_args,
                         &base.name,
@@ -1218,8 +1259,8 @@ impl Generator {
                         self.generate_expression(expr)?;
                     }
                     
-                    // Call the monomorphized function
-                    self.builder.call(addr);
+                    // Call the monomorphized function using symbol_id
+                    self.builder.call(symbol_id);
                     
                     return Ok(ret_type);
                 }
@@ -1967,7 +2008,7 @@ impl Generator {
         base_name: &str,
         line: usize,
         col: usize,
-    ) -> SaResult<(u32, TypeId)> {  // Returns (address, type_id)
+    ) -> SaResult<(u32, TypeId, u32)> {  // Returns (address, type_id, symbol_id)
         // Check cache first
         let cache_key = (base_type_id, type_args.clone());
         if let Some(&cached_type_id) = self.symbol_table.monomorphization_cache.get(&cache_key) {
@@ -1984,9 +2025,11 @@ impl Generator {
             };
             
             // Find the symbol with this function's qualified name
-            if let Some(symbol) = self.symbol_table.find_symbol_by_qualified_name(&cached_func.qualified_name) {
-                if let SymbolKind::Function { address, type_id } = symbol.kind {
-                    return Ok((address, type_id));
+            for (idx, symbol) in self.symbol_table.symbols.iter().enumerate() {
+                if symbol.qualified_name == cached_func.qualified_name {
+                    if let SymbolKind::Function { address, type_id } = symbol.kind {
+                        return Ok((address, type_id, idx as u32));
+                    }
                 }
             }
             
@@ -2020,10 +2063,12 @@ impl Generator {
         
         // If the function has no type parameters, just return it as-is
         if base_func.type_parameters.is_empty() {
-            // Find the address of the base function
-            if let Some(symbol) = self.symbol_table.find_symbol_by_qualified_name(&base_func.qualified_name) {
-                if let SymbolKind::Function { address, type_id } = symbol.kind {
-                    return Ok((address, type_id));
+            // Find the address and symbol_id of the base function
+            for (idx, symbol) in self.symbol_table.symbols.iter().enumerate() {
+                if symbol.qualified_name == base_func.qualified_name {
+                    if let SymbolKind::Function { address, type_id } = symbol.kind {
+                        return Ok((address, type_id, idx as u32));
+                    }
                 }
             }
             return Err(SemanticError::TypeMismatch {
@@ -2112,44 +2157,34 @@ impl Generator {
         // Cache it
         self.symbol_table.monomorphization_cache.insert(cache_key, new_type_id);
         
-        // Now generate the function body with the monomorphized types
-        let address = self.builder.next_address() as u32;
-        
-        // Create symbol for the monomorphized function
+        // Create symbol for the monomorphized function with placeholder address
+        // We'll generate the actual bytecode later to avoid inline generation
         let symbol = Symbol::new(
             base_name.to_string(),
             monomorphized_name.clone(),
             SymbolKind::Function {
                 type_id: new_type_id,
-                address,
+                address: 0xFFFFFFFF, // Placeholder - will be updated when bytecode is generated
             },
         );
         
         self.symbol_table.push_symbol(symbol);
+        let symbol_id = (self.symbol_table.symbols.len() - 1) as u32;
         
-        // Save the current local scope (we're generating a nested function)
-        let saved_local_scope = self.local_scope.take();
+        // Queue this monomorphization for later bytecode generation
+        self.pending_monomorphizations.push((
+            symbol_id,
+            new_type_id,
+            body.clone(),
+            monomorphized_func.param_names.clone(),
+            monomorphized_params.clone(),
+        ));
         
-        // Set up local scope with monomorphized parameter types
-        let params: Vec<Variable> = monomorphized_func.param_names.iter()
-            .zip(monomorphized_func.params.iter())
-            .map(|(name, ty)| Variable {
-                name: name.clone(),
-                ty: ty.clone(),
-            })
-            .collect();
-        
-        self.local_scope = Some(LocalSymbolScope::new(params));
-        
-        // Generate the function body
-        let _ = self.generate_block(body.clone(), vec![])?;
-        self.builder.ret();
-        
-        // Restore the saved local scope
-        self.local_scope = saved_local_scope;
+        // Don't generate bytecode here - it will be generated later
+        // Just return the symbol_id so the caller can emit a call instruction
         self.symbol_table.pop_symbol();
         
-        Ok((address, new_type_id))
+        Ok((0xFFFFFFFF, new_type_id, symbol_id))
     }
     
     /// Convert a semantic Type to a ParsedType (for substitution purposes)
