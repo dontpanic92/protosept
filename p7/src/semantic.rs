@@ -154,7 +154,7 @@ pub enum Type {
 
 impl Type {
     pub fn is_struct(&self) -> bool {
-        matches!(self, Type::Function(_))
+        matches!(self, Type::Struct(_))
     }
 }
 
