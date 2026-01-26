@@ -89,6 +89,16 @@ pub struct Function {
     pub param_defaults: Vec<Option<crate::ast::Expression>>,
     pub return_type: Type,
     pub attributes: Vec<crate::ast::Attribute>,
+    // For generic functions: stores the original type parameter names
+    pub type_parameters: Vec<String>,
+    // For generic functions: stores the original parsed parameter types (before substitution)
+    pub generic_param_types: Option<Vec<crate::ast::Type>>,
+    // For generic functions: stores the original parsed return type (before substitution)
+    pub generic_return_type: Option<crate::ast::Type>,
+    // For generic functions: stores the function body AST for monomorphization
+    pub generic_body: Option<Vec<crate::ast::Statement>>,
+    // For monomorphized functions: stores the base generic function's TypeId and concrete type arguments
+    pub monomorphization: Option<(TypeId, Vec<Type>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -144,7 +154,7 @@ pub enum Type {
 
 impl Type {
     pub fn is_struct(&self) -> bool {
-        matches!(self, Type::Function(_))
+        matches!(self, Type::Struct(_))
     }
 }
 
@@ -332,6 +342,10 @@ impl SymbolTable {
 
     pub fn pop_symbol(&mut self) {
         self.symbol_chain.pop();
+    }
+
+    pub fn find_symbol_by_qualified_name(&self, qualified_name: &str) -> Option<&Symbol> {
+        self.symbols.iter().find(|s| s.qualified_name == qualified_name)
     }
 
     pub fn get_new_symbol_qualified_name(&self, name: String) -> String {

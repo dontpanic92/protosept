@@ -1,7 +1,6 @@
-// compile_fail: Generic types not fully implemented - semantic analysis will fail
-// Test that generic syntax is parsed correctly (compile-only test)
-// This file tests that the PARSER accepts generic syntax
-// Full semantic support is not yet implemented
+// Note: Generic functions and structs are now implemented!
+// This file tests that the PARSER accepts generic syntax for functions, structs, and enums
+// Generic enums are parsed but full semantic support (payload variants) is not yet implemented
 
 // Generic struct with single type parameter - tests parser accepts <T> syntax
 struct Box<T>(
