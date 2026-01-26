@@ -14,6 +14,11 @@ pub struct test(
     pub expected_type: string,
     pub expected_value: string,
 );
+
+// Another struct to test selective import
+pub struct test2(
+    pub some_field: string,
+);
 "#;
 
 #[derive(Debug)]
@@ -162,8 +167,9 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
     let content = fs::read_to_string(file_path)?;
 
     // Create module provider with the test module
+    // The module is registered as "test" which contains symbols like "test" and "test2"
     let mut module_provider = InMemoryModuleProvider::new();
-    module_provider.add_module("test.test".to_string(), TEST_MODULE_SOURCE.to_string());
+    module_provider.add_module("test".to_string(), TEST_MODULE_SOURCE.to_string());
 
     // Compile-fail tests: add `// compile_fail` anywhere in the file.
     if content
