@@ -18,6 +18,10 @@ use crate::errors::SemanticError;
 
 pub type SaResult<T> = Result<T, SemanticError>;
 
+// Synthetic position values for compiler-generated code (e.g., monomorphization)
+const SYNTHETIC_LINE: usize = 0;
+const SYNTHETIC_COL: usize = 0;
+
 pub struct Generator {
     builder: ByteCodeBuilder,
     symbol_table: SymbolTable,
@@ -304,7 +308,7 @@ impl Generator {
                 is_pub,
                 name,
                 attributes,
-                type_parameters: _,
+                type_parameters,
                 fields,
                 methods,
             } => {
@@ -312,11 +316,38 @@ impl Generator {
                     .symbol_table
                     .get_new_symbol_qualified_name(name.name.clone());
                 
-                let mut fields_with_types = Vec::new();
-                for f in &fields {
-                    let field_type = self.get_semantic_type(&f.field_type)?;
-                    fields_with_types.push((f.name.name.clone(), field_type));
-                }
+                // Extract type parameter names
+                let type_param_names: Vec<String> = type_parameters
+                    .iter()
+                    .map(|tp| tp.name.name.clone())
+                    .collect();
+                
+                let is_generic = !type_param_names.is_empty();
+                
+                // For generic structs, store parsed field types; for non-generic, resolve them
+                let (fields_with_types, generic_field_types) = if is_generic {
+                    // For generic structs, store placeholder types and keep parsed types
+                    let parsed_field_types: Vec<crate::ast::Type> = fields
+                        .iter()
+                        .map(|f| f.field_type.clone())
+                        .collect();
+                    
+                    // Use Unit as placeholder - these will be properly typed during monomorphization
+                    let placeholder_fields: Vec<(String, Type)> = fields
+                        .iter()
+                        .map(|f| (f.name.name.clone(), Type::Primitive(PrimitiveType::Unit)))
+                        .collect();
+                    
+                    (placeholder_fields, Some(parsed_field_types))
+                } else {
+                    // For non-generic structs, resolve types normally
+                    let mut resolved_fields = Vec::new();
+                    for f in &fields {
+                        let field_type = self.get_semantic_type(&f.field_type)?;
+                        resolved_fields.push((f.name.name.clone(), field_type));
+                    }
+                    (resolved_fields, None)
+                };
                 
                 let field_defaults = fields.iter().map(|f| f.default_value.clone()).collect();
 
@@ -325,6 +356,9 @@ impl Generator {
                     fields: fields_with_types,
                     field_defaults,
                     attributes: attributes.clone(),
+                    type_parameters: type_param_names,
+                    generic_field_types,
+                    monomorphization: None,  // This is the generic definition, not a monomorphization
                 };
                 let type_id = self.symbol_table.add_udt(UserDefinedType::Struct(ty));
 
@@ -967,6 +1001,18 @@ impl Generator {
                 let ty = self.generate_expression(*expression)?;
                 Ok(ty)
             }
+            Expression::GenericInstantiation { base, .. } => {
+                // GenericInstantiation is only valid as a callee in function calls (struct construction)
+                // It's not a standalone expression that can be evaluated
+                Err(SemanticError::TypeMismatch {
+                    lhs: "expression value".to_string(),
+                    rhs: format!("generic type instantiation '{}'", base.name),
+                    pos: Some(SourcePos {
+                        line: base.line,
+                        col: base.col,
+                    }),
+                })
+            }
         }
     }
 
@@ -1052,6 +1098,37 @@ impl Generator {
         let arguments = call.arguments;
         let (call_line, call_col) = callee_expr.get_pos();
         let call_name = callee_expr.get_name();
+
+        // Handle generic instantiation: Container<int>(value)
+        if let Expression::GenericInstantiation { base, type_args } = &callee_expr {
+            // Resolve the generic type with explicit type arguments
+            let parsed_type = crate::ast::Type::Generic {
+                base: base.clone(),
+                type_args: type_args.clone(),
+            };
+            
+            // Use monomorphization to get the concrete type
+            let ty = self.get_semantic_type(&parsed_type)?;
+            
+            if let Type::Struct(type_id) = ty {
+                return self.generate_struct_from_call(
+                    crate::ast::FunctionCall {
+                        callee: Box::new(callee_expr.clone()),
+                        arguments,
+                    },
+                    type_id,
+                );
+            } else {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: "struct".to_string(),
+                    rhs: ty.to_string(),
+                    pos: Some(SourcePos {
+                        line: call_line,
+                        col: call_col,
+                    }),
+                });
+            }
+        }
 
         // Handle field-call (method or static method) specially.
         if let Expression::FieldAccess { object, field } = callee_expr {
@@ -1587,7 +1664,7 @@ impl Generator {
         Ok(())
     }
 
-    fn get_semantic_type(&self, parsed_type: &ParsedType) -> SaResult<Type> {
+    fn get_semantic_type(&mut self, parsed_type: &ParsedType) -> SaResult<Type> {
         match parsed_type {
             ParsedType::Identifier(identifier) => {
                 if let Some(ty) = self.symbol_table.find_type_in_scope(&identifier.name) {
@@ -1611,22 +1688,224 @@ impl Generator {
                 Ok(Type::Array(Box::new(ty)))
             }
             ParsedType::Generic { base, type_args } => {
-                // For now, treat generic types as the base type
-                // TODO: implement proper generic type resolution with monomorphization
-                if let Some(ty) = self.symbol_table.find_type_in_scope(&base.name) {
-                    // Validate that type_args can be resolved
-                    for arg in type_args {
-                        self.get_semantic_type(arg)?;
-                    }
-                    Ok(ty)
+                // Implement proper generic type resolution with monomorphization
+                
+                // First, find the base generic type
+                let base_type = if let Some(ty) = self.symbol_table.find_type_in_scope(&base.name) {
+                    ty
                 } else {
-                    Err(SemanticError::TypeNotFound {
+                    return Err(SemanticError::TypeNotFound {
                         name: base.name.clone(),
                         pos: Some(SourcePos {
                             line: base.line,
                             col: base.col,
                         }),
+                    });
+                };
+                
+                // Resolve all type arguments
+                let mut resolved_type_args = Vec::new();
+                for arg in type_args {
+                    resolved_type_args.push(self.get_semantic_type(arg)?);
+                }
+                
+                // For now, only handle struct monomorphization
+                match base_type {
+                    Type::Struct(base_type_id) => {
+                        self.monomorphize_struct(base_type_id, resolved_type_args, &base.name, base.line, base.col)
+                    }
+                    _ => {
+                        // For non-struct types, just return the base type for now
+                        // TODO: implement monomorphization for functions and enums
+                        Ok(base_type)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Monomorphize a generic struct with concrete type arguments
+    fn monomorphize_struct(
+        &mut self,
+        base_type_id: TypeId,
+        type_args: Vec<Type>,
+        base_name: &str,
+        line: usize,
+        col: usize,
+    ) -> SaResult<Type> {
+        // Check cache first
+        let cache_key = (base_type_id, type_args.clone());
+        if let Some(&cached_type_id) = self.symbol_table.monomorphization_cache.get(&cache_key) {
+            return Ok(Type::Struct(cached_type_id));
+        }
+        
+        // Get the base generic struct definition
+        let base_struct = match self.symbol_table.get_udt(base_type_id) {
+            UserDefinedType::Struct(s) => s.clone(),
+            _ => {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: "struct".to_string(),
+                    rhs: "non-struct".to_string(),
+                    pos: Some(SourcePos { line, col }),
+                });
+            }
+        };
+        
+        // Validate number of type arguments matches type parameters
+        if base_struct.type_parameters.len() != type_args.len() {
+            return Err(SemanticError::TypeMismatch {
+                lhs: format!("{} type parameters", base_struct.type_parameters.len()),
+                rhs: format!("{} type arguments", type_args.len()),
+                pos: Some(SourcePos { line, col }),
+            });
+        }
+        
+        // If the struct has no type parameters, just return it as-is
+        if base_struct.type_parameters.is_empty() {
+            return Ok(Type::Struct(base_type_id));
+        }
+        
+        // Get the parsed field types
+        let parsed_field_types = base_struct.generic_field_types.as_ref().ok_or_else(|| {
+            SemanticError::TypeMismatch {
+                lhs: "generic struct".to_string(),
+                rhs: "missing generic field types".to_string(),
+                pos: Some(SourcePos { line, col }),
+            }
+        })?;
+        
+        // Build type parameter substitution map for parsed types
+        let mut parsed_type_substitution: std::collections::HashMap<String, ParsedType> = 
+            std::collections::HashMap::new();
+        for (param_name, concrete_type) in base_struct.type_parameters.iter().zip(type_args.iter()) {
+            // Convert the semantic Type back to ParsedType for substitution
+            let parsed_type = self.type_to_parsed_type(concrete_type);
+            parsed_type_substitution.insert(param_name.clone(), parsed_type);
+        }
+        
+        // Substitute and resolve field types
+        let mut monomorphized_fields: Vec<(String, Type)> = Vec::new();
+        for (i, (field_name, _)) in base_struct.fields.iter().enumerate() {
+            let parsed_field_type = &parsed_field_types[i];
+            let substituted_parsed_type = self.substitute_parsed_type(
+                parsed_field_type,
+                &parsed_type_substitution
+            );
+            let resolved_type = self.get_semantic_type(&substituted_parsed_type)?;
+            monomorphized_fields.push((field_name.clone(), resolved_type));
+        }
+        
+        // Create monomorphized struct name
+        let type_args_str = type_args
+            .iter()
+            .map(|t| t.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let monomorphized_name = format!("{}<{}>", base_struct.qualified_name, type_args_str);
+        
+        // Create the monomorphized struct
+        let monomorphized_struct = Struct {
+            qualified_name: monomorphized_name,
+            fields: monomorphized_fields,
+            field_defaults: base_struct.field_defaults.clone(),
+            attributes: base_struct.attributes.clone(),
+            type_parameters: Vec::new(), // Monomorphized structs have no type parameters
+            generic_field_types: None,
+            monomorphization: Some((base_type_id, type_args.clone())),
+        };
+        
+        // Add to type table
+        let new_type_id = self.symbol_table.add_udt(UserDefinedType::Struct(monomorphized_struct));
+        
+        // Cache it
+        self.symbol_table.monomorphization_cache.insert(cache_key, new_type_id);
+        
+        Ok(Type::Struct(new_type_id))
+    }
+    
+    /// Convert a semantic Type to a ParsedType (for substitution purposes)
+    fn type_to_parsed_type(&self, ty: &Type) -> ParsedType {
+        match ty {
+            Type::Primitive(p) => {
+                let name = match p {
+                    PrimitiveType::Int => "int",
+                    PrimitiveType::Float => "float",
+                    PrimitiveType::Bool => "bool",
+                    PrimitiveType::Char => "char",
+                    PrimitiveType::String => "string",
+                    PrimitiveType::Unit => "unit",
+                };
+                ParsedType::Identifier(Identifier {
+                    name: name.to_string(),
+                    line: SYNTHETIC_LINE,
+                    col: SYNTHETIC_COL,
+                })
+            }
+            Type::Reference(inner) => {
+                ParsedType::Reference(Box::new(self.type_to_parsed_type(inner)))
+            }
+            Type::Array(inner) => {
+                ParsedType::Array(Box::new(self.type_to_parsed_type(inner)))
+            }
+            Type::Struct(type_id) => {
+                // Get the struct name from the symbol table
+                let udt = self.symbol_table.get_udt(*type_id);
+                if let UserDefinedType::Struct(s) = udt {
+                    ParsedType::Identifier(Identifier {
+                        name: s.qualified_name.clone(),
+                        line: SYNTHETIC_LINE,
+                        col: SYNTHETIC_COL,
                     })
+                } else {
+                    // Fallback
+                    ParsedType::Identifier(Identifier {
+                        name: format!("struct_{}", type_id),
+                        line: SYNTHETIC_LINE,
+                        col: SYNTHETIC_COL,
+                    })
+                }
+            }
+            _ => {
+                // For other types, create a simple identifier
+                ParsedType::Identifier(Identifier {
+                    name: ty.to_string(),
+                    line: SYNTHETIC_LINE,
+                    col: SYNTHETIC_COL,
+                })
+            }
+        }
+    }
+    
+    /// Substitute type parameters in a ParsedType
+    fn substitute_parsed_type(
+        &self,
+        parsed_type: &ParsedType,
+        substitution: &std::collections::HashMap<String, ParsedType>,
+    ) -> ParsedType {
+        match parsed_type {
+            ParsedType::Identifier(ident) => {
+                // Check if this identifier is a type parameter
+                if let Some(concrete_type) = substitution.get(&ident.name) {
+                    concrete_type.clone()
+                } else {
+                    parsed_type.clone()
+                }
+            }
+            ParsedType::Reference(inner) => {
+                ParsedType::Reference(Box::new(self.substitute_parsed_type(inner, substitution)))
+            }
+            ParsedType::Array(inner) => {
+                ParsedType::Array(Box::new(self.substitute_parsed_type(inner, substitution)))
+            }
+            ParsedType::Generic { base, type_args } => {
+                // Recursively substitute in type arguments
+                let substituted_args: Vec<ParsedType> = type_args
+                    .iter()
+                    .map(|arg| self.substitute_parsed_type(arg, substitution))
+                    .collect();
+                ParsedType::Generic {
+                    base: base.clone(),
+                    type_args: substituted_args,
                 }
             }
         }

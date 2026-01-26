@@ -1,0 +1,27 @@
+// Test that generic type syntax works in declarations
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// Generic struct declaration
+struct Box<T>(
+    value: T,
+);
+
+// Function that takes a monomorphized type in its signature
+// Note: This tests that Box<int> can be resolved as a type
+fn get_boxed_value_int(b: Box<int>) -> int {
+    b.value
+}
+
+fn get_boxed_value_string(b: Box<string>) -> string {
+    b.value
+}
+
+// Since we can't construct Box<int> directly yet (no syntax for explicit type args),
+// we'll just test that the generic struct declaration works
+@test(expected_type = "int", expected_value = "42")
+fn test_generic_declaration() -> int {
+    42
+}

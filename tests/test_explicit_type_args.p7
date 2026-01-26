@@ -1,0 +1,71 @@
+// Test for explicit type arguments in generic struct construction
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// Generic struct with a single type parameter
+struct Container<T>(
+    value: T,
+);
+
+// Test with explicit int type argument
+@test(expected_type = "int", expected_value = "42")
+fn test_container_int() -> int {
+    let c = Container<int>(42);
+    c.value
+}
+
+// Test with another int value
+@test(expected_type = "int", expected_value = "100")
+fn test_container_int2() -> int {
+    let c = Container<int>(100);
+    c.value
+}
+
+// Generic struct with two type parameters
+struct Pair<T, U>(
+    first: T,
+    second: U,
+);
+
+// Test with two int types
+@test(expected_type = "int", expected_value = "10")
+fn test_pair_first() -> int {
+    let p = Pair<int, int>(10, 20);
+    p.first
+}
+
+@test(expected_type = "int", expected_value = "20")
+fn test_pair_second() -> int {
+    let p = Pair<int, int>(10, 20);
+    p.second
+}
+
+// Test multiple instantiations
+@test(expected_type = "int", expected_value = "99")
+fn test_multiple_instantiations() -> int {
+    let c1 = Container<int>(99);
+    let c2 = Container<int>(88);
+    c1.value
+}
+
+// Test with float types
+@test(expected_type = "float", expected_value = "3.14")
+fn test_container_float() -> float {
+    let c = Container<float>(3.14);
+    c.value
+}
+
+// Test pair with mixed types
+@test(expected_type = "int", expected_value = "5")
+fn test_pair_int_float() -> int {
+    let p = Pair<int, float>(5, 2.5);
+    p.first
+}
+
+@test(expected_type = "float", expected_value = "2.5")
+fn test_pair_float_second() -> float {
+    let p = Pair<int, float>(5, 2.5);
+    p.second
+}

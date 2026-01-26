@@ -146,6 +146,22 @@ impl Parser {
 
     fn parse_expression_suffix(&mut self, mut expression: Expression) -> ParseResult<Expression> {
         loop {
+            // Check for generic type arguments after an identifier: Container<int>
+            if let Expression::Identifier(ref ident) = expression {
+                if self.peek_match(TokenType::LessThan) {
+                    // Try to parse as generic instantiation
+                    if let Ok(type_args) = self.try_parse_type_arguments() {
+                        expression = Expression::GenericInstantiation {
+                            base: ident.clone(),
+                            type_args,
+                        };
+                        continue;
+                    }
+                    // If failed, it's a comparison operator, break out
+                    break;
+                }
+            }
+            
             if self.peek_match(TokenType::OpenParen) {
                 expression = self.parse_function_call(expression)?;
             } else if self.peek_match(TokenType::Dot) {
@@ -907,6 +923,74 @@ impl Parser {
                 }),
             })
         }
+    }
+
+    /// Try to parse type arguments in expression context (e.g., Container<int>)
+    /// Returns Ok with type args if successful, Err otherwise.
+    /// 
+    /// This is used to disambiguate between generic instantiation (`Container<int>`)
+    /// and comparison operators (`a < b`). The parser saves its position and attempts
+    /// to parse type arguments. If successful, it's a generic instantiation; if it fails,
+    /// the parser backtracks to the saved position and treats `<` as a comparison operator.
+    fn try_parse_type_arguments(&mut self) -> ParseResult<Vec<Type>> {
+        // Save parser state for potential backtracking
+        let saved_pos = self.position;
+        
+        // Consume the '<'
+        if !self.peek_match(TokenType::LessThan) {
+            return Err(ParseError::UnexpectedToken {
+                found: "not <".to_string(),
+                pos: None,
+            });
+        }
+        self.consume();
+        
+        // Check for empty type argument list: identifier<>
+        // This is not allowed (consistent with parse_type behavior)
+        if self.peek_match(TokenType::GreaterThan) {
+            self.position = saved_pos;
+            return Err(ParseError::UnexpectedToken {
+                found: "empty type argument list".to_string(),
+                pos: None,
+            });
+        }
+        
+        // Try to parse type arguments
+        let mut type_args = vec![];
+        
+        loop {
+            // Try to parse a type
+            match self.parse_type() {
+                Ok(ty) => type_args.push(ty),
+                Err(_) => {
+                    // Failed to parse type - this might be a comparison operator
+                    // Restore position and fail gracefully
+                    self.position = saved_pos;
+                    return Err(ParseError::UnexpectedToken {
+                        found: "not a type argument".to_string(),
+                        pos: None,
+                    });
+                }
+            }
+            
+            if self.peek_match(TokenType::Comma) {
+                self.consume();
+            } else {
+                break;
+            }
+        }
+        
+        // Must end with '>'
+        if !self.peek_match(TokenType::GreaterThan) {
+            self.position = saved_pos;
+            return Err(ParseError::UnexpectedToken {
+                found: "expected '>' to close type arguments".to_string(),
+                pos: None,
+            });
+        }
+        self.consume();
+        
+        Ok(type_args)
     }
 
     fn parse_type_parameters(&mut self) -> ParseResult<Vec<TypeParameter>> {

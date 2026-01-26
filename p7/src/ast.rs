@@ -137,6 +137,11 @@ pub enum Expression {
         try_block: Box<Expression>,
         else_block: Option<Box<Expression>>,
     },
+    // Generic type instantiation with explicit type arguments (e.g., Container<int>)
+    GenericInstantiation {
+        base: Identifier,
+        type_args: Vec<Type>,
+    },
 
     Ref(Identifier),
 
@@ -212,6 +217,14 @@ impl Expression {
                 format!("{}.{}", object.get_name(), field.name)
             }
             Expression::Ref(identifier) => format!("ref {}", identifier.name),
+            Expression::GenericInstantiation { base, type_args } => {
+                let args = type_args
+                    .iter()
+                    .map(|t| t.get_name())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}<{}>", base.name, args)
+            }
             _ => "".to_string(),
         }
     }
@@ -222,6 +235,7 @@ impl Expression {
             Expression::FunctionCall(function_call) => function_call.callee.get_pos(),
             Expression::FieldAccess { object: _, field } => (field.line, field.col),
             Expression::Ref(identifier) => (identifier.line, identifier.col),
+            Expression::GenericInstantiation { base, .. } => (base.line, base.col),
             _ => (0, 0),
         }
     }
