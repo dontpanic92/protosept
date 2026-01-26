@@ -1023,18 +1023,53 @@ impl Generator {
         let qualified_name = self
             .symbol_table
             .get_new_symbol_qualified_name(declaration.name.name.clone());
-        let params = declaration
-            .parameters
+        
+        // Extract type parameter names
+        let type_param_names: Vec<String> = declaration
+            .type_parameters
             .iter()
-            .map(|arg| {
-                self.get_semantic_type(&arg.arg_type).and_then(|ty| {
+            .map(|tp| tp.name.name.clone())
+            .collect();
+        
+        let is_generic = !type_param_names.is_empty();
+        
+        // For generic functions, store parsed parameter types; for non-generic, resolve them
+        let (params, generic_param_types) = if is_generic {
+            // For generic functions, store placeholder types and keep parsed types
+            let params: Vec<Variable> = declaration
+                .parameters
+                .iter()
+                .map(|arg| {
                     Ok(Variable {
                         name: arg.name.name.clone(),
-                        ty,
+                        ty: Type::Primitive(PrimitiveType::Unit), // Placeholder
                     })
                 })
-            })
-            .collect::<SaResult<Vec<Variable>>>()?;
+                .collect::<SaResult<Vec<Variable>>>()?;
+            
+            let generic_types: Vec<crate::ast::Type> = declaration
+                .parameters
+                .iter()
+                .map(|arg| arg.arg_type.clone())
+                .collect();
+            
+            (params, Some(generic_types))
+        } else {
+            // For non-generic functions, resolve types normally
+            let params = declaration
+                .parameters
+                .iter()
+                .map(|arg| {
+                    self.get_semantic_type(&arg.arg_type).and_then(|ty| {
+                        Ok(Variable {
+                            name: arg.name.name.clone(),
+                            ty,
+                        })
+                    })
+                })
+                .collect::<SaResult<Vec<Variable>>>()?;
+            (params, None)
+        };
 
         // Collect default expressions (AST expressions) for each parameter
         let param_defaults: Vec<Option<Expression>> = declaration
@@ -1043,17 +1078,25 @@ impl Generator {
             .map(|param| param.default_value.clone())
             .collect();
 
-        let return_type = if let Some(ret) = declaration.return_type {
-            self.get_semantic_type(&ret)?
+        let (return_type, generic_return_type) = if is_generic {
+            // For generic functions, store placeholder and keep parsed type
+            let generic_ret = declaration.return_type.clone();
+            (Type::Primitive(PrimitiveType::Unit), generic_ret)
         } else {
-            Type::Primitive(PrimitiveType::Unit)
+            let ret_type = if let Some(ret) = declaration.return_type {
+                self.get_semantic_type(&ret)?
+            } else {
+                Type::Primitive(PrimitiveType::Unit)
+            };
+            
+            if matches!(ret_type, Type::Reference(_)) {
+                return Err(SemanticError::Other(
+                    "Functions cannot return non-escapable ref types".to_string(),
+                ));
+            }
+            
+            (ret_type, None)
         };
-
-        if matches!(return_type, Type::Reference(_)) {
-            return Err(SemanticError::Other(
-                "Functions cannot return non-escapable ref types".to_string(),
-            ));
-        }
 
         let ty = Function {
             qualified_name: qualified_name.clone(),
@@ -1062,6 +1105,11 @@ impl Generator {
             param_defaults: param_defaults.clone(),
             return_type,
             attributes: declaration.attributes.clone(),
+            type_parameters: type_param_names.clone(),
+            generic_param_types,
+            generic_return_type,
+            generic_body: if is_generic { Some(declaration.body.clone()) } else { None },
+            monomorphization: None,  // This is the generic definition, not a monomorphization
         };
 
         let type_id = self.symbol_table.add_udt(UserDefinedType::Function(ty));
@@ -1076,17 +1124,22 @@ impl Generator {
 
         self.symbol_table.push_symbol(symbol);
 
-        self.local_scope = Some(LocalSymbolScope::new(params.clone()));
-        let ty = self.generate_block(declaration.body, vec![])?;
-        // Always emit Ret so unit-returning functions don't fall-through into subsequent code.
-        // The VM `Ret` handler is responsible for popping the frame even if there's no value.
-        if ty != Type::Primitive(PrimitiveType::Unit) {
-            self.builder.ret();
-        } else {
-            self.builder.ret();
-        }
+        // Only generate function body for non-generic functions
+        // Generic functions will be monomorphized when called
+        if !is_generic {
+            self.local_scope = Some(LocalSymbolScope::new(params.clone()));
+            let ty = self.generate_block(declaration.body, vec![])?;
+            // Always emit Ret so unit-returning functions don't fall-through into subsequent code.
+            // The VM `Ret` handler is responsible for popping the frame even if there's no value.
+            if ty != Type::Primitive(PrimitiveType::Unit) {
+                self.builder.ret();
+            } else {
+                self.builder.ret();
+            }
 
-        self.local_scope = None;
+            self.local_scope = None;
+        }
+        
         self.symbol_table.pop_symbol();
 
         Ok(())
@@ -1099,34 +1152,117 @@ impl Generator {
         let (call_line, call_col) = callee_expr.get_pos();
         let call_name = callee_expr.get_name();
 
-        // Handle generic instantiation: Container<int>(value)
+        // Handle generic instantiation: Container<int>(value) or identity<int>(42)
         if let Expression::GenericInstantiation { base, type_args } = &callee_expr {
-            // Resolve the generic type with explicit type arguments
-            let parsed_type = crate::ast::Type::Generic {
-                base: base.clone(),
-                type_args: type_args.clone(),
-            };
-            
-            // Use monomorphization to get the concrete type
-            let ty = self.get_semantic_type(&parsed_type)?;
-            
-            if let Type::Struct(type_id) = ty {
-                return self.generate_struct_from_call(
-                    crate::ast::FunctionCall {
-                        callee: Box::new(callee_expr.clone()),
-                        arguments,
-                    },
-                    type_id,
-                );
-            } else {
-                return Err(SemanticError::TypeMismatch {
-                    lhs: "struct".to_string(),
-                    rhs: ty.to_string(),
+            // First, try to find the symbol
+            let symbol_id = self.symbol_table.find_symbol_in_scope(&base.name).ok_or(
+                SemanticError::FunctionNotFound {
+                    name: base.name.clone(),
                     pos: Some(SourcePos {
-                        line: call_line,
-                        col: call_col,
+                        line: base.line,
+                        col: base.col,
                     }),
-                });
+                },
+            )?;
+            
+            let symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
+            let symbol_kind = symbol.kind.clone();  // Clone to avoid borrow issues
+            
+            match symbol_kind {
+                SymbolKind::Function { type_id, .. } => {
+                    // This is a generic function call like identity<int>(42)
+                    // Resolve all type arguments
+                    let mut resolved_type_args = Vec::new();
+                    for arg in type_args {
+                        resolved_type_args.push(self.get_semantic_type(arg)?);
+                    }
+                    
+                    // Monomorphize the function
+                    let (addr, func_type_id) = self.monomorphize_function(
+                        type_id,
+                        resolved_type_args,
+                        &base.name,
+                        base.line,
+                        base.col,
+                    )?;
+                    
+                    let function_udt = match self.symbol_table.get_udt(func_type_id) {
+                        UserDefinedType::Function(f) => f.clone(),
+                        _ => {
+                            return Err(SemanticError::FunctionNotFound {
+                                name: base.name.clone(),
+                                pos: Some(SourcePos {
+                                    line: base.line,
+                                    col: base.col,
+                                }),
+                            });
+                        }
+                    };
+                    
+                    let param_names: Vec<String> = function_udt.param_names.clone();
+                    let param_defaults: Vec<Option<Expression>> = function_udt.param_defaults.clone();
+                    let ret_type = function_udt.return_type.clone();
+                    
+                    // Process arguments
+                    let ordered_exprs = self.process_arguments(
+                        &base.name,
+                        base.line,
+                        base.col,
+                        arguments,
+                        &param_names,
+                        &param_defaults,
+                    )?;
+                    
+                    // Generate argument evaluation
+                    for expr in ordered_exprs {
+                        self.generate_expression(expr)?;
+                    }
+                    
+                    // Call the monomorphized function
+                    self.builder.call(addr);
+                    
+                    return Ok(ret_type);
+                }
+                SymbolKind::Struct(type_id) => {
+                    // This is a struct instantiation like Container<int>(value)
+                    // Resolve the generic type with explicit type arguments
+                    let parsed_type = crate::ast::Type::Generic {
+                        base: base.clone(),
+                        type_args: type_args.clone(),
+                    };
+                    
+                    // Use monomorphization to get the concrete type
+                    let ty = self.get_semantic_type(&parsed_type)?;
+                    
+                    if let Type::Struct(struct_type_id) = ty {
+                        return self.generate_struct_from_call(
+                            crate::ast::FunctionCall {
+                                callee: Box::new(callee_expr.clone()),
+                                arguments,
+                            },
+                            struct_type_id,
+                        );
+                    } else {
+                        return Err(SemanticError::TypeMismatch {
+                            lhs: "struct".to_string(),
+                            rhs: ty.to_string(),
+                            pos: Some(SourcePos {
+                                line: call_line,
+                                col: call_col,
+                            }),
+                        });
+                    }
+                }
+                _ => {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "function or struct".to_string(),
+                        rhs: format!("symbol kind: {:?}", symbol.kind),
+                        pos: Some(SourcePos {
+                            line: base.line,
+                            col: base.col,
+                        }),
+                    });
+                }
             }
         }
 
@@ -1821,6 +1957,199 @@ impl Generator {
         self.symbol_table.monomorphization_cache.insert(cache_key, new_type_id);
         
         Ok(Type::Struct(new_type_id))
+    }
+    
+    /// Monomorphize a generic function with concrete type arguments
+    fn monomorphize_function(
+        &mut self,
+        base_type_id: TypeId,
+        type_args: Vec<Type>,
+        base_name: &str,
+        line: usize,
+        col: usize,
+    ) -> SaResult<(u32, TypeId)> {  // Returns (address, type_id)
+        // Check cache first
+        let cache_key = (base_type_id, type_args.clone());
+        if let Some(&cached_type_id) = self.symbol_table.monomorphization_cache.get(&cache_key) {
+            // Find the address of the cached function
+            let cached_func = match self.symbol_table.get_udt(cached_type_id) {
+                UserDefinedType::Function(f) => f,
+                _ => {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "function".to_string(),
+                        rhs: "non-function".to_string(),
+                        pos: Some(SourcePos { line, col }),
+                    });
+                }
+            };
+            
+            // Find the symbol with this function's qualified name
+            if let Some(symbol) = self.symbol_table.find_symbol_by_qualified_name(&cached_func.qualified_name) {
+                if let SymbolKind::Function { address, type_id } = symbol.kind {
+                    return Ok((address, type_id));
+                }
+            }
+            
+            return Err(SemanticError::TypeMismatch {
+                lhs: "function symbol".to_string(),
+                rhs: "not found".to_string(),
+                pos: Some(SourcePos { line, col }),
+            });
+        }
+        
+        // Get the base generic function definition
+        let base_func = match self.symbol_table.get_udt(base_type_id) {
+            UserDefinedType::Function(f) => f.clone(),
+            _ => {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: "function".to_string(),
+                    rhs: "non-function".to_string(),
+                    pos: Some(SourcePos { line, col }),
+                });
+            }
+        };
+        
+        // Validate number of type arguments matches type parameters
+        if base_func.type_parameters.len() != type_args.len() {
+            return Err(SemanticError::TypeMismatch {
+                lhs: format!("{} type parameters", base_func.type_parameters.len()),
+                rhs: format!("{} type arguments", type_args.len()),
+                pos: Some(SourcePos { line, col }),
+            });
+        }
+        
+        // If the function has no type parameters, just return it as-is
+        if base_func.type_parameters.is_empty() {
+            // Find the address of the base function
+            if let Some(symbol) = self.symbol_table.find_symbol_by_qualified_name(&base_func.qualified_name) {
+                if let SymbolKind::Function { address, type_id } = symbol.kind {
+                    return Ok((address, type_id));
+                }
+            }
+            return Err(SemanticError::TypeMismatch {
+                lhs: "function symbol".to_string(),
+                rhs: "not found".to_string(),
+                pos: Some(SourcePos { line, col }),
+            });
+        }
+        
+        // Get the parsed parameter types and return type
+        let parsed_param_types = base_func.generic_param_types.as_ref().ok_or_else(|| {
+            SemanticError::TypeMismatch {
+                lhs: "generic function".to_string(),
+                rhs: "missing generic parameter types".to_string(),
+                pos: Some(SourcePos { line, col }),
+            }
+        })?;
+        
+        let parsed_return_type = base_func.generic_return_type.as_ref();
+        
+        let body = base_func.generic_body.as_ref().ok_or_else(|| {
+            SemanticError::TypeMismatch {
+                lhs: "generic function".to_string(),
+                rhs: "missing generic body".to_string(),
+                pos: Some(SourcePos { line, col }),
+            }
+        })?;
+        
+        // Build type parameter substitution map for parsed types
+        let mut parsed_type_substitution: std::collections::HashMap<String, ParsedType> = 
+            std::collections::HashMap::new();
+        for (param_name, concrete_type) in base_func.type_parameters.iter().zip(type_args.iter()) {
+            // Convert the semantic Type back to ParsedType for substitution
+            let parsed_type = self.type_to_parsed_type(concrete_type);
+            parsed_type_substitution.insert(param_name.clone(), parsed_type);
+        }
+        
+        // Substitute and resolve parameter types
+        let mut monomorphized_params: Vec<Type> = Vec::new();
+        for parsed_param_type in parsed_param_types.iter() {
+            let substituted_parsed_type = self.substitute_parsed_type(
+                parsed_param_type,
+                &parsed_type_substitution
+            );
+            let resolved_type = self.get_semantic_type(&substituted_parsed_type)?;
+            monomorphized_params.push(resolved_type);
+        }
+        
+        // Substitute and resolve return type
+        let monomorphized_return_type = if let Some(parsed_ret) = parsed_return_type {
+            let substituted_parsed_type = self.substitute_parsed_type(
+                parsed_ret,
+                &parsed_type_substitution
+            );
+            self.get_semantic_type(&substituted_parsed_type)?
+        } else {
+            Type::Primitive(PrimitiveType::Unit)
+        };
+        
+        // Create monomorphized function name
+        let type_args_str = type_args
+            .iter()
+            .map(|t| t.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let monomorphized_name = format!("{}<{}>", base_func.qualified_name, type_args_str);
+        
+        // Create the monomorphized function metadata
+        let monomorphized_func = Function {
+            qualified_name: monomorphized_name.clone(),
+            params: monomorphized_params.clone(),
+            param_names: base_func.param_names.clone(),
+            param_defaults: base_func.param_defaults.clone(),
+            return_type: monomorphized_return_type,
+            attributes: base_func.attributes.clone(),
+            type_parameters: Vec::new(), // Monomorphized functions have no type parameters
+            generic_param_types: None,
+            generic_return_type: None,
+            generic_body: None,
+            monomorphization: Some((base_type_id, type_args.clone())),
+        };
+        
+        // Add to type table
+        let new_type_id = self.symbol_table.add_udt(UserDefinedType::Function(monomorphized_func.clone()));
+        
+        // Cache it
+        self.symbol_table.monomorphization_cache.insert(cache_key, new_type_id);
+        
+        // Now generate the function body with the monomorphized types
+        let address = self.builder.next_address() as u32;
+        
+        // Create symbol for the monomorphized function
+        let symbol = Symbol::new(
+            base_name.to_string(),
+            monomorphized_name.clone(),
+            SymbolKind::Function {
+                type_id: new_type_id,
+                address,
+            },
+        );
+        
+        self.symbol_table.push_symbol(symbol);
+        
+        // Save the current local scope (we're generating a nested function)
+        let saved_local_scope = self.local_scope.take();
+        
+        // Set up local scope with monomorphized parameter types
+        let params: Vec<Variable> = monomorphized_func.param_names.iter()
+            .zip(monomorphized_func.params.iter())
+            .map(|(name, ty)| Variable {
+                name: name.clone(),
+                ty: ty.clone(),
+            })
+            .collect();
+        
+        self.local_scope = Some(LocalSymbolScope::new(params));
+        
+        // Generate the function body
+        let _ = self.generate_block(body.clone(), vec![])?;
+        self.builder.ret();
+        
+        // Restore the saved local scope
+        self.local_scope = saved_local_scope;
+        self.symbol_table.pop_symbol();
+        
+        Ok((address, new_type_id))
     }
     
     /// Convert a semantic Type to a ParsedType (for substitution purposes)
