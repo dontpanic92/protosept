@@ -863,11 +863,84 @@ impl Parser {
         }
     }
 
+    fn parse_import_statement(&mut self) -> ParseResult<Statement> {
+        self.consume_match(TokenType::Import)?;
+        
+        // Parse the module path (can be dotted identifier or relative path starting with .)
+        let mut module_path = String::new();
+        
+        // Check if it's a relative import starting with .
+        if self.peek_match(TokenType::Dot) {
+            module_path.push('.');
+            self.consume();
+        }
+        
+        // Parse the rest of the path
+        loop {
+            match self.peek() {
+                Some(Token {
+                    token_type: TokenType::Identifier(id),
+                    ..
+                }) => {
+                    module_path.push_str(id);
+                    self.consume();
+                    
+                    // Check for another dot
+                    if self.peek_match(TokenType::Dot) {
+                        module_path.push('.');
+                        self.consume();
+                    } else {
+                        break;
+                    }
+                }
+                _ => {
+                    if module_path.is_empty() || module_path.ends_with('.') {
+                        return Err(ParseError::UnexpectedToken {
+                            found: format!("{:?}", self.peek().map(|t| &t.token_type)),
+                            pos: self.peek().map(|t| SourcePos {
+                                line: t.line,
+                                col: t.col,
+                            }),
+                        });
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // Check for optional "as" alias
+        let alias = if self.peek_match(TokenType::As) {
+            self.consume();
+            Some(self.parse_identifier()?.name)
+        } else {
+            None
+        };
+        
+        self.consume_match(TokenType::Semicolon)?;
+        
+        Ok(Statement::Import {
+            module_path,
+            alias,
+        })
+    }
+
     fn parse_statement(&mut self) -> ParseResult<Statement> {
         // First, try to parse attributes
         let attributes = self.parse_attributes()?;
 
         match self.peek().map(|t| t.token_type.clone()) {
+            Some(TokenType::Import) => {
+                if !attributes.is_empty() {
+                    return Err(ParseError::UnexpectedToken {
+                        found: "attributes on import statement".to_string(),
+                        pos: Some(SourcePos {
+                            line: attributes[0].name.line,
+                            col: attributes[0].name.col,
+                        }),
+                    });
+                }
+                self.parse_import_statement()
+            }
             Some(TokenType::Fn) => self
                 .parse_function_declaration(attributes)
                 .map(Statement::FunctionDeclaration),

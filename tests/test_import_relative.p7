@@ -1,0 +1,13 @@
+// Test relative imports
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+import .helpers;
+import .sub.utilities;
+
+@test(expected_type = "int", expected_value = "50")
+fn test_relative_import() -> int {
+    return 50;
+}

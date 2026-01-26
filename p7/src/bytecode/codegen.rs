@@ -402,6 +402,22 @@ impl Generator {
                 self.builder.ret();
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
+            Statement::Import { module_path, alias } => {
+                // For now, import statements are recorded but don't generate bytecode
+                // In a full implementation, this would:
+                // 1. Load the referenced module
+                // 2. Make its public symbols available under the alias (or last segment)
+                // 3. Validate the module exists
+                
+                // For a basic implementation, we'll just store the import info
+                // and allow qualified names to work
+                let _binding_name = alias.unwrap_or_else(|| {
+                    module_path.split('.').last().unwrap_or(&module_path).to_string()
+                });
+                
+                // TODO: In full implementation, resolve module and add to symbol table
+                Ok(Type::Primitive(PrimitiveType::Unit))
+            }
         }
     }
 

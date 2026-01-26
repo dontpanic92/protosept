@@ -172,6 +172,10 @@ pub enum Statement {
         expression: Expression,
     },
     Return(Box<Expression>),
+    Import {
+        module_path: String,
+        alias: Option<String>,
+    },
 }
 
 impl Expression {
