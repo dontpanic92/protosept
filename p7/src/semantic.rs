@@ -104,8 +104,14 @@ pub struct Function {
 #[derive(Debug, Clone)]
 pub struct Enum {
     pub qualified_name: String,
-    pub values: Vec<String>,
+    pub variants: Vec<(String, Vec<Type>)>, // (variant_name, field_types)
     pub attributes: Vec<crate::ast::Attribute>,
+    // For generic enums: stores the original type parameter names
+    pub type_parameters: Vec<String>,
+    // For generic enums: stores the original parsed variant field types (before substitution)
+    pub generic_variant_types: Option<Vec<Vec<crate::ast::Type>>>,
+    // For monomorphized enums: stores the base generic enum's TypeId and concrete type arguments
+    pub monomorphization: Option<(TypeId, Vec<Type>)>,
 }
 
 #[derive(Debug, Clone)]

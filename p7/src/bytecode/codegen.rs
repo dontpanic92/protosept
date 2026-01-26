@@ -316,16 +316,47 @@ impl Generator {
                 is_pub,
                 name,
                 attributes,
-                type_parameters: _,
+                type_parameters,
                 values,
             } => {
                 let qualified_name = self
                     .symbol_table
                     .get_new_symbol_qualified_name(name.name.clone());
+                
+                // Check if this is a generic enum
+                let is_generic = !type_parameters.is_empty();
+                
+                let (variants, generic_variant_types) = if is_generic {
+                    // For generic enums, store the original AST types
+                    let generic_types: Vec<Vec<crate::ast::Type>> = values.iter()
+                        .map(|v| v.fields.clone())
+                        .collect();
+                    // Don't resolve types yet - will be done during monomorphization
+                    let variants: Vec<(String, Vec<Type>)> = values.iter()
+                        .map(|v| (v.name.clone(), vec![]))
+                        .collect();
+                    (variants, Some(generic_types))
+                } else {
+                    // For non-generic enums, resolve field types now
+                    let mut resolved_variants = Vec::new();
+                    for variant in values {
+                        let mut field_types = Vec::new();
+                        for field_type in &variant.fields {
+                            let resolved_type = self.get_semantic_type(field_type)?;
+                            field_types.push(resolved_type);
+                        }
+                        resolved_variants.push((variant.name.clone(), field_types));
+                    }
+                    (resolved_variants, None)
+                };
+                
                 let ty = Enum {
                     qualified_name: qualified_name.clone(),
-                    values: values.iter().map(|v| v.name.clone()).collect(),
+                    variants,
                     attributes: attributes.clone(),
+                    type_parameters: type_parameters.iter().map(|tp| tp.name.name.clone()).collect(),
+                    generic_variant_types,
+                    monomorphization: None,
                 };
                 let type_id = self.symbol_table.add_udt(UserDefinedType::Enum(ty));
 
@@ -883,15 +914,30 @@ impl Generator {
                         let udt = self.symbol_table.get_udt(type_id);
                         if let UserDefinedType::Enum(enum_def) = udt {
                             if is_static_access {
-                                if enum_def.values.contains(&field.name) {
-                                    let variant_index = enum_def
-                                        .values
-                                        .iter()
-                                        .position(|v| v == &field.name)
-                                        .unwrap()
-                                        as i32;
-                                    self.builder.ldi(variant_index); // Load the enum variant's index
-                                    Ok(object_ty) // The type of the field access is the enum itself
+                                // Find the variant by name
+                                let variant_opt = enum_def.variants.iter()
+                                    .enumerate()
+                                    .find(|(_, (name, _))| name == &field.name);
+                                
+                                if let Some((variant_index, (_, field_types))) = variant_opt {
+                                    // Check if this is a unit variant (no fields)
+                                    if field_types.is_empty() {
+                                        // Unit variant: just load the index
+                                        self.builder.ldi(variant_index as i32);
+                                        Ok(object_ty) // The type is the enum itself
+                                    } else {
+                                        // Payload variant: this should be called as a function-like expression
+                                        // EnumName.Variant(args) is handled in generate_function_call
+                                        // If we reach here, it means someone wrote EnumName.Variant without calling it
+                                        return Err(SemanticError::TypeMismatch {
+                                            lhs: format!("Enum '{}'", enum_def.qualified_name),
+                                            rhs: format!("Payload variant '{}' requires arguments", field.name),
+                                            pos: Some(SourcePos {
+                                                line: field.line,
+                                                col: field.col,
+                                            }),
+                                        });
+                                    }
                                 } else {
                                     return Err(SemanticError::TypeMismatch {
                                         lhs: format!("Enum '{}'", enum_def.qualified_name),
@@ -1294,6 +1340,34 @@ impl Generator {
                         });
                     }
                 }
+                SymbolKind::Enum(type_id) => {
+                    // This is an enum variant construction like Option<int>.Some(42)
+                    // Resolve the generic type with explicit type arguments
+                    let parsed_type = crate::ast::Type::Generic {
+                        base: base.clone(),
+                        type_args: type_args.clone(),
+                    };
+                    
+                    // Use monomorphization to get the concrete enum type
+                    let ty = self.get_semantic_type(&parsed_type)?;
+                    
+                    if let Type::Enum(enum_type_id) = ty {
+                        return self.generate_enum_variant_from_call(
+                            callee_expr.clone(),
+                            arguments,
+                            enum_type_id,
+                        );
+                    } else {
+                        return Err(SemanticError::TypeMismatch {
+                            lhs: "enum".to_string(),
+                            rhs: ty.to_string(),
+                            pos: Some(SourcePos {
+                                line: call_line,
+                                col: call_col,
+                            }),
+                        });
+                    }
+                }
                 _ => {
                     return Err(SemanticError::TypeMismatch {
                         lhs: "function or struct".to_string(),
@@ -1308,9 +1382,9 @@ impl Generator {
         }
 
         // Handle field-call (method or static method) specially.
-        if let Expression::FieldAccess { object, field } = callee_expr {
+        if let Expression::FieldAccess { object, field } = &callee_expr {
             // Case 1: Static method call like `Type.method(...)` (object is identifier referring to a type)
-            if let Expression::Identifier(ident) = *object.clone() {
+            if let Expression::Identifier(ident) = object.as_ref() {
                 if let Some(ty) = self.symbol_table.find_type_in_scope(&ident.name) {
                     if let Type::Struct(type_id) = ty {
                         // Find the struct symbol and then the method as its child
@@ -1389,12 +1463,20 @@ impl Generator {
 
                         return Ok(ret_type);
                     }
+                    // Handle enum variant construction: EnumName.Variant(args)
+                    if let Type::Enum(type_id) = ty {
+                        return self.generate_enum_variant_from_call(
+                            callee_expr.clone(),
+                            arguments,
+                            type_id,
+                        );
+                    }
                 }
             }
 
             // Case 2: Instance method call like `obj.method(...)`
             // Generate the object expression first (pushes receiver on stack)
-            let object_ty = self.generate_expression(*object)?;
+            let object_ty = self.generate_expression(object.as_ref().clone())?;
 
             // Resolve underlying struct TypeId
             let struct_type_id = if let Type::Reference(boxed) = &object_ty {
@@ -1769,6 +1851,108 @@ impl Generator {
         Ok(Type::Struct(type_id))
     }
 
+    fn generate_enum_variant_from_call(
+        &mut self,
+        callee_expr: Expression,
+        arguments: Vec<(Option<Identifier>, Expression)>,
+        enum_type_id: TypeId,
+    ) -> SaResult<Type> {
+        // Extract the variant name from the field access
+        let variant_name = if let Expression::FieldAccess { object: _, field } = &callee_expr {
+            field.name.clone()
+        } else {
+            return Err(SemanticError::Other(
+                "Invalid enum variant construction".to_string(),
+            ));
+        };
+
+        // Get enum definition
+        let enum_def = match self.symbol_table.get_udt(enum_type_id) {
+            UserDefinedType::Enum(e) => e.clone(),
+            _ => {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: "Enum".to_string(),
+                    rhs: "Non-enum type".to_string(),
+                    pos: Some(SourcePos {
+                        line: callee_expr.get_pos().0,
+                        col: callee_expr.get_pos().1,
+                    }),
+                });
+            }
+        };
+
+        // Find the variant
+        let variant_opt = enum_def.variants.iter()
+            .enumerate()
+            .find(|(_, (name, _))| name == &variant_name);
+
+        let (variant_index, field_types) = if let Some((idx, (_, types))) = variant_opt {
+            (idx, types.clone())
+        } else {
+            return Err(SemanticError::TypeMismatch {
+                lhs: format!("Enum '{}'", enum_def.qualified_name),
+                rhs: format!("Unknown variant '{}'", variant_name),
+                pos: Some(SourcePos {
+                    line: callee_expr.get_pos().0,
+                    col: callee_expr.get_pos().1,
+                }),
+            });
+        };
+
+        // Validate argument count
+        if arguments.len() != field_types.len() {
+            return Err(SemanticError::TypeMismatch {
+                lhs: format!("{} arguments expected for variant '{}'", field_types.len(), variant_name),
+                rhs: format!("{} provided", arguments.len()),
+                pos: Some(SourcePos {
+                    line: callee_expr.get_pos().0,
+                    col: callee_expr.get_pos().1,
+                }),
+            });
+        }
+
+        // Check if this is a payload variant
+        if field_types.is_empty() {
+            // Unit variant called like a function - this is an error
+            return Err(SemanticError::TypeMismatch {
+                lhs: format!("Unit variant '{}'", variant_name),
+                rhs: "Cannot call unit variant with arguments".to_string(),
+                pos: Some(SourcePos {
+                    line: callee_expr.get_pos().0,
+                    col: callee_expr.get_pos().1,
+                }),
+            });
+        }
+
+        // For payload variants, generate code to create the enum value
+        // First, push the variant index
+        self.builder.ldi(variant_index as i32);
+        
+        // Then push all the field values
+        for (arg_opt, expected_type) in arguments.iter().zip(field_types.iter()) {
+            let arg_expr = &arg_opt.1;
+            let arg_type = self.generate_expression(arg_expr.clone())?;
+            
+            // Type check the argument
+            if !self.types_compatible(&arg_type, expected_type) {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: arg_type.to_string(),
+                    rhs: expected_type.to_string(),
+                    pos: Some(SourcePos {
+                        line: callee_expr.get_pos().0,
+                        col: callee_expr.get_pos().1,
+                    }),
+                });
+            }
+        }
+        
+        // Create the enum value with the variant index and fields
+        // For now, we'll represent enum values as arrays: [variant_index, field1, field2, ...]
+        self.builder.newstruct((field_types.len() + 1) as u32);
+
+        Ok(Type::Enum(enum_type_id))
+    }
+
     fn push_argument_list(&mut self, arguments: Vec<Expression>) -> SaResult<()> {
         for expr in arguments {
             self.generate_expression(expr)?;
@@ -1839,6 +2023,16 @@ impl Generator {
         }
 
         Ok(())
+    }
+
+    fn types_compatible(&self, actual: &Type, expected: &Type) -> bool {
+        actual == expected || {
+            // Handle references
+            match (actual, expected) {
+                (Type::Reference(a), Type::Reference(e)) => a == e,
+                _ => false,
+            }
+        }
     }
 
     fn get_semantic_type(&mut self, parsed_type: &ParsedType) -> SaResult<Type> {

@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
 use crate::ast::{
-    Attribute, EnumValue, Expression, FunctionCall, FunctionDeclaration, Identifier, NamedPattern,
+    Attribute, EnumVariant, Expression, FunctionCall, FunctionDeclaration, Identifier, NamedPattern,
     Parameter, Pattern, ProtoMethod, Statement, StructField, StructMethod, Type, TypeParameter,
 };
 use crate::errors::{ParseError, SourcePos};
@@ -649,8 +649,33 @@ impl Parser {
                 break;
             }
 
-            let literal = self.parse_identifier()?;
-            values.push(EnumValue { name: literal.name });
+            let variant_name = self.parse_identifier()?;
+            
+            // Check if this is a payload variant (has parentheses)
+            let fields = if self.peek_match(TokenType::OpenParen) {
+                self.consume_match(TokenType::OpenParen)?;
+                let mut field_types = Vec::new();
+                
+                // Parse comma-separated list of types
+                while !self.peek_match(TokenType::CloseParen) {
+                    field_types.push(self.parse_type()?);
+                    
+                    if !self.peek_match(TokenType::CloseParen) {
+                        self.consume_match(TokenType::Comma)?;
+                    }
+                }
+                
+                self.consume_match(TokenType::CloseParen)?;
+                field_types
+            } else {
+                // Unit variant - no fields
+                Vec::new()
+            };
+            
+            values.push(EnumVariant { 
+                name: variant_name.name,
+                fields,
+            });
 
             let comma = self.consume_match(TokenType::Comma);
             if !self.peek_match(TokenType::CloseBrace) {
