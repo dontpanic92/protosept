@@ -1,0 +1,57 @@
+// Comprehensive tests for reference types (ref T)
+// Includes local refs, deref operations, and ref parameters
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// ===== Helper Functions =====
+
+fn id(x: ref float) -> float {
+    *x
+}
+
+struct Counter(
+    value: int,
+) {
+    fn get1(ref self) -> int {
+        self.value
+    }
+
+    fn get2(self: ref Self) -> int {
+        self.value
+    }
+}
+
+// ===== Ref Local and Dereference Tests =====
+
+@test(expected_type = "float", expected_value = "1.1")
+fn test_ref_local_deref() -> float {
+    let a = 1.1;
+    let r = ref a;
+
+    *r
+}
+
+// ===== Ref Parameter Tests =====
+
+@test(expected_type = "float", expected_value = "1.1")
+fn test_ref_param_direct() -> float {
+    let a = 1.1;
+    id(ref a)
+}
+
+@test(expected_type = "float", expected_value = "1.1")
+fn test_ref_param_pass_view() -> float {
+    let a = 1.1;
+    let r = ref a;
+    id(r)
+}
+
+// ===== Ref Self Shortcut Tests =====
+
+@test(expected_type = "int", expected_value = "10")
+fn test_ref_self_shortcut() -> int {
+    let c = Counter(value = 5);
+    c.get1() + c.get2()
+}

@@ -1,4 +1,4 @@
-// Define the test attribute struct
+// Basic operations test
 struct test(
     pub expected_type: string,
     pub expected_value: string,
@@ -19,7 +19,7 @@ struct Vec2(
 );
 
 @test(expected_type = "float", expected_value = "1.21")
-fn test() -> float {
+fn test_basic_arithmetic() -> float {
     let a = 1.1;
     let b = 2.3;
     let c = add(a, b);

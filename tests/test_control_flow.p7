@@ -1,0 +1,104 @@
+// Comprehensive tests for control flow constructs
+// Includes if expressions, nested if, and pattern matching
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// ===== Basic If Expression Tests =====
+
+@test(expected_type = "int", expected_value = "42")
+fn test_if_expression() -> int {
+    let x = 10;
+    let y = if x > 5 {
+        42
+    } else {
+        0
+    };
+    y
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_if_without_else() -> int {
+    let x = 0;
+    if x > 5 {
+        return 42;
+    }
+
+    return x;
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_if_with_bool_logic() -> int {
+    let x = 10;
+    let cond = x > 5;
+    
+    let result = if cond {
+        1
+    } else {
+        0
+    };
+    
+    result
+}
+
+// ===== Nested If Tests =====
+
+@test(expected_type = "int", expected_value = "3")
+fn test_nested_if() -> int {
+    let x = 10;
+    let y = 20;
+    
+    let result = if x > 5 {
+        if y > 15 {
+            3
+        } else {
+            2
+        }
+    } else {
+        1
+    };
+    
+    result
+}
+
+// ===== Pattern Matching Tests =====
+// These tests use try/else error handling with pattern matching
+
+enum ErrorType {
+    ErrorA,
+    ErrorB,
+    ErrorC,
+}
+
+fn thrower(value: int) -> int throws {
+    if value == 1 {
+        throw ErrorType.ErrorA;
+    }
+    if value == 2 {
+        throw ErrorType.ErrorB;
+    }
+    if value == 3 {
+        throw ErrorType.ErrorC;
+    }
+    value
+}
+
+@test(expected_type = "int", expected_value = "999")
+fn test_wildcard_pattern() -> int {
+    let result = try thrower(3) else {
+        err: ErrorType.ErrorA => 10,
+        err: ErrorType.ErrorB => 100,
+        _: _ => 999,
+    };
+    result
+}
+
+@test(expected_type = "int", expected_value = "100")
+fn test_named_binding() -> int {
+    let result = try thrower(2) else {
+        e: ErrorType.ErrorB => 100,
+        _: _ => 0,
+    };
+    result
+}

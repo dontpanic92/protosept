@@ -1,0 +1,84 @@
+// Comprehensive tests for exception handling and error patterns
+// Includes throws syntax, try/else patterns, and error matching
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// ===== Error Type Definitions =====
+
+enum ErrorType {
+    ErrorA,
+    ErrorB,
+    ErrorC,
+}
+
+enum SimpleError {
+    NotFound,
+}
+
+// ===== Helper Functions =====
+
+fn thrower(value: int) -> int throws {
+    if value == 1 {
+        throw ErrorType.ErrorA;
+    }
+    if value == 2 {
+        throw ErrorType.ErrorB;
+    }
+    if value == 3 {
+        throw ErrorType.ErrorC;
+    }
+    value
+}
+
+fn simple_thrower() -> int throws {
+    throw SimpleError.NotFound;
+}
+
+fn maybe_throw(should_throw: int) -> int throws {
+    if should_throw == 1 {
+        throw SimpleError.NotFound;
+    }
+    return 5;
+}
+
+// ===== Basic Exception Tests =====
+
+@test(expected_type = "int", expected_value = "42")
+fn test_exception() -> int {
+    let result = try simple_thrower() else {
+        err: SimpleError.NotFound => 42,
+    };
+    result
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_throws_syntax() -> int {
+    let result = try maybe_throw(0) else {
+        err: SimpleError.NotFound => 0,
+    };
+    result
+}
+
+// ===== Throws Without Return Tests =====
+
+@test(expected_type = "int", expected_value = "42")
+fn test_throws_no_return() -> int {
+    let x = try maybe_throw(1) else {
+        err: SimpleError.NotFound => 42,
+    };
+    x
+}
+
+// ===== Pattern Matching in Error Handlers =====
+
+@test(expected_type = "int", expected_value = "100")
+fn test_pattern_match() -> int {
+    let result = try thrower(2) else {
+        err: ErrorType.ErrorA => 10,
+        err: ErrorType.ErrorB => 100,
+        err: ErrorType.ErrorC => 1000,
+    };
+    result
+}

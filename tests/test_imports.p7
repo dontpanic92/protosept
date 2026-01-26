@@ -1,0 +1,43 @@
+// Comprehensive tests for import statements
+// Includes basic imports, aliases, multiple imports, and relative imports
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// ===== Basic Import =====
+
+import std.collections.list;
+
+@test(expected_type = "int", expected_value = "42")
+fn test_import_basic() -> int {
+    return 42;
+}
+
+// ===== Import with Alias =====
+
+import std.collections.list as MyList;
+
+@test(expected_type = "int", expected_value = "100")
+fn test_import_alias() -> int {
+    return 100;
+}
+
+// ===== Multiple Imports =====
+
+import myapp.services.auth as Auth;
+import .helpers;
+
+@test(expected_type = "int", expected_value = "200")
+fn test_multiple_imports() -> int {
+    return 200;
+}
+
+// ===== Relative Imports =====
+
+import .sub.utilities;
+
+@test(expected_type = "int", expected_value = "50")
+fn test_relative_import() -> int {
+    return 50;
+}

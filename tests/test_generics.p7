@@ -1,0 +1,116 @@
+// Comprehensive tests for generic types (structs and functions)
+// Tests monomorphization with explicit type arguments
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// ===== Generic Struct Definitions =====
+
+// Generic struct with a single type parameter
+struct Container<T>(
+    value: T,
+);
+
+// Generic struct with two type parameters
+struct Pair<T, U>(
+    first: T,
+    second: U,
+);
+
+// ===== Generic Function Definitions =====
+
+// Generic identity function
+fn identity<T>(x: T) -> T {
+    return x;
+}
+
+// Generic function with two type parameters
+fn first<T, U>(x: T, y: U) -> T {
+    return x;
+}
+
+// ===== Tests for Generic Struct Instantiation =====
+
+@test(expected_type = "int", expected_value = "42")
+fn test_container_int() -> int {
+    let c = Container<int>(42);
+    c.value
+}
+
+@test(expected_type = "int", expected_value = "100")
+fn test_container_int2() -> int {
+    let c = Container<int>(100);
+    c.value
+}
+
+@test(expected_type = "float", expected_value = "3.14")
+fn test_container_float() -> float {
+    let c = Container<float>(3.14);
+    c.value
+}
+
+@test(expected_type = "int", expected_value = "10")
+fn test_pair_first() -> int {
+    let p = Pair<int, int>(10, 20);
+    p.first
+}
+
+@test(expected_type = "int", expected_value = "20")
+fn test_pair_second() -> int {
+    let p = Pair<int, int>(10, 20);
+    p.second
+}
+
+@test(expected_type = "int", expected_value = "99")
+fn test_multiple_instantiations() -> int {
+    let c1 = Container<int>(99);
+    let c2 = Container<int>(88);
+    c1.value
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_pair_int_float() -> int {
+    let p = Pair<int, float>(5, 2.5);
+    p.first
+}
+
+@test(expected_type = "float", expected_value = "2.5")
+fn test_pair_float_second() -> float {
+    let p = Pair<int, float>(5, 2.5);
+    p.second
+}
+
+// ===== Tests for Generic Function Calls =====
+
+@test(expected_type = "int", expected_value = "42")
+fn test_identity_int() -> int {
+    identity<int>(42)
+}
+
+@test(expected_type = "int", expected_value = "100")
+fn test_identity_int2() -> int {
+    identity<int>(100)
+}
+
+@test(expected_type = "float", expected_value = "3.14")
+fn test_identity_float() -> float {
+    identity<float>(3.14)
+}
+
+@test(expected_type = "int", expected_value = "10")
+fn test_first_int_int() -> int {
+    first<int, int>(10, 20)
+}
+
+@test(expected_type = "float", expected_value = "2.5")
+fn test_first_float_int() -> float {
+    first<float, int>(2.5, 10)
+}
+
+@test(expected_type = "int", expected_value = "99")
+fn test_multiple_calls_same_type() -> int {
+    let a = identity<int>(99);
+    let b = identity<int>(88);
+    a
+}
