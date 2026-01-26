@@ -18,6 +18,10 @@ use crate::errors::SemanticError;
 
 pub type SaResult<T> = Result<T, SemanticError>;
 
+// Synthetic position values for compiler-generated code (e.g., monomorphization)
+const SYNTHETIC_LINE: usize = 0;
+const SYNTHETIC_COL: usize = 0;
+
 pub struct Generator {
     builder: ByteCodeBuilder,
     symbol_table: SymbolTable,
@@ -1790,8 +1794,8 @@ impl Generator {
                 };
                 ParsedType::Identifier(Identifier {
                     name: name.to_string(),
-                    line: 0,
-                    col: 0,
+                    line: SYNTHETIC_LINE,
+                    col: SYNTHETIC_COL,
                 })
             }
             Type::Reference(inner) => {
@@ -1806,15 +1810,15 @@ impl Generator {
                 if let UserDefinedType::Struct(s) = udt {
                     ParsedType::Identifier(Identifier {
                         name: s.qualified_name.clone(),
-                        line: 0,
-                        col: 0,
+                        line: SYNTHETIC_LINE,
+                        col: SYNTHETIC_COL,
                     })
                 } else {
                     // Fallback
                     ParsedType::Identifier(Identifier {
                         name: format!("struct_{}", type_id),
-                        line: 0,
-                        col: 0,
+                        line: SYNTHETIC_LINE,
+                        col: SYNTHETIC_COL,
                     })
                 }
             }
@@ -1822,8 +1826,8 @@ impl Generator {
                 // For other types, create a simple identifier
                 ParsedType::Identifier(Identifier {
                     name: ty.to_string(),
-                    line: 0,
-                    col: 0,
+                    line: SYNTHETIC_LINE,
+                    col: SYNTHETIC_COL,
                 })
             }
         }
