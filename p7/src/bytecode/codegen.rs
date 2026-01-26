@@ -306,13 +306,13 @@ impl Generator {
                 let qualified_name = self
                     .symbol_table
                     .get_new_symbol_qualified_name(name.name.clone());
-                let fields_with_types = fields
-                    .iter()
-                    .map(|f| {
-                        let field_type = self.get_semantic_type(&f.field_type).unwrap();
-                        (f.name.name.clone(), field_type)
-                    })
-                    .collect();
+                
+                let mut fields_with_types = Vec::new();
+                for f in &fields {
+                    let field_type = self.get_semantic_type(&f.field_type)?;
+                    fields_with_types.push((f.name.name.clone(), field_type));
+                }
+                
                 let field_defaults = fields.iter().map(|f| f.default_value.clone()).collect();
 
                 let ty = Struct {
@@ -355,21 +355,18 @@ impl Generator {
                 self.symbol_table.push_symbol(symbol);
                 
                 // Now process the method signatures
-                let methods_with_types = methods
-                    .iter()
-                    .map(|m| {
-                        let params: Vec<Type> = m
-                            .parameters
-                            .iter()
-                            .map(|p| self.get_semantic_type(&p.arg_type).unwrap())
-                            .collect();
-                        let return_type = m
-                            .return_type
-                            .as_ref()
-                            .map(|t| self.get_semantic_type(t).unwrap());
-                        (m.name.name.clone(), params, return_type)
-                    })
-                    .collect();
+                let mut methods_with_types = Vec::new();
+                for m in methods {
+                    let mut params = Vec::new();
+                    for p in &m.parameters {
+                        params.push(self.get_semantic_type(&p.arg_type)?);
+                    }
+                    let return_type = match &m.return_type {
+                        Some(t) => Some(self.get_semantic_type(t)?),
+                        None => None,
+                    };
+                    methods_with_types.push((m.name.name.clone(), params, return_type));
+                }
 
                 // Update the proto with the actual method signatures
                 let ty = Proto {
