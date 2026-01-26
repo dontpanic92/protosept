@@ -1001,6 +1001,17 @@ impl Generator {
                 let ty = self.generate_expression(*expression)?;
                 Ok(ty)
             }
+            Expression::GenericInstantiation { base, .. } => {
+                // GenericInstantiation is only valid as a callee in function calls (struct construction)
+                // It's not a standalone expression that can be evaluated
+                Err(SemanticError::VariableNotFound {
+                    name: format!("{} (generic instantiation not valid here)", base.name),
+                    pos: Some(SourcePos {
+                        line: base.line,
+                        col: base.col,
+                    }),
+                })
+            }
         }
     }
 
@@ -1086,6 +1097,37 @@ impl Generator {
         let arguments = call.arguments;
         let (call_line, call_col) = callee_expr.get_pos();
         let call_name = callee_expr.get_name();
+
+        // Handle generic instantiation: Container<int>(value)
+        if let Expression::GenericInstantiation { base, type_args } = &callee_expr {
+            // Resolve the generic type with explicit type arguments
+            let parsed_type = crate::ast::Type::Generic {
+                base: base.clone(),
+                type_args: type_args.clone(),
+            };
+            
+            // Use monomorphization to get the concrete type
+            let ty = self.get_semantic_type(&parsed_type)?;
+            
+            if let Type::Struct(type_id) = ty {
+                return self.generate_struct_from_call(
+                    crate::ast::FunctionCall {
+                        callee: Box::new(callee_expr.clone()),
+                        arguments,
+                    },
+                    type_id,
+                );
+            } else {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: "struct".to_string(),
+                    rhs: ty.to_string(),
+                    pos: Some(SourcePos {
+                        line: call_line,
+                        col: call_col,
+                    }),
+                });
+            }
+        }
 
         // Handle field-call (method or static method) specially.
         if let Expression::FieldAccess { object, field } = callee_expr {
