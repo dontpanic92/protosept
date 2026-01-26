@@ -104,6 +104,12 @@ pub struct Struct {
     pub fields: Vec<(String, Type)>,
     pub field_defaults: Vec<Option<crate::ast::Expression>>,
     pub attributes: Vec<crate::ast::Attribute>,
+    // For generic structs: stores the original type parameter names
+    pub type_parameters: Vec<String>,
+    // For generic structs: stores the original parsed field types (before substitution)
+    pub generic_field_types: Option<Vec<crate::ast::Type>>,
+    // For monomorphized structs: stores the base generic struct's TypeId and concrete type arguments
+    pub monomorphization: Option<(TypeId, Vec<Type>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -113,7 +119,7 @@ pub struct Proto {
     pub attributes: Vec<crate::ast::Attribute>,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum PrimitiveType {
     Int,
     Float,
@@ -171,6 +177,23 @@ impl PartialEq for Type {
     }
 }
 
+impl Eq for Type {}
+
+impl std::hash::Hash for Type {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Type::Primitive(p) => p.hash(state),
+            Type::Reference(r) => r.hash(state),
+            Type::Array(a) => a.hash(state),
+            Type::Function(f) => f.hash(state),
+            Type::Enum(e) => e.hash(state),
+            Type::Struct(s) => s.hash(state),
+            Type::Proto(p) => p.hash(state),
+        }
+    }
+}
+
 impl ToString for Type {
     fn to_string(&self) -> String {
         match self {
@@ -205,6 +228,9 @@ pub struct SymbolTable {
     pub types: Vec<UserDefinedType>,
 
     pub symbol_chain: Vec<SymbolId>,
+    
+    // Cache for monomorphized types: (base_type_id, type_args) -> monomorphized_type_id
+    pub monomorphization_cache: HashMap<(TypeId, Vec<Type>), TypeId>,
 }
 
 impl SymbolTable {
@@ -228,6 +254,7 @@ impl SymbolTable {
             symbols: vec![root],
             types: Vec::new(),
             symbol_chain: vec![0],
+            monomorphization_cache: HashMap::new(),
         }
     }
 
