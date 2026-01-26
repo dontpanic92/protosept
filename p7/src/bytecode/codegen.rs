@@ -27,15 +27,19 @@ pub struct Generator {
     symbol_table: SymbolTable,
     local_scope: Option<LocalSymbolScope>,
     pending_monomorphizations: Vec<(u32, TypeId, Vec<Statement>, Vec<String>, Vec<Type>)>, // (symbol_id, type_id, body, param_names, params)
+    module_provider: Box<dyn crate::ModuleProvider>,
+    imported_modules: std::collections::HashMap<String, Module>,
 }
 
 impl Generator {
-    pub fn new() -> Self {
+    pub fn new(module_provider: Box<dyn crate::ModuleProvider>) -> Self {
         Generator {
             builder: ByteCodeBuilder::new(),
             symbol_table: SymbolTable::new(),
             local_scope: None,
             pending_monomorphizations: Vec::new(),
+            module_provider,
+            imported_modules: std::collections::HashMap::new(),
         }
     }
 
@@ -85,6 +89,31 @@ impl Generator {
             symbols: self.symbol_table.symbols.clone(),
             types: self.symbol_table.types.clone(),
         })
+    }
+
+    /// Helper method to compile an imported module
+    fn compile_module(&self, source: String) -> SaResult<Module> {
+        // Parse the module source
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let mut tokens = vec![];
+
+        loop {
+            let token = lexer.next_token();
+            if token.token_type == crate::lexer::TokenType::EOF {
+                break;
+            } else {
+                tokens.push(token);
+            }
+        }
+
+        let mut parser = crate::parser::Parser::new(tokens);
+        let statements = parser.parse().map_err(|e| 
+            SemanticError::Other(format!("Parse error in imported module: {:?}", e))
+        )?;
+
+        // Create a new generator for the imported module with a cloned provider
+        let mut module_gen = Generator::new(self.module_provider.clone_boxed());
+        module_gen.generate(statements)
     }
 
     fn generate_block(
@@ -517,19 +546,87 @@ impl Generator {
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
             Statement::Import { module_path, alias } => {
-                // For now, import statements are recorded but don't generate bytecode
-                // In a full implementation, this would:
-                // 1. Load the referenced module from the file system
-                // 2. Resolve the module path to a module identifier
-                // 3. Add a symbol representing the imported module to the symbol table
-                // 4. Make the module's public symbols available via the binding name
-                // 5. Validate the module exists and is accessible
+                // Parse the module path to extract module and symbol
+                // For example: "test.test" -> module="test", symbol="test"
+                // "std.collections.list" -> module="std.collections", symbol="list"
+                let segments: Vec<&str> = module_path.split('.').collect();
+                if segments.is_empty() {
+                    return Err(SemanticError::ImportError {
+                        module_path: module_path.clone(),
+                        pos: SourcePos { line: 0, col: 0 },
+                    });
+                }
+
+                // The last segment is the symbol name
+                let symbol_name = segments.last().unwrap().to_string();
                 
-                // TODO: Implement module resolution and symbol table integration
-                // The binding name would be: alias.unwrap_or_else(|| last_segment_of_path)
-                // This binding would be added to the current scope's symbol table
-                let _ = (module_path, alias);
-                
+                // The module is everything except the last segment
+                // If there's only one segment, we treat it as both module and symbol
+                let module_part = if segments.len() > 1 {
+                    segments[..segments.len() - 1].join(".")
+                } else {
+                    segments[0].to_string()
+                };
+
+                // Load the module from the module provider
+                let source = self.module_provider.load_module(&module_part)
+                    .ok_or_else(|| SemanticError::ImportError {
+                        module_path: module_part.clone(),
+                        pos: SourcePos {
+                            line: 0,
+                            col: 0,
+                        },
+                    })?;
+
+                // Compile the imported module if not already compiled
+                if !self.imported_modules.contains_key(&module_part) {
+                    // Recursively compile the imported module
+                    let imported_module = self.compile_module(source)?;
+                    self.imported_modules.insert(module_part.clone(), imported_module);
+                }
+
+                // Get the binding name (use alias if provided, otherwise use symbol name)
+                let binding_name = if let Some(ref alias_name) = alias {
+                    alias_name.clone()
+                } else {
+                    symbol_name.clone()
+                };
+
+                // Find and import only the specified symbol from the module
+                let imported_module = self.imported_modules.get(&module_part).unwrap();
+                let mut found = false;
+                for symbol in &imported_module.symbols {
+                    // Only import the symbol that matches the requested name
+                    if symbol.name == symbol_name {
+                        // Add the symbol to our symbol table with the binding name (no prefix)
+                        let new_symbol = Symbol::new(
+                            binding_name.clone(),
+                            symbol.qualified_name.clone(),
+                            symbol.kind.clone(),
+                        );
+                        
+                        // Add symbol to the flat list and make it a child of the current scope
+                        let current_id = *self.symbol_table.symbol_chain.last().unwrap();
+                        let symbol_id = self.symbol_table.symbols.len() as u32;
+                        self.symbol_table.symbols.push(new_symbol);
+                        
+                        // Add as child of current scope so it can be found by find_symbol_in_scope
+                        self.symbol_table.symbols[current_id as usize]
+                            .children
+                            .insert(binding_name.clone(), symbol_id);
+                        
+                        found = true;
+                        break;
+                    }
+                }
+
+                if !found {
+                    return Err(SemanticError::Other(format!(
+                        "Symbol '{}' not found in module '{}'",
+                        symbol_name, module_part
+                    )));
+                }
+
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
         }

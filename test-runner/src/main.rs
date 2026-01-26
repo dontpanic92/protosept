@@ -3,8 +3,23 @@ use p7::{
     errors::Proto7Error,
     interpreter::context::Data as P7Value,
     semantic::{SymbolKind, UserDefinedType},
+    InMemoryModuleProvider, ModuleProvider,
 };
 use std::{fs, path::PathBuf};
+
+// Define the test struct module source that will be provided in-memory
+const TEST_MODULE_SOURCE: &str = r#"
+// Test attribute struct for marking test functions
+pub struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// Another struct to test selective import
+pub struct test2(
+    pub some_field: string,
+);
+"#;
 
 #[derive(Debug)]
 enum FailureReason {
@@ -151,12 +166,17 @@ fn run_test_case(
 fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestResult)>> {
     let content = fs::read_to_string(file_path)?;
 
+    // Create module provider with the test module
+    // The module is registered as "test" which contains symbols like "test" and "test2"
+    let mut module_provider = InMemoryModuleProvider::new();
+    module_provider.add_module("test".to_string(), TEST_MODULE_SOURCE.to_string());
+
     // Compile-fail tests: add `// compile_fail` anywhere in the file.
     if content
         .lines()
         .any(|l| l.trim_start().starts_with("// compile_fail"))
     {
-        match p7::compile(content.clone()) {
+        match p7::compile_with_provider(content.clone(), Box::new(module_provider.clone())) {
             Ok(_) => {
                 return Ok(vec![(
                     "compile_fail".to_string(),
@@ -169,8 +189,8 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
         }
     }
 
-    // Compile the p7 code
-    let module = match p7::compile(content.clone()) {
+    // Compile the p7 code with the module provider
+    let module = match p7::compile_with_provider(content.clone(), Box::new(module_provider.clone())) {
         Ok(m) => m,
         Err(e) => {
             return Ok(vec![(
@@ -193,7 +213,7 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
     let mut results = Vec::new();
     for test_case in test_cases {
         // Clone module for each test
-        let test_module = match p7::compile(content.as_str().to_string()) {
+        let test_module = match p7::compile_with_provider(content.as_str().to_string(), Box::new(module_provider.clone())) {
             Ok(m) => m,
             Err(e) => {
                 results.push((

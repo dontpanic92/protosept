@@ -1,9 +1,6 @@
 // Comprehensive tests for generic types (structs and functions)
 // Tests monomorphization with explicit type arguments
-struct test(
-    pub expected_type: string,
-    pub expected_value: string,
-);
+import test.test;
 
 // ===== Generic Struct Definitions =====
 

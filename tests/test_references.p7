@@ -1,9 +1,6 @@
 // Comprehensive tests for reference types (ref T)
 // Includes local refs, deref operations, and ref parameters
-struct test(
-    pub expected_type: string,
-    pub expected_value: string,
-);
+import test.test;
 
 // ===== Helper Functions =====
 

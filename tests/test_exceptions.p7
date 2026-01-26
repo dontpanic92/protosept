@@ -1,9 +1,6 @@
 // Comprehensive tests for exception handling and error patterns
 // Includes throws syntax, try/else patterns, and error matching
-struct test(
-    pub expected_type: string,
-    pub expected_value: string,
-);
+import test.test;
 
 // ===== Error Type Definitions =====
 
