@@ -380,12 +380,8 @@ Copy-treated by default in v1:
 - `box<T>`
 - `ref T`
 - `?T` iff `T` is Copy-treated (by composition)
-- `array<T>` iff `T` is Copy-treated (by composition)
 - User-defined `struct` types are Copy-treated **only if** they opt in via `struct[Copy] ...`.
-- User-defined `enum` types are Copy-treated **only if** they opt in via `enum[Copy] ...` [[TODO]] (or an equivalent opt-in mechanism; see §13).  
-  [[TODO]] If v1 does not have enum conformance lists, then enums are not Copy-treated by default unless specified as built-in.
-
-[[TODO]] Decide whether `array<T>` is Copy-treated by default when eligible (current rule above makes it Copy-treated by composition; if you want arrays to be move-by-default despite eligibility, adjust here.)
+- User-defined `enum` types are Copy-treated **only if** they opt in via `enum[Copy] ...` 
 
 ### 6.4 Explicit copying: `copy(x)`
 
@@ -1043,7 +1039,24 @@ Generics are monomorphized:
 fn identity<T>(x: T) -> T { return x; }
 ```
 
-Type arguments may be inferred. [[TODO]] explicit type argument syntax.
+#### 20.2.1 Explicit type arguments at call sites (v1)
+
+A reference to a generic function in a call position MAY be specialized with an explicit type argument list:
+
+- `name<T1, T2, ...>(args...)`
+
+Rules:
+- The number of type arguments MUST exactly match the function's type parameter list; otherwise ERROR.
+- Each provided type argument MUST be a well-formed type.
+- In v1, explicit type arguments are the *only* way to call a generic function. Type argument inference is not performed.  
+  - Therefore, `identity(1)` is ERROR.
+  - `identity<int>(1)` is OK.
+
+Examples:
+```p7
+identity<int>(1);
+identity<string>("hi");
+```
 
 ### 20.3 Generic structs
 
@@ -1051,7 +1064,30 @@ Type arguments may be inferred. [[TODO]] explicit type argument syntax.
 struct Pair<T, U>(first: T, second: U);
 ```
 
-Construction may require explicit type args in v1. [[TODO]] inference rules.
+#### 20.3.1 Explicit type arguments in type positions (v1)
+
+In a type position, type arguments use the existing type syntax:
+- `Pair<int, int>`
+- `array<Pair<int, string>>`
+- `box<Pair<float, float>>`
+
+#### 20.3.2 Explicit type arguments at construction sites (v1)
+
+Construction of a generic struct uses the struct's name specialized with an explicit type argument list:
+
+- `Name<T1, T2, ...>(args...)`
+
+Rules:
+- The number of type arguments MUST exactly match the struct's type parameter list; otherwise ERROR.
+- In v1, explicit type arguments are the *only* way to construct a generic struct. Type argument inference is not performed.
+  - Therefore, `Pair(1, 1)` is ERROR.
+  - `Pair<int, int>(1, 1)` is OK.
+
+Examples:
+```p7
+let p = Pair<int, int>(1, 1);
+let q = Pair<string, int>("a", 2);
+```
 
 ### 20.4 Generic enums
 [[TODO]] payload variants + generic enum syntax.
@@ -1068,7 +1104,7 @@ v1: only a single proto bound per type parameter.
 Example with `Copy`:
 ```p7
 fn duplicate<T: Copy>(x: T) -> Pair<T, T> {
-  return Pair(x, copy(x));
+  return Pair<T, T>(x, copy(x));
 }
 ```
 
@@ -1186,7 +1222,7 @@ If both extensions enabled:
 7) Operator set and precedence table (§9.3)
 8) Pattern syntax for `try ... else { ... }` handlers (§14.2)
 9) Coercion sites and cast spelling for `box<T> -> box<P>` (§18.5)
-10) Generic function explicit type arguments and generic struct construction inference (§20)
+10) Generic enum payload variants and syntax (§20.4)
 11) Enablement mechanisms for extensions (§21, §22)
 12) Host ABI: concrete API surfaces for calling, fibers, threads (§17, §21.4, §22)
 
