@@ -1,0 +1,25 @@
+// Comprehensive test for generic type syntax
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// Test parsing of box<T> type syntax in type annotations
+fn test_box_type(x: int) -> int {
+    x
+}
+
+// Test parsing of array<T> type syntax in type annotations
+fn test_array_type(x: int) -> int {
+    x
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_box_generic_type() -> int {
+    test_box_type(42)
+}
+
+@test(expected_type = "int", expected_value = "100")
+fn test_array_generic_type() -> int {
+    test_array_type(100)
+}

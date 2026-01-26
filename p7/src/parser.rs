@@ -852,6 +852,19 @@ impl Parser {
                     // Check for generic type syntax: identifier<type_args>
                     if self.peek_match(TokenType::LessThan) {
                         self.consume(); // consume '<'
+                        
+                        // Handle empty type argument list: identifier<>
+                        if self.peek_match(TokenType::GreaterThan) {
+                            self.consume(); // consume '>'
+                            return Err(ParseError::UnexpectedToken {
+                                found: "empty type argument list".to_string(),
+                                pos: Some(SourcePos {
+                                    line: ident.line,
+                                    col: ident.col,
+                                }),
+                            });
+                        }
+                        
                         let mut type_args = vec![];
                         
                         loop {
@@ -898,6 +911,13 @@ impl Parser {
         }
         
         self.consume(); // consume '<'
+        
+        // Handle empty type parameter list: <>
+        if self.peek_match(TokenType::GreaterThan) {
+            self.consume(); // consume '>'
+            return Ok(vec![]);
+        }
+        
         let mut type_params = vec![];
         
         loop {
