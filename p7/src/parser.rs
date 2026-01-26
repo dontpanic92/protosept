@@ -619,7 +619,7 @@ impl Parser {
         Ok(attributes)
     }
 
-    fn parse_enum_declaration(&mut self, attributes: Vec<Attribute>) -> ParseResult<Statement> {
+    fn parse_enum_declaration(&mut self, attributes: Vec<Attribute>, is_pub: bool) -> ParseResult<Statement> {
         self.consume_match(TokenType::Enum)?;
         let name = self.parse_identifier()?;
 
@@ -642,6 +642,7 @@ impl Parser {
         }
 
         Ok(Statement::EnumDeclaration {
+            is_pub,
             name,
             attributes,
             values,
@@ -693,7 +694,7 @@ impl Parser {
 
     fn parse_struct_method(&mut self) -> ParseResult<StructMethod> {
         let is_pub = self.consume_match(TokenType::Pub).is_ok();
-        let function = self.parse_function_declaration(vec![])?;
+        let function = self.parse_function_declaration(vec![], is_pub)?;
 
         Ok(StructMethod { is_pub, function })
     }
@@ -718,7 +719,7 @@ impl Parser {
         Ok(methods)
     }
 
-    fn parse_struct_declaration(&mut self, attributes: Vec<Attribute>) -> ParseResult<Statement> {
+    fn parse_struct_declaration(&mut self, attributes: Vec<Attribute>, is_pub: bool) -> ParseResult<Statement> {
         self.consume_match(TokenType::Struct)?;
         let name = self.parse_identifier()?;
 
@@ -732,11 +733,11 @@ impl Parser {
             self.peek(),
             TokenType::Semicolon => {
                 self.consume();
-                return Ok(Statement::StructDeclaration { name, attributes, fields, methods: vec![] });
+                return Ok(Statement::StructDeclaration { is_pub, name, attributes, fields, methods: vec![] });
             },
             TokenType::OpenBrace => {
                 let methods = self.parse_struct_method_list()?;
-                return Ok(Statement::StructDeclaration { name, attributes, fields, methods });
+                return Ok(Statement::StructDeclaration { is_pub, name, attributes, fields, methods });
             },
         }
     }
@@ -771,7 +772,7 @@ impl Parser {
         Ok(methods)
     }
 
-    fn parse_proto_declaration(&mut self, attributes: Vec<Attribute>) -> ParseResult<Statement> {
+    fn parse_proto_declaration(&mut self, attributes: Vec<Attribute>, is_pub: bool) -> ParseResult<Statement> {
         self.consume_match(TokenType::Proto)?;
         let name = self.parse_identifier()?;
 
@@ -783,6 +784,7 @@ impl Parser {
         };
 
         Ok(Statement::ProtoDeclaration {
+            is_pub,
             name,
             attributes,
             methods,
@@ -792,6 +794,7 @@ impl Parser {
     fn parse_function_declaration(
         &mut self,
         attributes: Vec<Attribute>,
+        is_pub: bool,
     ) -> ParseResult<FunctionDeclaration> {
         self.consume_match(TokenType::Fn)?;
 
@@ -818,6 +821,7 @@ impl Parser {
         let body = self.parse_block()?;
 
         Ok(FunctionDeclaration {
+            is_pub,
             name,
             attributes,
             effects,
@@ -863,19 +867,119 @@ impl Parser {
         }
     }
 
+    fn parse_import_statement(&mut self) -> ParseResult<Statement> {
+        self.consume_match(TokenType::Import)?;
+        
+        // Parse the module path (can be dotted identifier or relative path starting with .)
+        let mut module_path = String::new();
+        
+        // Check if it's a relative import starting with .
+        if self.peek_match(TokenType::Dot) {
+            module_path.push('.');
+            self.consume();
+        }
+        
+        // Parse the rest of the path
+        loop {
+            match self.peek() {
+                Some(Token {
+                    token_type: TokenType::Identifier(id),
+                    ..
+                }) => {
+                    module_path.push_str(id);
+                    self.consume();
+                    
+                    // Check for another dot
+                    if self.peek_match(TokenType::Dot) {
+                        module_path.push('.');
+                        self.consume();
+                    } else {
+                        break;
+                    }
+                }
+                _ => {
+                    // If we haven't parsed any identifiers or if the path ends with a dot, it's an error
+                    if module_path.ends_with('.') {
+                        return Err(ParseError::UnexpectedToken {
+                            found: format!("{:?}", self.peek().map(|t| &t.token_type)),
+                            pos: self.peek().map(|t| SourcePos {
+                                line: t.line,
+                                col: t.col,
+                            }),
+                        });
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // Check for optional "as" alias
+        let alias = if self.peek_match(TokenType::As) {
+            self.consume();
+            Some(self.parse_identifier()?.name)
+        } else {
+            None
+        };
+        
+        self.consume_match(TokenType::Semicolon)?;
+        
+        Ok(Statement::Import {
+            module_path,
+            alias,
+        })
+    }
+
     fn parse_statement(&mut self) -> ParseResult<Statement> {
-        // First, try to parse attributes
+        // First, check for pub keyword
+        let is_pub = if self.peek_match(TokenType::Pub) {
+            self.consume();
+            true
+        } else {
+            false
+        };
+        
+        // Then, try to parse attributes
         let attributes = self.parse_attributes()?;
 
         match self.peek().map(|t| t.token_type.clone()) {
+            Some(TokenType::Import) => {
+                if is_pub {
+                    return Err(ParseError::UnexpectedToken {
+                        found: "pub keyword on import statement".to_string(),
+                        pos: self.peek().map(|t| SourcePos {
+                            line: t.line,
+                            col: t.col,
+                        }),
+                    });
+                }
+                if !attributes.is_empty() {
+                    return Err(ParseError::UnexpectedToken {
+                        found: "attributes on import statement".to_string(),
+                        pos: Some(SourcePos {
+                            line: attributes[0].name.line,
+                            col: attributes[0].name.col,
+                        }),
+                    });
+                }
+                self.parse_import_statement()
+            }
             Some(TokenType::Fn) => self
-                .parse_function_declaration(attributes)
+                .parse_function_declaration(attributes, is_pub)
                 .map(Statement::FunctionDeclaration),
-            Some(TokenType::Enum) => self.parse_enum_declaration(attributes),
-            Some(TokenType::Struct) => self.parse_struct_declaration(attributes),
-            Some(TokenType::Proto) => self.parse_proto_declaration(attributes),
+            Some(TokenType::Enum) => self.parse_enum_declaration(attributes, is_pub),
+            Some(TokenType::Struct) => self.parse_struct_declaration(attributes, is_pub),
+            Some(TokenType::Proto) => self.parse_proto_declaration(attributes, is_pub),
             // Some(TokenType::If) => self.parse_if_expression().map(Statement::Expression),
             Some(TokenType::Return) => {
+                if is_pub {
+                    return Err(ParseError::UnexpectedToken {
+                        found: "pub keyword on return statement".to_string(),
+                        pos: self.peek().map(|t| SourcePos {
+                            line: t.line,
+                            col: t.col,
+                        }),
+                    });
+                }
                 if !attributes.is_empty() {
                     return Err(ParseError::UnexpectedToken {
                         found: "attributes on return statement".to_string(),
@@ -891,6 +995,15 @@ impl Parser {
                 Ok(Statement::Return(Box::new(expr)))
             }
             Some(TokenType::Throw) => {
+                if is_pub {
+                    return Err(ParseError::UnexpectedToken {
+                        found: "pub keyword on throw statement".to_string(),
+                        pos: self.peek().map(|t| SourcePos {
+                            line: t.line,
+                            col: t.col,
+                        }),
+                    });
+                }
                 if !attributes.is_empty() {
                     return Err(ParseError::UnexpectedToken {
                         found: "attributes on throw statement".to_string(),
@@ -906,6 +1019,15 @@ impl Parser {
                 Ok(Statement::Throw(expr))
             }
             Some(TokenType::Let) => {
+                if is_pub {
+                    return Err(ParseError::UnexpectedToken {
+                        found: "pub keyword on let statement".to_string(),
+                        pos: self.peek().map(|t| SourcePos {
+                            line: t.line,
+                            col: t.col,
+                        }),
+                    });
+                }
                 if !attributes.is_empty() {
                     return Err(ParseError::UnexpectedToken {
                         found: "attributes on let statement".to_string(),
@@ -928,6 +1050,15 @@ impl Parser {
                 })
             }
             _ => {
+                if is_pub {
+                    return Err(ParseError::UnexpectedToken {
+                        found: "pub keyword on expression statement".to_string(),
+                        pos: self.peek().map(|t| SourcePos {
+                            line: t.line,
+                            col: t.col,
+                        }),
+                    });
+                }
                 if !attributes.is_empty() {
                     return Err(ParseError::UnexpectedToken {
                         found: "attributes on expression statement".to_string(),
