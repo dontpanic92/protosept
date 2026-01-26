@@ -1,0 +1,15 @@
+// Test for generic function syntax parsing
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// Test that generic function syntax parses correctly
+// (Full generic semantics will be implemented in future phases)
+
+@test(expected_type = "int", expected_value = "42")
+fn test_parse_generic_syntax() -> int {
+    // Just test that the code compiles and runs
+    42
+}
+

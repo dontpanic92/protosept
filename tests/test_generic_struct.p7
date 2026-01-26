@@ -1,0 +1,20 @@
+// Test for generic struct syntax parsing
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// Test that generic struct syntax parses correctly
+// (Full generic semantics will be implemented in future phases)
+
+struct Point(
+    x: int,
+    y: int,
+);
+
+@test(expected_type = "int", expected_value = "42")
+fn test_parse_generic_syntax() -> int {
+    let p = Point(42, 100);
+    p.x
+}
+

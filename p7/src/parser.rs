@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use crate::ast::{
     Attribute, EnumValue, Expression, FunctionCall, FunctionDeclaration, Identifier, NamedPattern,
-    Parameter, Pattern, ProtoMethod, Statement, StructField, StructMethod, Type,
+    Parameter, Pattern, ProtoMethod, Statement, StructField, StructMethod, Type, TypeParameter,
 };
 use crate::errors::{ParseError, SourcePos};
 use crate::lexer::{Token, TokenType};
@@ -622,6 +622,7 @@ impl Parser {
     fn parse_enum_declaration(&mut self, attributes: Vec<Attribute>) -> ParseResult<Statement> {
         self.consume_match(TokenType::Enum)?;
         let name = self.parse_identifier()?;
+        let type_parameters = self.parse_type_parameters()?;
 
         self.consume_match(TokenType::OpenBrace)?;
 
@@ -644,7 +645,7 @@ impl Parser {
         Ok(Statement::EnumDeclaration {
             name,
             attributes,
-            type_parameters: vec![], // TODO: parse type parameters
+            type_parameters,
             values,
         })
     }
@@ -722,6 +723,7 @@ impl Parser {
     fn parse_struct_declaration(&mut self, attributes: Vec<Attribute>) -> ParseResult<Statement> {
         self.consume_match(TokenType::Struct)?;
         let name = self.parse_identifier()?;
+        let type_parameters = self.parse_type_parameters()?;
 
         let fields = if self.peek_match(TokenType::OpenParen) {
             self.parse_struct_field_list()?
@@ -733,11 +735,11 @@ impl Parser {
             self.peek(),
             TokenType::Semicolon => {
                 self.consume();
-                return Ok(Statement::StructDeclaration { name, attributes, type_parameters: vec![], fields, methods: vec![] });
+                return Ok(Statement::StructDeclaration { name, attributes, type_parameters, fields, methods: vec![] });
             },
             TokenType::OpenBrace => {
                 let methods = self.parse_struct_method_list()?;
-                return Ok(Statement::StructDeclaration { name, attributes, type_parameters: vec![], fields, methods });
+                return Ok(Statement::StructDeclaration { name, attributes, type_parameters, fields, methods });
             },
         }
     }
@@ -797,6 +799,7 @@ impl Parser {
         self.consume_match(TokenType::Fn)?;
 
         let name = self.parse_identifier()?;
+        let type_parameters = self.parse_type_parameters()?;
         let parameters = self.parse_argument_list()?;
         let return_type = if self.consume_match(TokenType::RightArrow).is_ok() {
             Some(self.parse_type()?)
@@ -822,7 +825,7 @@ impl Parser {
             name,
             attributes,
             effects,
-            type_parameters: vec![], // TODO: parse type parameters
+            type_parameters,
             parameters,
             body,
             return_type,
@@ -887,6 +890,38 @@ impl Parser {
                 }),
             })
         }
+    }
+
+    fn parse_type_parameters(&mut self) -> ParseResult<Vec<TypeParameter>> {
+        if !self.peek_match(TokenType::LessThan) {
+            return Ok(vec![]);
+        }
+        
+        self.consume(); // consume '<'
+        let mut type_params = vec![];
+        
+        loop {
+            let name = self.parse_identifier()?;
+            
+            // Check for bound: T: Printable
+            let bound = if self.peek_match(TokenType::Colon) {
+                self.consume(); // consume ':'
+                Some(self.parse_identifier()?)
+            } else {
+                None
+            };
+            
+            type_params.push(TypeParameter { name, bound });
+            
+            if self.peek_match(TokenType::Comma) {
+                self.consume(); // consume ','
+            } else {
+                break;
+            }
+        }
+        
+        self.consume_match(TokenType::GreaterThan)?; // consume '>'
+        Ok(type_params)
     }
 
     fn parse_statement(&mut self) -> ParseResult<Statement> {
