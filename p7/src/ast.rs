@@ -49,6 +49,7 @@ pub struct FunctionCall {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct FunctionDeclaration {
+    pub is_pub: bool,
     pub name: Identifier,
     pub attributes: Vec<Attribute>,
     pub effects: Vec<Identifier>,
@@ -152,17 +153,20 @@ pub enum Statement {
     FunctionDeclaration(FunctionDeclaration),
     Throw(Expression),
     EnumDeclaration {
+        is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
         values: Vec<EnumValue>,
     },
     StructDeclaration {
+        is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
         fields: Vec<StructField>,
         methods: Vec<StructMethod>,
     },
     ProtoDeclaration {
+        is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
         methods: Vec<ProtoMethod>,

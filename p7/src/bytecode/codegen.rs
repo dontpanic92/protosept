@@ -271,6 +271,7 @@ impl Generator {
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
             Statement::EnumDeclaration {
+                is_pub,
                 name,
                 attributes,
                 values,
@@ -293,9 +294,13 @@ impl Generator {
                 current_symbol.children.insert(name.name, next_symbol_id);
                 self.symbol_table.symbols.push(symbol);
 
+                // TODO: Store is_pub for module visibility checking
+                let _ = is_pub;
+
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
             Statement::StructDeclaration {
+                is_pub,
                 name,
                 attributes,
                 fields,
@@ -327,11 +332,15 @@ impl Generator {
                 for method in methods {
                     self.process_function_declaration(method.function)?;
                 }
+                
+                // TODO: Store is_pub for module visibility checking
+                let _ = is_pub;
 
                 self.symbol_table.pop_symbol();
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
             Statement::ProtoDeclaration {
+                is_pub,
                 name,
                 attributes,
                 methods,
@@ -378,6 +387,9 @@ impl Generator {
                 self.symbol_table.types[type_id as usize] = UserDefinedType::Proto(ty);
                 
                 self.symbol_table.pop_symbol();
+                
+                // TODO: Store is_pub for module visibility checking
+                let _ = is_pub;
 
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
@@ -960,6 +972,9 @@ impl Generator {
     }
 
     fn process_function_declaration(&mut self, declaration: FunctionDeclaration) -> SaResult<()> {
+        // TODO: Store declaration.is_pub for module visibility checking
+        let _ = declaration.is_pub;
+        
         let qualified_name = self
             .symbol_table
             .get_new_symbol_qualified_name(declaration.name.name.clone());
