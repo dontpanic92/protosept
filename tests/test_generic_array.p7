@@ -1,0 +1,16 @@
+// Test for generic array<T> syntax
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// Test array<T> syntax parsing with different types
+@test(expected_type = "int", expected_value = "1")
+fn test_array_int() -> int {
+    1
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_array_string() -> int {
+    42
+}

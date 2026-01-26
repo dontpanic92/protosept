@@ -644,6 +644,7 @@ impl Parser {
         Ok(Statement::EnumDeclaration {
             name,
             attributes,
+            type_parameters: vec![], // TODO: parse type parameters
             values,
         })
     }
@@ -732,11 +733,11 @@ impl Parser {
             self.peek(),
             TokenType::Semicolon => {
                 self.consume();
-                return Ok(Statement::StructDeclaration { name, attributes, fields, methods: vec![] });
+                return Ok(Statement::StructDeclaration { name, attributes, type_parameters: vec![], fields, methods: vec![] });
             },
             TokenType::OpenBrace => {
                 let methods = self.parse_struct_method_list()?;
-                return Ok(Statement::StructDeclaration { name, attributes, fields, methods });
+                return Ok(Statement::StructDeclaration { name, attributes, type_parameters: vec![], fields, methods });
             },
         }
     }
@@ -821,6 +822,7 @@ impl Parser {
             name,
             attributes,
             effects,
+            type_parameters: vec![], // TODO: parse type parameters
             parameters,
             body,
             return_type,
@@ -843,7 +845,31 @@ impl Parser {
                 }
                 TokenType::Identifier(_) => {
                     let ident = self.parse_identifier()?;
-                    Ok(Type::Identifier(ident))
+                    
+                    // Check for generic type syntax: identifier<type_args>
+                    if self.peek_match(TokenType::LessThan) {
+                        self.consume(); // consume '<'
+                        let mut type_args = vec![];
+                        
+                        loop {
+                            type_args.push(self.parse_type()?);
+                            
+                            if self.peek_match(TokenType::Comma) {
+                                self.consume(); // consume ','
+                            } else {
+                                break;
+                            }
+                        }
+                        
+                        self.consume_match(TokenType::GreaterThan)?; // consume '>'
+                        
+                        Ok(Type::Generic {
+                            base: ident,
+                            type_args,
+                        })
+                    } else {
+                        Ok(Type::Identifier(ident))
+                    }
                 }
                 _ => Err(ParseError::UnexpectedToken {
                     found: format!("{:?}", token.token_type),

@@ -273,6 +273,7 @@ impl Generator {
             Statement::EnumDeclaration {
                 name,
                 attributes,
+                type_parameters: _,
                 values,
             } => {
                 let qualified_name = self
@@ -298,6 +299,7 @@ impl Generator {
             Statement::StructDeclaration {
                 name,
                 attributes,
+                type_parameters: _,
                 fields,
                 methods,
             } => {
@@ -1579,6 +1581,25 @@ impl Generator {
             ParsedType::Array(a) => {
                 let ty = self.get_semantic_type(a)?;
                 Ok(Type::Array(Box::new(ty)))
+            }
+            ParsedType::Generic { base, type_args } => {
+                // For now, treat generic types as the base type
+                // TODO: implement proper generic type resolution with monomorphization
+                if let Some(ty) = self.symbol_table.find_type_in_scope(&base.name) {
+                    // Validate that type_args can be resolved
+                    for arg in type_args {
+                        self.get_semantic_type(arg)?;
+                    }
+                    Ok(ty)
+                } else {
+                    Err(SemanticError::TypeNotFound {
+                        name: base.name.clone(),
+                        pos: Some(SourcePos {
+                            line: base.line,
+                            col: base.col,
+                        }),
+                    })
+                }
             }
         }
     }
