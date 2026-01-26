@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use crate::ast::{
     Attribute, EnumValue, Expression, FunctionCall, FunctionDeclaration, Identifier, NamedPattern,
-    Parameter, Pattern, ProtoMethod, Statement, StructField, StructMethod, Type,
+    Parameter, Pattern, ProtoMethod, Statement, StructField, StructMethod, Type, TypeParameter,
 };
 use crate::errors::{ParseError, SourcePos};
 use crate::lexer::{Token, TokenType};
@@ -622,6 +622,7 @@ impl Parser {
     fn parse_enum_declaration(&mut self, attributes: Vec<Attribute>, is_pub: bool) -> ParseResult<Statement> {
         self.consume_match(TokenType::Enum)?;
         let name = self.parse_identifier()?;
+        let type_parameters = self.parse_type_parameters()?;
 
         self.consume_match(TokenType::OpenBrace)?;
 
@@ -645,6 +646,7 @@ impl Parser {
             is_pub,
             name,
             attributes,
+            type_parameters,
             values,
         })
     }
@@ -722,6 +724,7 @@ impl Parser {
     fn parse_struct_declaration(&mut self, attributes: Vec<Attribute>, is_pub: bool) -> ParseResult<Statement> {
         self.consume_match(TokenType::Struct)?;
         let name = self.parse_identifier()?;
+        let type_parameters = self.parse_type_parameters()?;
 
         let fields = if self.peek_match(TokenType::OpenParen) {
             self.parse_struct_field_list()?
@@ -733,11 +736,11 @@ impl Parser {
             self.peek(),
             TokenType::Semicolon => {
                 self.consume();
-                return Ok(Statement::StructDeclaration { is_pub, name, attributes, fields, methods: vec![] });
+                return Ok(Statement::StructDeclaration { is_pub, name, attributes, type_parameters, fields, methods: vec![] });
             },
             TokenType::OpenBrace => {
                 let methods = self.parse_struct_method_list()?;
-                return Ok(Statement::StructDeclaration { is_pub, name, attributes, fields, methods });
+                return Ok(Statement::StructDeclaration { is_pub, name, attributes, type_parameters, fields, methods });
             },
         }
     }
@@ -799,6 +802,7 @@ impl Parser {
         self.consume_match(TokenType::Fn)?;
 
         let name = self.parse_identifier()?;
+        let type_parameters = self.parse_type_parameters()?;
         let parameters = self.parse_argument_list()?;
         let return_type = if self.consume_match(TokenType::RightArrow).is_ok() {
             Some(self.parse_type()?)
@@ -825,6 +829,7 @@ impl Parser {
             name,
             attributes,
             effects,
+            type_parameters,
             parameters,
             body,
             return_type,
@@ -847,7 +852,44 @@ impl Parser {
                 }
                 TokenType::Identifier(_) => {
                     let ident = self.parse_identifier()?;
-                    Ok(Type::Identifier(ident))
+                    
+                    // Check for generic type syntax: identifier<type_args>
+                    if self.peek_match(TokenType::LessThan) {
+                        self.consume(); // consume '<'
+                        
+                        // Handle empty type argument list: identifier<>
+                        if self.peek_match(TokenType::GreaterThan) {
+                            self.consume(); // consume '>'
+                            return Err(ParseError::UnexpectedToken {
+                                found: "empty type argument list".to_string(),
+                                pos: Some(SourcePos {
+                                    line: ident.line,
+                                    col: ident.col,
+                                }),
+                            });
+                        }
+                        
+                        let mut type_args = vec![];
+                        
+                        loop {
+                            type_args.push(self.parse_type()?);
+                            
+                            if self.peek_match(TokenType::Comma) {
+                                self.consume(); // consume ','
+                            } else {
+                                break;
+                            }
+                        }
+                        
+                        self.consume_match(TokenType::GreaterThan)?; // consume '>'
+                        
+                        Ok(Type::Generic {
+                            base: ident,
+                            type_args,
+                        })
+                    } else {
+                        Ok(Type::Identifier(ident))
+                    }
                 }
                 _ => Err(ParseError::UnexpectedToken {
                     found: format!("{:?}", token.token_type),
@@ -865,6 +907,45 @@ impl Parser {
                 }),
             })
         }
+    }
+
+    fn parse_type_parameters(&mut self) -> ParseResult<Vec<TypeParameter>> {
+        if !self.peek_match(TokenType::LessThan) {
+            return Ok(vec![]);
+        }
+        
+        self.consume(); // consume '<'
+        
+        // Handle empty type parameter list: <>
+        if self.peek_match(TokenType::GreaterThan) {
+            self.consume(); // consume '>'
+            return Ok(vec![]);
+        }
+        
+        let mut type_params = vec![];
+        
+        loop {
+            let name = self.parse_identifier()?;
+            
+            // Check for bound: T: Printable
+            let bound = if self.peek_match(TokenType::Colon) {
+                self.consume(); // consume ':'
+                Some(self.parse_identifier()?)
+            } else {
+                None
+            };
+            
+            type_params.push(TypeParameter { name, bound });
+            
+            if self.peek_match(TokenType::Comma) {
+                self.consume(); // consume ','
+            } else {
+                break;
+            }
+        }
+        
+        self.consume_match(TokenType::GreaterThan)?; // consume '>'
+        Ok(type_params)
     }
 
     fn parse_import_statement(&mut self) -> ParseResult<Statement> {

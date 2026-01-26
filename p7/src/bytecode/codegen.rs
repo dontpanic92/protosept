@@ -274,6 +274,7 @@ impl Generator {
                 is_pub,
                 name,
                 attributes,
+                type_parameters: _,
                 values,
             } => {
                 let qualified_name = self
@@ -303,19 +304,20 @@ impl Generator {
                 is_pub,
                 name,
                 attributes,
+                type_parameters: _,
                 fields,
                 methods,
             } => {
                 let qualified_name = self
                     .symbol_table
                     .get_new_symbol_qualified_name(name.name.clone());
-                let fields_with_types = fields
-                    .iter()
-                    .map(|f| {
-                        let field_type = self.get_semantic_type(&f.field_type).unwrap();
-                        (f.name.name.clone(), field_type)
-                    })
-                    .collect();
+                
+                let mut fields_with_types = Vec::new();
+                for f in &fields {
+                    let field_type = self.get_semantic_type(&f.field_type)?;
+                    fields_with_types.push((f.name.name.clone(), field_type));
+                }
+                
                 let field_defaults = fields.iter().map(|f| f.default_value.clone()).collect();
 
                 let ty = Struct {
@@ -362,21 +364,18 @@ impl Generator {
                 self.symbol_table.push_symbol(symbol);
                 
                 // Now process the method signatures
-                let methods_with_types = methods
-                    .iter()
-                    .map(|m| {
-                        let params: Vec<Type> = m
-                            .parameters
-                            .iter()
-                            .map(|p| self.get_semantic_type(&p.arg_type).unwrap())
-                            .collect();
-                        let return_type = m
-                            .return_type
-                            .as_ref()
-                            .map(|t| self.get_semantic_type(t).unwrap());
-                        (m.name.name.clone(), params, return_type)
-                    })
-                    .collect();
+                let mut methods_with_types = Vec::new();
+                for m in methods {
+                    let mut params = Vec::new();
+                    for p in &m.parameters {
+                        params.push(self.get_semantic_type(&p.arg_type)?);
+                    }
+                    let return_type = match &m.return_type {
+                        Some(t) => Some(self.get_semantic_type(t)?),
+                        None => None,
+                    };
+                    methods_with_types.push((m.name.name.clone(), params, return_type));
+                }
 
                 // Update the proto with the actual method signatures
                 let ty = Proto {
@@ -1610,6 +1609,25 @@ impl Generator {
             ParsedType::Array(a) => {
                 let ty = self.get_semantic_type(a)?;
                 Ok(Type::Array(Box::new(ty)))
+            }
+            ParsedType::Generic { base, type_args } => {
+                // For now, treat generic types as the base type
+                // TODO: implement proper generic type resolution with monomorphization
+                if let Some(ty) = self.symbol_table.find_type_in_scope(&base.name) {
+                    // Validate that type_args can be resolved
+                    for arg in type_args {
+                        self.get_semantic_type(arg)?;
+                    }
+                    Ok(ty)
+                } else {
+                    Err(SemanticError::TypeNotFound {
+                        name: base.name.clone(),
+                        pos: Some(SourcePos {
+                            line: base.line,
+                            col: base.col,
+                        }),
+                    })
+                }
             }
         }
     }

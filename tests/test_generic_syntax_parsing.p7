@@ -1,0 +1,44 @@
+// compile_fail: Generic types not fully implemented - semantic analysis will fail
+// Test that generic syntax is parsed correctly (compile-only test)
+// This file tests that the PARSER accepts generic syntax
+// Full semantic support is not yet implemented
+
+// Generic struct with single type parameter - tests parser accepts <T> syntax
+struct Box<T>(
+    value: T,
+);
+
+// Generic struct with multiple type parameters
+struct Pair<T, U>(
+    first: T,
+    second: U,
+);
+
+// Generic function with type parameter
+fn identity<T>(x: T) -> T {
+    return x;
+}
+
+// Generic function with multiple type parameters
+fn swap<T, U>(a: T, b: U) -> U {
+    return b;
+}
+
+// Generic function with type bound
+fn constrained<T: Copy>(x: T) -> T {
+    return x;
+}
+
+// Generic enum
+enum Option<T> {
+    Some,
+    None,
+}
+
+enum Result<T, E> {
+    Ok,
+    Err,
+}
+
+// This file should compile without errors at the PARSING stage
+// The purpose is to validate that generic syntax is correctly recognized

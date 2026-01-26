@@ -8,10 +8,20 @@ pub struct Identifier {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct TypeParameter {
+    pub name: Identifier,
+    pub bound: Option<Identifier>, // e.g., T: Printable
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Type {
     Identifier(Identifier),
     Reference(Box<Type>),
     Array(Box<Type>),
+    Generic {
+        base: Identifier,
+        type_args: Vec<Type>,
+    },
 }
 
 impl Type {
@@ -23,6 +33,14 @@ impl Type {
             }
             Type::Array(a) => {
                 format!("{}[]", a.get_name())
+            }
+            Type::Generic { base, type_args } => {
+                let args = type_args
+                    .iter()
+                    .map(|t| t.get_name())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}<{}>", base.name, args)
             }
         }
     }
@@ -53,6 +71,7 @@ pub struct FunctionDeclaration {
     pub name: Identifier,
     pub attributes: Vec<Attribute>,
     pub effects: Vec<Identifier>,
+    pub type_parameters: Vec<TypeParameter>,
     pub parameters: Vec<Parameter>,
     pub return_type: Option<Type>,
     pub body: StatementBlock,
@@ -156,12 +175,14 @@ pub enum Statement {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
+        type_parameters: Vec<TypeParameter>,
         values: Vec<EnumValue>,
     },
     StructDeclaration {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
+        type_parameters: Vec<TypeParameter>,
         fields: Vec<StructField>,
         methods: Vec<StructMethod>,
     },

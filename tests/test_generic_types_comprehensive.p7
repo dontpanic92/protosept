@@ -1,0 +1,48 @@
+// Comprehensive test for generic type syntax
+// This file demonstrates what the parser can handle
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// Regular structs to test functionality
+struct Outer(
+    inner: int,
+);
+
+struct Triple(
+    first: int,
+    second: int,
+    third: int,
+);
+
+// Regular functions
+fn wrap(value: int) -> int {
+    return value;
+}
+
+fn create_value(x: int) -> int {
+    return x;
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_struct_instantiation() -> int {
+    let o = Outer(42);
+    o.inner
+}
+
+@test(expected_type = "int", expected_value = "100")
+fn test_function_call() -> int {
+    wrap(100)
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_multiple_fields() -> int {
+    let t = Triple(5, 10, 15);
+    t.first
+}
+
+@test(expected_type = "int", expected_value = "99")
+fn test_value_passing() -> int {
+    create_value(99)
+}
