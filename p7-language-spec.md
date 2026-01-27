@@ -603,6 +603,7 @@ Rules:
 
 **Control flow**:
 - `break`, `continue`, `return`, and `throw` statements inside `if` blocks behave as usual according to their enclosing control structures or functions.
+
 ### 9.3 Operators and precedence
 Operator precedence (highest to lowest):
 
