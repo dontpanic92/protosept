@@ -22,6 +22,12 @@ pub type SaResult<T> = Result<T, SemanticError>;
 const SYNTHETIC_LINE: usize = 0;
 const SYNTHETIC_COL: usize = 0;
 
+#[derive(Clone)]
+struct LoopContext {
+    break_patches: Vec<u32>,  // Addresses of break jumps to patch
+    continue_target: u32,      // Address to jump to for continue
+}
+
 pub struct Generator {
     builder: ByteCodeBuilder,
     symbol_table: SymbolTable,
@@ -31,6 +37,8 @@ pub struct Generator {
     imported_modules: std::collections::HashMap<String, Module>,
     // Track which variables have been moved (by their index in local scope)
     moved_variables: std::collections::HashSet<u32>,
+    // Track the current loop context for break/continue
+    loop_context: Option<LoopContext>,
 }
 
 impl Generator {
@@ -43,6 +51,7 @@ impl Generator {
             module_provider,
             imported_modules: std::collections::HashMap::new(),
             moved_variables: std::collections::HashSet::new(),
+            loop_context: None,
         }
     }
 
@@ -1511,6 +1520,157 @@ impl Generator {
                         col: base.col,
                     }),
                 })
+            }
+            Expression::Loop { body, pos } => {
+                // loop { body }
+                // Generates:
+                //   loop_start:
+                //     <body>
+                //     jmp loop_start
+                
+                let loop_start = self.builder.next_address();
+                
+                // Save the current loop context
+                let saved_loop_context = self.loop_context.clone();
+                
+                // Set up new loop context for break/continue
+                self.loop_context = Some(LoopContext {
+                    break_patches: Vec::new(),
+                    continue_target: loop_start,
+                });
+                
+                self.generate_expression(*body)?;
+                
+                // Jump back to start of loop
+                self.builder.jmp(loop_start);
+                
+                // Get the end address for break statements to jump to
+                let loop_end = self.builder.next_address();
+                
+                // Patch all break statements
+                if let Some(ctx) = &self.loop_context {
+                    for break_addr in &ctx.break_patches {
+                        self.builder.patch_jump_address(*break_addr, loop_end);
+                    }
+                }
+                
+                // Restore previous loop context
+                self.loop_context = saved_loop_context;
+                
+                Ok(Type::Primitive(PrimitiveType::Unit))
+            }
+            Expression::While { condition, body, pos } => {
+                // while condition { body }
+                // Desugars to: loop { if condition { body } else { break; } }
+                // Generates:
+                //   loop_start:
+                //     <condition>
+                //     not
+                //     jif loop_end
+                //     <body>
+                //     jmp loop_start
+                //   loop_end:
+                
+                let loop_start = self.builder.next_address();
+                
+                // Save the current loop context
+                let saved_loop_context = self.loop_context.clone();
+                
+                // Set up new loop context for break/continue
+                self.loop_context = Some(LoopContext {
+                    break_patches: Vec::new(),
+                    continue_target: loop_start,
+                });
+                
+                // Evaluate condition
+                let condition_type = self.generate_expression(*condition)?;
+                if condition_type != Type::Primitive(PrimitiveType::Bool) {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: condition_type.to_string(),
+                        rhs: "bool".to_string(),
+                        pos: Some(SourcePos {
+                            line: pos.0,
+                            col: pos.1,
+                        }),
+                    });
+                }
+                
+                // If condition is false (not true), jump to end
+                self.builder.not();
+                let exit_jump_placeholder = self.builder.next_address();
+                self.builder.jif(0);
+                
+                // Generate body
+                self.generate_expression(*body)?;
+                
+                // Jump back to start of loop
+                self.builder.jmp(loop_start);
+                
+                // Get the end address
+                let loop_end = self.builder.next_address();
+                
+                // Patch the exit jump
+                self.builder.patch_jump_address(exit_jump_placeholder, loop_end);
+                
+                // Patch all break statements
+                if let Some(ctx) = &self.loop_context {
+                    for break_addr in &ctx.break_patches {
+                        self.builder.patch_jump_address(*break_addr, loop_end);
+                    }
+                }
+                
+                // Restore previous loop context
+                self.loop_context = saved_loop_context;
+                
+                Ok(Type::Primitive(PrimitiveType::Unit))
+            }
+            Expression::Break { value, pos } => {
+                // break or break expr;
+                // For now, we only support break without a value (break;)
+                // which exits the current loop
+                
+                if value.is_some() {
+                    return Err(SemanticError::Other(
+                        "break with value is not yet supported".to_string(),
+                    ));
+                }
+                
+                // Check if we're in a loop
+                if self.loop_context.is_none() {
+                    return Err(SemanticError::Other(format!(
+                        "break statement outside of loop at line {} column {}",
+                        pos.0, pos.1
+                    )));
+                }
+                
+                // Record this break location to patch later
+                let break_jump_addr = self.builder.next_address();
+                self.builder.jmp(0); // Will be patched to loop end
+                
+                if let Some(ctx) = &mut self.loop_context {
+                    ctx.break_patches.push(break_jump_addr);
+                }
+                
+                Ok(Type::Primitive(PrimitiveType::Unit))
+            }
+            Expression::Continue { pos } => {
+                // continue;
+                // Jumps to the start of the current loop (re-evaluate condition for while)
+                
+                // Check if we're in a loop
+                let continue_target = if let Some(ctx) = &self.loop_context {
+                    ctx.continue_target
+                } else {
+                    return Err(SemanticError::Other(format!(
+                        "continue statement outside of loop at line {} column {}",
+                        pos.0, pos.1
+                    )));
+                };
+                
+                // Jump to loop start
+                self.builder.jmp(continue_target);
+                
+                Ok(Type::Primitive(PrimitiveType::Unit))
             }
         }
     }

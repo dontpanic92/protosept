@@ -25,6 +25,10 @@ pub enum TokenType {
     Import,
     As,
     Match,
+    Loop,
+    While,
+    Break,
+    Continue,
 
     // Identifiers and Literals
     Identifier(String),
@@ -377,6 +381,10 @@ impl Lexer {
                         "import" => TokenType::Import,
                         "as" => TokenType::As,
                         "match" => TokenType::Match,
+                        "loop" => TokenType::Loop,
+                        "while" => TokenType::While,
+                        "break" => TokenType::Break,
+                        "continue" => TokenType::Continue,
                         _ => TokenType::Identifier(ident),
                     }
                 } else if c.is_numeric() {

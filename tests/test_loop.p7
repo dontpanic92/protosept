@@ -1,0 +1,34 @@
+// Tests for infinite loop control flow
+import test.test;
+
+// ===== Basic Loop Tests =====
+
+@test(expected_type = "int", expected_value = "42")
+fn test_loop_break_immediately() -> int {
+    loop {
+        break;
+    }
+    42
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_loop_with_condition_break() -> int {
+    let x = 5;
+    loop {
+        if x == 5 {
+            break;
+        }
+    }
+    1
+}
+
+@test(expected_type = "int", expected_value = "2")
+fn test_loop_nested_break() -> int {
+    loop {
+        loop {
+            break;
+        }
+        break;
+    }
+    2
+}
