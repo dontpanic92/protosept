@@ -572,13 +572,37 @@ Block value:
 - If the final statement is an expression statement without trailing `;`, the block evaluates to that expression’s value.
 - Otherwise it evaluates to `()` (unit).
 
-### 9.2 `if` expression
+### 9.2 `if` expression and statement
 
-`if condition then_expr else else_expr`
+Two forms:
 
+1) **`if` with `else` (expression form)**:
+```p7
+if condition { then_block } else { else_block }
+```
+
+2) **`if` without `else` (statement form)**:
+```p7
+if condition { then_block }
+```
+
+Rules:
+- Braces are mandatory around both `then_block` and `else_block`.
 - `condition` MUST be `bool`.
-- Branch types MUST be identical in v1 (recommended for simplicity). [[TODO]] if you later add a “common type” rule, specify it here.
 
+**Expression form** (`if ... else ...`):
+- The `if` expression yields the value of the evaluated branch.
+- `then_block` and `else_block` MUST have identical types in v1.
+- The `if` expression has the same type as the branches.
+- May be used in any expression position (e.g., assignment, return, nested in other expressions).
+
+**Statement form** (`if` without `else`):
+- Permitted only in statement position (not in expression contexts).
+- `then_block` MUST have type `unit` or ERROR.
+- Does not yield a value.
+
+**Control flow**:
+- `break`, `continue`, `return`, and `throw` statements inside `if` blocks behave as usual according to their enclosing control structures or functions.
 ### 9.3 Operators and precedence
 Operator precedence (highest to lowest):
 
@@ -611,7 +635,8 @@ Operator precedence (highest to lowest):
 10) Assignment: `=` (right-associative). Assignment is a statement form; it does not yield a value.
 
 Notes:
-- `if`, `try`, and `loop` are expression forms and bind looser than any operator above.
+- `if ... else ...`, `try`, and `loop` are expression forms written with blocks and bind looser than any operator above.
+- `if` without `else` is statement-only and does not participate in operator precedence.
 - Choose either symbolic or keyword forms for logical operators and reserve the other.
 
 ### 9.4 `loop` expressions
@@ -651,6 +676,43 @@ Type rule:
 Borrow interaction:
 - Each iteration’s `let` creates a fresh slot; any `ref` taken to that slot is confined by §7.3.
 
+### 9.5 `while` statement (v1)
+
+Form:
+```p7
+while condition { body }
+```
+
+Rules:
+- `condition` MUST be `bool`.
+- `while` is a statement that yields `unit` when used in a block.
+
+Semantics:
+- `condition` is evaluated before each iteration.
+- If `condition` is `true`, `body` executes and control returns to evaluate `condition` again.
+- If `condition` is `false`, the loop exits.
+
+Control flow:
+- `break` and `continue` behave as in `loop`.
+- `break;` exits the loop and yields `()`.
+- `break expr;` exits the loop and yields `expr`.
+- `continue;` skips to the next iteration (re-evaluates `condition`).
+
+**Normative desugaring**:
+
+The `while` statement is defined by desugaring to `loop`:
+```p7
+while condition { body }
+```
+desugars to:
+```p7
+loop {
+  if condition { body } else { break; }
+}
+```
+
+This desugaring is normative; implementations MAY optimize but MUST preserve the observable semantics of this desugaring, including the behavior of `break` and `continue` within `body`.
+
 ---
 
 ## 10. Statements
@@ -658,12 +720,14 @@ Borrow interaction:
 Statement forms:
 - `let` binding: `let x = expr;`
 - expression statement: `expr;`
+- `if` statement (§9.2): `if condition { then_block }`
+- `while` statement (§9.5): `while condition { body }`
+- `for` statement (§10.3)
 - `return;` or `return expr;`
 - `throw expr;` (only in `throws` functions; §14)
 - `break;` / `break expr;`
 - `continue;`
 - assignment statement (§10.2)
-- `for` statement (§10.3)
 - `yield;` (Fiber extension only; §21)
 - declarations where allowed [[TODO]] (recommended: declarations only at top-level in v1)
 
