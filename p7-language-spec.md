@@ -467,8 +467,8 @@ Send-eligible in v1:
 - Primitives
 - `string`
 - `array<T>` iff `T` is Send-eligible
-- `enum` iff all payload field types are Send-eligible
-- User `struct` iff it opts in with `struct[Send]` and all fields are Send-eligible
+- User-defined `enum` iff all payload field types are Send-eligible
+- User-defined `struct` iff all fields are Send-eligible
 
 Not Send-eligible:
 - `box<T>`
@@ -961,6 +961,26 @@ v1 does not support:
 
 These may be added in future versions.
 
+### 13.3 Methods
+
+An enum may include a method block, using the same method syntax as structs.
+
+Receivers:
+- `self` (by value)
+- `self: ref Self` (borrowed read-only view)
+
+This enables enums to satisfy object protos structurally (§18).
+
+Example:
+```p7
+enum Option<T> {
+  None,
+  Some(T),
+} {
+  pub fn is_some(self: ref Self) -> bool { ... }
+}
+```
+
 ---
 
 ## 14. Error handling: `throw` and `try`
@@ -1149,7 +1169,7 @@ Two ways:
 let p: box<Printable> = v as box<Printable>;
 ```
 
-2) Implicit coercion (allowed only when `T` declares `[P]` conformance; see §18.6):
+2) Implicit coercion (allowed only when `T` declares `[P]` conformance via `struct[...]` or `enum[...]`; see §18.6):
 ```p7
 let p: box<Printable> = v;
 ```
@@ -1158,9 +1178,9 @@ Conversion does not allocate a new `T`. It reinterprets the existing handle with
 
 [[TODO]] finalize cast syntax and coercion sites.
 
-### 18.6 Declaring proto conformances on structs
+### 18.6 Declaring proto conformances on structs and enums
 
-A struct may declare conformances in a bracket list:
+A struct or enum may declare conformances in a bracket list:
 
 ```p7
 struct[Printable, Copy] Vec2(
@@ -1169,10 +1189,18 @@ struct[Printable, Copy] Vec2(
 ) {
   pub fn print(self: ref Self) -> unit { ... }
 }
+
+enum[Printable, Copy] Status {
+  Pending,
+  Active(int),
+  Failed(string, int),
+} {
+  pub fn print(self: ref Self) -> unit { ... }
+}
 ```
 
 Rules:
-- Each name in `struct[...]` MUST be the name of a proto.
+- Each name in `struct[...]` or `enum[...]` MUST be the name of a proto.
 - The compiler MUST check structural satisfaction.
 - Listing a proto MAY enable implicit behaviors described by this spec:
   - `Copy` and `Send` opt-in behavior (§6.3, §6.5).
