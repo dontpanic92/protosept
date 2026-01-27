@@ -37,8 +37,8 @@ pub struct Generator {
     imported_modules: std::collections::HashMap<String, Module>,
     // Track which variables have been moved (by their index in local scope)
     moved_variables: std::collections::HashSet<u32>,
-    // Track the current loop context for break/continue
-    loop_context: Option<LoopContext>,
+    // Stack of loop contexts for nested loops
+    loop_context_stack: Vec<LoopContext>,
 }
 
 impl Generator {
@@ -51,7 +51,7 @@ impl Generator {
             module_provider,
             imported_modules: std::collections::HashMap::new(),
             moved_variables: std::collections::HashSet::new(),
-            loop_context: None,
+            loop_context_stack: Vec::new(),
         }
     }
 
@@ -1521,7 +1521,7 @@ impl Generator {
                     }),
                 })
             }
-            Expression::Loop { body, pos } => {
+            Expression::Loop { body, pos: _ } => {
                 // loop { body }
                 // Generates:
                 //   loop_start:
@@ -1530,11 +1530,8 @@ impl Generator {
                 
                 let loop_start = self.builder.next_address();
                 
-                // Save the current loop context
-                let saved_loop_context = self.loop_context.clone();
-                
-                // Set up new loop context for break/continue
-                self.loop_context = Some(LoopContext {
+                // Push new loop context onto stack
+                self.loop_context_stack.push(LoopContext {
                     break_patches: Vec::new(),
                     continue_target: loop_start,
                 });
@@ -1547,15 +1544,12 @@ impl Generator {
                 // Get the end address for break statements to jump to
                 let loop_end = self.builder.next_address();
                 
-                // Patch all break statements
-                if let Some(ctx) = &self.loop_context {
+                // Pop loop context and patch all break statements
+                if let Some(ctx) = self.loop_context_stack.pop() {
                     for break_addr in &ctx.break_patches {
                         self.builder.patch_jump_address(*break_addr, loop_end);
                     }
                 }
-                
-                // Restore previous loop context
-                self.loop_context = saved_loop_context;
                 
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
@@ -1573,11 +1567,8 @@ impl Generator {
                 
                 let loop_start = self.builder.next_address();
                 
-                // Save the current loop context
-                let saved_loop_context = self.loop_context.clone();
-                
-                // Set up new loop context for break/continue
-                self.loop_context = Some(LoopContext {
+                // Push new loop context onto stack
+                self.loop_context_stack.push(LoopContext {
                     break_patches: Vec::new(),
                     continue_target: loop_start,
                 });
@@ -1612,15 +1603,12 @@ impl Generator {
                 // Patch the exit jump
                 self.builder.patch_jump_address(exit_jump_placeholder, loop_end);
                 
-                // Patch all break statements
-                if let Some(ctx) = &self.loop_context {
+                // Pop loop context and patch all break statements
+                if let Some(ctx) = self.loop_context_stack.pop() {
                     for break_addr in &ctx.break_patches {
                         self.builder.patch_jump_address(*break_addr, loop_end);
                     }
                 }
-                
-                // Restore previous loop context
-                self.loop_context = saved_loop_context;
                 
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
@@ -1636,7 +1624,7 @@ impl Generator {
                 }
                 
                 // Check if we're in a loop
-                if self.loop_context.is_none() {
+                if self.loop_context_stack.is_empty() {
                     return Err(SemanticError::Other(format!(
                         "break statement outside of loop at line {} column {}",
                         pos.0, pos.1
@@ -1647,7 +1635,8 @@ impl Generator {
                 let break_jump_addr = self.builder.next_address();
                 self.builder.jmp(0); // Will be patched to loop end
                 
-                if let Some(ctx) = &mut self.loop_context {
+                // Add to the current loop context's break patches
+                if let Some(ctx) = self.loop_context_stack.last_mut() {
                     ctx.break_patches.push(break_jump_addr);
                 }
                 
@@ -1657,8 +1646,8 @@ impl Generator {
                 // continue;
                 // Jumps to the start of the current loop (re-evaluate condition for while)
                 
-                // Check if we're in a loop
-                let continue_target = if let Some(ctx) = &self.loop_context {
+                // Check if we're in a loop and get the continue target
+                let continue_target = if let Some(ctx) = self.loop_context_stack.last() {
                     ctx.continue_target
                 } else {
                     return Err(SemanticError::Other(format!(

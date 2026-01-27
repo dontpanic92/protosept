@@ -503,11 +503,14 @@ impl Parser {
 
         // Check if there's a value to break with
         // Break can optionally have a value: break expr;
-        // We need to check if the next token is a semicolon or closing brace
-        let value = if self.peek_match(TokenType::Semicolon) || self.peek_match(TokenType::CloseBrace) {
-            None
-        } else {
-            Some(Box::new(self.parse_expression()?))
+        // We need to check if the next token indicates end of statement/expression
+        let value = match self.peek() {
+            Some(t) if matches!(
+                t.token_type,
+                TokenType::Semicolon | TokenType::CloseBrace | TokenType::EOF
+            ) => None,
+            Some(_) => Some(Box::new(self.parse_expression()?)),
+            None => None,
         };
 
         Ok(Expression::Break {
