@@ -15,6 +15,7 @@ struct[Printable] Dog(
   }
 }
 
+@test(expected_type = "int", expected_value = "42")
 fn main() -> int {
   let dog = box(Dog(x = 10));
   let p: box<Printable> = dog as box<Printable>;
