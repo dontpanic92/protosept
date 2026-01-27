@@ -127,6 +127,18 @@ pub enum Instruction {
     // Expects: [..., BoxRef] -> pops BoxRef, pushes the contained value
     #[brw(magic = 33u8)]
     BoxDeref,
+    
+    // Convert a box<T> to a proto box box<P> for dynamic dispatch.
+    // Expects: [..., BoxRef] -> pops BoxRef, pushes ProtoBoxRef with type_id
+    // Parameters: (struct_type_id, proto_type_id)
+    #[brw(magic = 34u8)]
+    BoxToProto(u32, u32),
+    
+    // Call a proto method with dynamic dispatch.
+    // Expects: [..., ProtoBoxRef, args] -> performs dynamic method lookup and calls impl
+    // Parameters: (proto_id, method_name_hash)
+    #[brw(magic = 35u8)]
+    CallProtoMethod(u32, u32),
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {
