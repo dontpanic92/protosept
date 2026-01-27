@@ -246,6 +246,8 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
         Instruction::Ldfield(index) => format!("{}  ldfield {}", offset_hex, index),
         Instruction::Stfield(index) => format!("{}  stfield {}", offset_hex, index),
         Instruction::NewStruct(count) => format!("{}  newstruct {}", offset_hex, count),
+        Instruction::BoxAlloc => format!("{}  box_alloc", offset_hex),
+        Instruction::BoxDeref => format!("{}  box_deref", offset_hex),
     }
 }
 

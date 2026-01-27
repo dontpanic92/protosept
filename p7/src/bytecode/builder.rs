@@ -179,6 +179,16 @@ impl ByteCodeBuilder {
     pub fn dup(&mut self) {
         self.add_instruction(Instruction::Dup);
     }
+    
+    /// Allocate a box on the heap and store the top stack value in it.
+    pub fn box_alloc(&mut self) {
+        self.add_instruction(Instruction::BoxAlloc);
+    }
+    
+    /// Dereference a box and push its contained value.
+    pub fn box_deref(&mut self) {
+        self.add_instruction(Instruction::BoxDeref);
+    }
 
     pub fn get_bytecode(&self) -> Vec<u8> {
         self.writer.get_ref().clone()

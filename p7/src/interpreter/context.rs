@@ -14,6 +14,8 @@ pub enum Data {
     Float(f64),
     /// Reference to a heap-allocated struct (index into Context.heap).
     StructRef(u32),
+    /// Reference to a heap-allocated box (index into Context.box_heap).
+    BoxRef(u32),
     /// Exception value (enum variant ID) - used for try-catch as special return value
     Exception(i32),
 }
@@ -51,6 +53,10 @@ macro_rules! arithmetic_op {
                 // Arithmetic on struct references is invalid.
                 return Err(RuntimeError::UnexpectedStructRef);
             }
+            (Data::BoxRef(_), _) | (_, Data::BoxRef(_)) => {
+                // Arithmetic on box references is invalid.
+                return Err(RuntimeError::Other("Arithmetic on box reference".to_string()));
+            }
             (Data::Exception(_), _) | (_, Data::Exception(_)) => {
                 // Arithmetic on exceptions is invalid.
                 return Err(RuntimeError::Other("Arithmetic on exception value".to_string()));
@@ -79,6 +85,10 @@ macro_rules! comparison_op {
             (Data::StructRef(_), _) | (_, Data::StructRef(_)) => {
                 // Comparison with struct refs not supported
                 return Err(RuntimeError::UnexpectedStructRef);
+            }
+            (Data::BoxRef(_), _) | (_, Data::BoxRef(_)) => {
+                // Comparison with box refs not supported
+                return Err(RuntimeError::Other("Comparison on box reference".to_string()));
             }
             (Data::Exception(_), _) | (_, Data::Exception(_)) => {
                 // Comparison with exceptions not supported
@@ -114,6 +124,7 @@ pub struct Context {
     pub stack: Vec<StackFrame>,
     modules: Vec<Module>,
     pub heap: Vec<Struct>,
+    pub box_heap: Vec<Data>,
 }
 
 impl Context {
@@ -122,6 +133,7 @@ impl Context {
             stack: vec![StackFrame::new()],
             modules: Vec::new(),
             heap: Vec::new(),
+            box_heap: Vec::new(),
         }
     }
 
@@ -213,6 +225,11 @@ impl Context {
                             Data::StructRef(_) => {
                                 return Err(RuntimeError::VariableNotFound);
                             }
+                            Data::BoxRef(_) => {
+                                return Err(RuntimeError::Other(
+                                    "Cannot negate box reference".to_string(),
+                                ));
+                            }
                             Data::Exception(_) => {
                                 return Err(RuntimeError::Other(
                                     "Cannot negate exception value".to_string(),
@@ -238,6 +255,11 @@ impl Context {
                                 .push(Data::Int((f == 0.0) as i32)),
                             Data::StructRef(_) => {
                                 return Err(RuntimeError::VariableNotFound);
+                            }
+                            Data::BoxRef(_) => {
+                                return Err(RuntimeError::Other(
+                                    "Cannot apply logical NOT to box reference".to_string(),
+                                ));
                             }
                             Data::Exception(_) => {
                                 return Err(RuntimeError::Other(
@@ -448,6 +470,30 @@ impl Context {
                     } else {
                         return Err(RuntimeError::Other(
                             "Expected exception on stack".to_string(),
+                        ));
+                    }
+                }
+                Instruction::BoxAlloc => {
+                    // Pop value from stack, allocate a box, store value, push BoxRef
+                    let value = self.stack_frame_mut()?.stack.pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    let box_idx = self.box_heap.len() as u32;
+                    self.box_heap.push(value);
+                    self.stack_frame_mut()?.stack.push(Data::BoxRef(box_idx));
+                }
+                Instruction::BoxDeref => {
+                    // Pop BoxRef from stack, load value from box, push value
+                    let box_ref = self.stack_frame_mut()?.stack.pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    if let Data::BoxRef(idx) = box_ref {
+                        let value = self.box_heap.get(idx as usize)
+                            .ok_or_else(|| RuntimeError::Other(
+                                format!("Invalid box reference: {}", idx)
+                            ))?.clone();
+                        self.stack_frame_mut()?.stack.push(value);
+                    } else {
+                        return Err(RuntimeError::Other(
+                            "Expected BoxRef on stack for deref".to_string()
                         ));
                     }
                 }

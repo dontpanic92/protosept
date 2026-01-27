@@ -117,6 +117,16 @@ pub enum Instruction {
     // Pops N field values, creates struct on heap, pushes StructRef
     #[brw(magic = 30u8)]
     NewStruct(u32),
+    
+    // Allocate a box on the heap and store the top stack value in it.
+    // Expects: [..., value] -> pops value, allocates box, stores value, pushes BoxRef
+    #[brw(magic = 32u8)]
+    BoxAlloc,
+    
+    // Dereference a box and push its contained value.
+    // Expects: [..., BoxRef] -> pops BoxRef, pushes the contained value
+    #[brw(magic = 33u8)]
+    BoxDeref,
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {
