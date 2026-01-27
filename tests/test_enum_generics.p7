@@ -7,23 +7,23 @@ struct test(
 // ===== Generic Enum Definitions =====
 
 // Option<T> - standard optional value
-enum Option<T> {
+enum Option<T>(
     None,
-    Some(T),
-}
+    Some: T,
+);
 
 // Result<T, E> - result with success or error
-enum Result<T, E> {
-    Ok(T),
-    Err(E),
-}
+enum Result<T, E>(
+    Ok: T,
+    Err: E,
+);
 
 // Pair<T, U> - pair of two values
-enum Pair<T, U> {
-    Left(T),
-    Right(U),
-    Both(T, U),
-}
+enum Pair<T, U>(
+    Left: T,
+    Right: U,
+    Both: (T, U),
+);
 
 // ===== Tests for Option<T> =====
 

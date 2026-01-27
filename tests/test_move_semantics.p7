@@ -50,11 +50,11 @@ fn test_struct_copy() -> int {
 }
 
 // Test 5: Enum without [Copy] should move
-enum Status {
+enum Status(
   Pending,
   Active,
-  Done
-}
+  Done,
+);
 
 @test(expected_type = "int", expected_value = "1")
 fn test_enum_move() -> int {

@@ -45,11 +45,11 @@ struct AnnotatedStruct(
 
 // Test 5: Attribute on enum declaration
 @multi_field(name = "colors", count = 3, enabled = 1)
-enum Color {
+enum Color(
   Red,
   Green,
-  Blue
-}
+  Blue,
+);
 
 // Test 6: Duplicate attributes (allowed)
 @simple_attr(value = 1)

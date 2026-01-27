@@ -17,10 +17,10 @@ struct export(
 
 // Test enum with attributes
 @doc(text = "HTTP methods")
-enum HttpMethod {
+enum HttpMethod(
   GET,
-  POST
-}
+  POST,
+);
 
 // Test function with single attribute
 @route(path = "/users", method = "GET")
