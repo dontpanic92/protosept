@@ -199,6 +199,9 @@ impl Parser {
                 TokenType::Try => {
                     return self.parse_try_expression();
                 }
+                TokenType::Match => {
+                    return self.parse_match_expression();
+                }
                 TokenType::If => {
                     return self.parse_if_expression();
                 }
@@ -437,12 +440,31 @@ impl Parser {
         }
     }
 
+    /// Helper method to check if the current position has a named pattern (identifier followed by colon)
+    fn has_named_pattern_binding(&mut self) -> bool {
+        if let Some(token) = self.peek() {
+            if matches!(token.token_type, TokenType::Identifier(_)) {
+                // Look ahead to see if there's a colon after the identifier
+                let saved_pos = self.position;
+                let _ = self.parse_identifier();
+                let has_colon = self.peek().map(|t| t.token_type == TokenType::Colon).unwrap_or(false);
+                self.position = saved_pos; // Restore position
+                has_colon
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+
     fn parse_named_pattern(&mut self) -> ParseResult<NamedPattern> {
-        let ident = self.parse_identifier()?;
-        let name = if self.consume_match(TokenType::Colon).is_ok() {
+        // Try to parse as "name: pattern" first
+        let name = if self.has_named_pattern_binding() {
+            let ident = self.parse_identifier()?;
+            self.consume_match(TokenType::Colon)?;
             Some(ident)
         } else {
-            self.unconsume();
             None
         };
 
@@ -488,6 +510,44 @@ impl Parser {
         Ok(Expression::Try {
             try_block: Box::new(try_block),
             else_block,
+        })
+    }
+
+    fn parse_match_expression(&mut self) -> ParseResult<Expression> {
+        self.consume_match(TokenType::Match)?;
+        let scrutinee = self.parse_expression()?;
+        self.consume_match(TokenType::OpenBrace)?;
+
+        let mut arms = vec![];
+        loop {
+            // Check if we've reached the end of the match expression
+            if self.consume_match(TokenType::CloseBrace).is_ok() {
+                break;
+            }
+
+            // Parse pattern => expression
+            let pattern = self.parse_named_pattern()?;
+            self.consume_match(TokenType::FatRightArrow)?;
+            let expression = self.parse_expression()?;
+
+            arms.push(crate::ast::MatchArm { pattern, expression });
+
+            // Handle optional comma
+            let ends_with_brace = self.ends_with_brace();
+            let comma = self.consume_match(TokenType::Comma);
+            if !ends_with_brace {
+                comma?;
+            }
+
+            // Check for closing brace again
+            if self.consume_match(TokenType::CloseBrace).is_ok() {
+                break;
+            }
+        }
+
+        Ok(Expression::Match {
+            scrutinee: Box::new(scrutinee),
+            arms,
         })
     }
 

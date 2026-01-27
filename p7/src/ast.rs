@@ -138,6 +138,10 @@ pub enum Expression {
         try_block: Box<Expression>,
         else_block: Option<Box<Expression>>,
     },
+    Match {
+        scrutinee: Box<Expression>,
+        arms: Vec<MatchArm>,
+    },
     // Generic type instantiation with explicit type arguments (e.g., Container<int>)
     GenericInstantiation {
         base: Identifier,
@@ -147,6 +151,12 @@ pub enum Expression {
     Ref(Identifier),
 
     BlockValue(Box<Expression>),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct MatchArm {
+    pub pattern: NamedPattern,
+    pub expression: Expression,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -160,6 +170,12 @@ pub enum Pattern {
         object: Box<Pattern>,
         field: Identifier,
     },
+}
+
+impl Pattern {
+    pub fn is_wildcard(&self) -> bool {
+        matches!(self, Pattern::Identifier(id) if id.name == "_")
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]

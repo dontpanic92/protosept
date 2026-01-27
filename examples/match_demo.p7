@@ -1,0 +1,43 @@
+// Example demonstrating the match expression feature
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+enum Result {
+    Ok(int),
+    Err(int),
+}
+
+fn color_to_string(c: Color) -> int {
+    match c {
+        Color.Red => 1,
+        Color.Green => 2,
+        Color.Blue => 3,
+    }
+}
+
+fn check_value(x: int) -> int {
+    match x {
+        0 => 100,
+        1 => 200,
+        2 => 300,
+        val: _ => val,
+    }
+}
+
+fn main() -> int {
+    let red = Color.Red;
+    let red_value = color_to_string(red);
+    
+    let green = Color.Green;
+    let green_value = color_to_string(green);
+    
+    let x = check_value(0);
+    let y = check_value(1);
+    let z = check_value(99);
+    
+    red_value + green_value + x + y + z
+}

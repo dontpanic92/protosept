@@ -1,7 +1,7 @@
 use crate::errors::SourcePos;
 use crate::{
     ast::{
-        Expression, FunctionCall, FunctionDeclaration, Identifier, Pattern, Statement,
+        Expression, FunctionCall, FunctionDeclaration, Identifier, MatchArm, Pattern, Statement,
         Type as ParsedType,
     },
     bytecode::builder::ByteCodeBuilder,
@@ -632,6 +632,53 @@ impl Generator {
         }
     }
 
+    /// Helper method to bind a pattern variable if present, or pop the value if not
+    fn bind_pattern_variable(
+        &mut self,
+        pattern_name: &Option<Identifier>,
+        value_type: Type,
+    ) -> SaResult<()> {
+        if let Some(name) = pattern_name {
+            let var_id = self
+                .local_scope
+                .as_mut()
+                .unwrap()
+                .add_variable(name.name.clone(), value_type)
+                .map_err(|_| SemanticError::VariableOutsideFunction {
+                    name: name.name.clone(),
+                    pos: Some(SourcePos {
+                        line: name.line,
+                        col: name.col,
+                    }),
+                })?;
+            self.builder.stvar(var_id);
+        } else {
+            // No name binding, pop the value
+            self.builder.pop();
+        }
+        Ok(())
+    }
+
+    /// Helper method to validate and track result type across match arms
+    fn validate_match_arm_type(
+        &self,
+        result_ty: &mut Option<Type>,
+        arm_ty: Type,
+    ) -> SaResult<()> {
+        if let Some(expected_ty) = result_ty {
+            if expected_ty != &arm_ty {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: format!("{:?}", expected_ty),
+                    rhs: format!("{:?}", arm_ty),
+                    pos: None,
+                });
+            }
+        } else {
+            *result_ty = Some(arm_ty);
+        }
+        Ok(())
+    }
+
     fn generate_expression(&mut self, expression: Expression) -> SaResult<Type> {
         match expression {
             Expression::Identifier(identifier) => {
@@ -1204,6 +1251,72 @@ impl Generator {
                 }
 
                 Ok(ty)
+            }
+            Expression::Match { scrutinee, arms } => {
+                // Generate the scrutinee expression and keep it on stack
+                let scrutinee_ty = self.generate_expression(*scrutinee)?;
+
+                // Track jump addresses for all arms to jump to end
+                let mut end_jumps = Vec::new();
+                let mut result_ty = None;
+
+                for (i, arm) in arms.iter().enumerate() {
+                    let is_last_arm = i == arms.len() - 1;
+
+                    // Check if this is a wildcard pattern
+                    if !arm.pattern.pattern.is_wildcard() {
+                        // Non-wildcard pattern: need to compare
+                        self.builder.dup();
+
+                        // Generate code to load the pattern value
+                        let pattern_expr = self.pattern_to_expression(&arm.pattern.pattern)?;
+                        self.generate_expression(pattern_expr)?;
+
+                        // Compare: are they equal?
+                        self.builder.eq();
+
+                        // Negate the result: 1 if not equal, 0 if equal
+                        self.builder.not();
+
+                        // If not equal (result is 1 after not), jump to next arm
+                        let no_match_jump_placeholder = self.builder.next_address();
+                        self.builder.jif(0); // Placeholder
+
+                        // Pattern matched! Bind to variable if there's a name
+                        self.bind_pattern_variable(&arm.pattern.name, scrutinee_ty.clone())?;
+
+                        // Generate the expression for this arm
+                        let arm_ty = self.generate_expression(arm.expression.clone())?;
+                        self.validate_match_arm_type(&mut result_ty, arm_ty)?;
+
+                        // Jump to end of all arms (unless this is the last arm)
+                        if !is_last_arm {
+                            let end_jump_address = self.builder.next_address();
+                            self.builder.jmp(0); // Placeholder
+                            end_jumps.push(end_jump_address);
+                        }
+
+                        // Patch the no-match jump to point here (next arm)
+                        let next_arm_address = self.builder.next_address();
+                        self.builder
+                            .patch_jump_address(no_match_jump_placeholder, next_arm_address);
+                    } else {
+                        // Wildcard pattern - matches everything
+                        self.bind_pattern_variable(&arm.pattern.name, scrutinee_ty.clone())?;
+
+                        // Generate the expression for this arm
+                        let arm_ty = self.generate_expression(arm.expression.clone())?;
+                        self.validate_match_arm_type(&mut result_ty, arm_ty)?;
+                    }
+                }
+
+                // Patch all end jumps to point here
+                let end_address = self.builder.next_address();
+                for jump_address in end_jumps {
+                    self.builder.patch_jump_address(jump_address, end_address);
+                }
+
+                Ok(result_ty.unwrap_or(Type::Primitive(PrimitiveType::Unit)))
             }
             Expression::BlockValue(expression) => {
                 let ty = self.generate_expression(*expression)?;
