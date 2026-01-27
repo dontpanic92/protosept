@@ -1,0 +1,8 @@
+// compile_fail: Cannot dereference box with non-primitive inner type
+struct Point(x: int, y: int);
+
+fn test_box_struct_deref_error() -> Point {
+    let p = Point(1, 2);
+    let b = box(p);
+    *b  // ERROR: Cannot dereference box<Point> - only primitive types are supported
+}

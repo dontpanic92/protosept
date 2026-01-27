@@ -1,0 +1,91 @@
+// Box type tests
+import test.test;
+
+// Test 1: Basic box allocation and deref with int
+@test(expected_type = "int", expected_value = "42")
+fn test_box_int() -> int {
+    let b = box(42);
+    *b
+}
+
+// Test 2: Box with float
+@test(expected_type = "float", expected_value = "3.14")
+fn test_box_float() -> float {
+    let b = box(3.14);
+    *b
+}
+
+// Test 3: Multiple box allocations
+@test(expected_type = "int", expected_value = "10")
+fn test_multiple_boxes() -> int {
+    let b1 = box(5);
+    let b2 = box(3);
+    let b3 = box(2);
+    *b1 + *b2 + *b3
+}
+
+// Test 4: Box with expression
+@test(expected_type = "int", expected_value = "15")
+fn test_box_expression() -> int {
+    let x = 10;
+    let y = 5;
+    let b = box(x + y);
+    *b
+}
+
+// Test 5: Nested deref
+@test(expected_type = "int", expected_value = "100")
+fn test_box_nested_deref() -> int {
+    let b = box(100);
+    let x = *b;
+    x
+}
+
+// Test 6: Box in if expression
+@test(expected_type = "int", expected_value = "20")
+fn test_box_in_if() -> int {
+    let b = box(20);
+    if *b > 10 {
+        *b
+    } else {
+        0
+    }
+}
+
+// Test 7: Copy semantics - boxes alias
+@test(expected_type = "int", expected_value = "42")
+fn test_box_copy() -> int {
+    let b1 = box(42);
+    let b2 = b1;
+    *b2
+}
+
+// Test 8: Box in function return
+fn make_box(x: int) -> box<int> {
+    box(x)
+}
+
+@test(expected_type = "int", expected_value = "55")
+fn test_box_return() -> int {
+    let b = make_box(55);
+    *b
+}
+
+// Test 9: Box in function parameter
+fn unbox(b: box<int>) -> int {
+    *b
+}
+
+@test(expected_type = "int", expected_value = "77")
+fn test_box_param() -> int {
+    let b = box(77);
+    unbox(b)
+}
+
+// Test 10: Box arithmetic with multiple derefs
+@test(expected_type = "int", expected_value = "15")
+fn test_box_arithmetic() -> int {
+    let b1 = box(10);
+    let b2 = box(5);
+    *b1 + *b2
+}
