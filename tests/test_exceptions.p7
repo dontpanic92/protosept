@@ -7,11 +7,11 @@ import test.test;
 enum ErrorType(
     ErrorA,
     ErrorB,
-    ErrorC,
+    ErrorC
 );
 
 enum SimpleError(
-    NotFound,
+    NotFound
 );
 
 // ===== Helper Functions =====

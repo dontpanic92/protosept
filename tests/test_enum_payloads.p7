@@ -10,13 +10,13 @@ struct test(
 enum Status(
     Pending,
     Active: int,
-    Failed: (int, int),
+    Failed: (int, int)
 );
 
 // Enum with only payload variants
 enum Point(
     TwoD: (int, int),
-    ThreeD: (int, int, int),
+    ThreeD: (int, int, int)
 );
 
 // ===== Tests for Unit Variants =====

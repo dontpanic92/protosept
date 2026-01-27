@@ -16,7 +16,7 @@ pub struct MyStruct(
 
 pub enum MyEnum(
     Value1,
-    Value2,
+    Value2
 );
 
 @test(expected_type = "int", expected_value = "52")

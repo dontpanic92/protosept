@@ -9,20 +9,20 @@ struct test(
 // Option<T> - standard optional value
 enum Option<T>(
     None,
-    Some: T,
+    Some: T
 );
 
 // Result<T, E> - result with success or error
 enum Result<T, E>(
     Ok: T,
-    Err: E,
+    Err: E
 );
 
 // Pair<T, U> - pair of two values
 enum Pair<T, U>(
     Left: T,
     Right: U,
-    Both: (T, U),
+    Both: (T, U)
 );
 
 // ===== Tests for Option<T> =====

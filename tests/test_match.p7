@@ -9,12 +9,12 @@ struct test(
 enum Status(
     Pending,
     Active,
-    Failed,
+    Failed
 );
 
 enum Result(
     Ok: int,
-    Err: int,
+    Err: int
 );
 
 // ===== Tests for match with literals =====

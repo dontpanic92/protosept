@@ -53,7 +53,7 @@ fn test_struct_copy() -> int {
 enum Status(
   Pending,
   Active,
-  Done,
+  Done
 );
 
 @test(expected_type = "int", expected_value = "1")
