@@ -824,6 +824,27 @@ impl Parser {
 
     fn parse_struct_declaration(&mut self, attributes: Vec<Attribute>, is_pub: bool) -> ParseResult<Statement> {
         self.consume_match(TokenType::Struct)?;
+        
+        // Parse optional conformance list: struct[Proto1, Proto2]
+        let conformance = if self.peek_match(TokenType::OpenBracket) {
+            self.consume();
+            let mut protos = vec![];
+            
+            // Parse first protocol
+            protos.push(self.parse_identifier()?);
+            
+            // Parse additional protocols separated by commas
+            while self.peek_match(TokenType::Comma) {
+                self.consume();
+                protos.push(self.parse_identifier()?);
+            }
+            
+            self.consume_match(TokenType::CloseBracket)?;
+            protos
+        } else {
+            vec![]
+        };
+        
         let name = self.parse_identifier()?;
         let type_parameters = self.parse_type_parameters()?;
 
@@ -837,11 +858,11 @@ impl Parser {
             self.peek(),
             TokenType::Semicolon => {
                 self.consume();
-                return Ok(Statement::StructDeclaration { is_pub, name, attributes, type_parameters, fields, methods: vec![] });
+                return Ok(Statement::StructDeclaration { is_pub, name, attributes, conformance, type_parameters, fields, methods: vec![] });
             },
             TokenType::OpenBrace => {
                 let methods = self.parse_struct_method_list()?;
-                return Ok(Statement::StructDeclaration { is_pub, name, attributes, type_parameters, fields, methods });
+                return Ok(Statement::StructDeclaration { is_pub, name, attributes, conformance, type_parameters, fields, methods });
             },
         }
     }

@@ -406,6 +406,7 @@ impl Generator {
                 is_pub,
                 name,
                 attributes,
+                conformance,
                 type_parameters,
                 fields,
                 methods,
@@ -448,6 +449,13 @@ impl Generator {
                 };
                 
                 let field_defaults = fields.iter().map(|f| f.default_value.clone()).collect();
+                
+                // Resolve protocol conformances
+                let mut conforming_to = Vec::new();
+                for proto_name in conformance {
+                    let proto_type_id = self.resolve_proto_identifier(&proto_name)?;
+                    conforming_to.push(proto_type_id);
+                }
 
                 let ty = Struct {
                     qualified_name: qualified_name.clone(),
@@ -457,15 +465,19 @@ impl Generator {
                     type_parameters: type_param_names,
                     generic_field_types,
                     monomorphization: None,  // This is the generic definition, not a monomorphization
+                    conforming_to: conforming_to.clone(),
                 };
                 let type_id = self.symbol_table.add_udt(UserDefinedType::Struct(ty));
 
-                let symbol = Symbol::new(name.name, qualified_name, SymbolKind::Struct(type_id));
+                let symbol = Symbol::new(name.name.clone(), qualified_name.clone(), SymbolKind::Struct(type_id));
                 self.symbol_table.push_symbol(symbol);
 
                 for method in methods {
                     self.process_function_declaration(method.function)?;
                 }
+                
+                // Check conformance after processing methods
+                self.check_struct_conformance(type_id, &conforming_to, name.line, name.col)?;
                 
                 // TODO: Store is_pub for module visibility checking
                 let _ = is_pub;
@@ -2514,6 +2526,7 @@ impl Generator {
             type_parameters: Vec::new(), // Monomorphized structs have no type parameters
             generic_field_types: None,
             monomorphization: Some((base_type_id, type_args.clone())),
+            conforming_to: base_struct.conforming_to.clone(),
         };
         
         // Add to type table
@@ -2949,5 +2962,237 @@ impl Generator {
             }
         }
         None
+    }
+    
+    /// Resolve a protocol identifier to its TypeId
+    fn resolve_proto_identifier(&self, proto_name: &Identifier) -> SaResult<TypeId> {
+        let proto_type = self.symbol_table.find_type_in_scope(&proto_name.name)
+            .ok_or_else(|| SemanticError::TypeNotFound {
+                name: proto_name.name.clone(),
+                pos: Some(SourcePos {
+                    line: proto_name.line,
+                    col: proto_name.col,
+                }),
+            })?;
+        
+        match proto_type {
+            Type::Proto(proto_id) => Ok(proto_id),
+            _ => Err(SemanticError::Other(format!(
+                "Expected protocol name, found type '{}' at line {} column {}",
+                proto_name.name, proto_name.line, proto_name.col
+            ))),
+        }
+    }
+    
+    /// Check that a struct conforms to all declared protocols
+    fn check_struct_conformance(
+        &self,
+        struct_type_id: TypeId,
+        conforming_to: &[TypeId],
+        line: usize,
+        col: usize,
+    ) -> SaResult<()> {
+        // Get the struct definition
+        let struct_def = match &self.symbol_table.types[struct_type_id as usize] {
+            UserDefinedType::Struct(s) => s,
+            _ => return Err(SemanticError::Other("Expected struct type".to_string())),
+        };
+        
+        // For each protocol the struct claims to conform to
+        for &proto_id in conforming_to {
+            let proto = match &self.symbol_table.types[proto_id as usize] {
+                UserDefinedType::Proto(p) => p,
+                _ => return Err(SemanticError::Other("Expected proto type".to_string())),
+            };
+            
+            // Check each required method in the protocol
+            for (method_name, param_types, return_type) in &proto.methods {
+                // Find the corresponding method in the struct
+                let struct_method = self.find_struct_method(struct_type_id, method_name);
+                
+                if struct_method.is_none() {
+                    return Err(SemanticError::Other(format!(
+                        "Struct '{}' does not implement required method '{}' from protocol '{}' at line {} column {}",
+                        struct_def.qualified_name, method_name, proto.qualified_name, line, col
+                    )));
+                }
+                
+                let (method_params, method_return_type) = struct_method.unwrap();
+                
+                // Check parameter count matches
+                if method_params.len() != param_types.len() {
+                    return Err(SemanticError::Other(format!(
+                        "Method '{}' in struct '{}' has {} parameters, but protocol '{}' requires {} parameters at line {} column {}",
+                        method_name, struct_def.qualified_name, method_params.len(),
+                        proto.qualified_name, param_types.len(), line, col
+                    )));
+                }
+                
+                // Check each parameter type matches
+                // Special handling for first parameter (self) which should be ref to the struct/proto type
+                for (i, (expected_type, actual_type)) in param_types.iter().zip(method_params.iter()).enumerate() {
+                    // For the first parameter (self), check if both are reference types
+                    // The proto has `self: ref Proto` and the struct has `self: ref Struct`
+                    // These should be considered compatible for conformance checking
+                    if i == 0 {
+                        let proto_is_ref_to_proto = matches!(expected_type, Type::Reference(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id));
+                        let struct_is_ref_to_struct = matches!(actual_type, Type::Reference(inner) if matches!(**inner, Type::Struct(sid) if sid == struct_type_id));
+                        
+                        if proto_is_ref_to_proto && struct_is_ref_to_struct {
+                            // Both are reference types to their respective types, this is correct
+                            continue;
+                        }
+                    }
+                    
+                    if !self.types_equal(expected_type, actual_type) {
+                        return Err(SemanticError::Other(format!(
+                            "Method '{}' in struct '{}' has parameter {} with type '{}', but protocol '{}' requires type '{}' at line {} column {}",
+                            method_name, struct_def.qualified_name, i,
+                            self.type_to_string(actual_type),
+                            proto.qualified_name,
+                            self.type_to_string(expected_type),
+                            line, col
+                        )));
+                    }
+                }
+                
+                // Check return type matches
+                match (return_type, method_return_type) {
+                    (Some(expected), Some(actual)) => {
+                        // Both unit and no return type should be considered equivalent
+                        let expected_is_unit = matches!(expected, Type::Primitive(PrimitiveType::Unit));
+                        let actual_is_unit = matches!(actual, Type::Primitive(PrimitiveType::Unit));
+                        
+                        if expected_is_unit && actual_is_unit {
+                            // Both return unit, this is fine
+                        } else if !self.types_equal(&expected, &actual) {
+                            return Err(SemanticError::Other(format!(
+                                "Method '{}' in struct '{}' returns type '{}', but protocol '{}' requires return type '{}' at line {} column {}",
+                                method_name, struct_def.qualified_name,
+                                self.type_to_string(&actual),
+                                proto.qualified_name,
+                                self.type_to_string(&expected),
+                                line, col
+                            )));
+                        }
+                    }
+                    (Some(expected), None) => {
+                        // Proto requires a return type, but struct method returns nothing (unit)
+                        // If proto expects unit, this is fine
+                        if !matches!(expected, Type::Primitive(PrimitiveType::Unit)) {
+                            return Err(SemanticError::Other(format!(
+                                "Method '{}' in struct '{}' returns nothing, but protocol '{}' requires return type '{}' at line {} column {}",
+                                method_name, struct_def.qualified_name,
+                                proto.qualified_name,
+                                self.type_to_string(&expected),
+                                line, col
+                            )));
+                        }
+                    }
+                    (None, Some(actual)) => {
+                        // Proto expects no return, but struct returns something
+                        // If struct returns unit, this is fine
+                        if !matches!(actual, Type::Primitive(PrimitiveType::Unit)) {
+                            return Err(SemanticError::Other(format!(
+                                "Method '{}' in struct '{}' returns type '{}', but protocol '{}' expects no return type at line {} column {}",
+                                method_name, struct_def.qualified_name,
+                                self.type_to_string(&actual),
+                                proto.qualified_name,
+                                line, col
+                            )));
+                        }
+                    }
+                    (None, None) => {
+                        // Both return nothing, this is fine
+                    }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Find a method in a struct by name and return its signature
+    fn find_struct_method(&self, struct_type_id: TypeId, method_name: &str) -> Option<(Vec<Type>, Option<Type>)> {
+        // Search for a function with the qualified name struct_name.method_name
+        let struct_def = match &self.symbol_table.types[struct_type_id as usize] {
+            UserDefinedType::Struct(s) => s,
+            _ => return None,
+        };
+        
+        let qualified_method_name = format!("{}.{}", struct_def.qualified_name, method_name);
+        
+        // Look through all symbols to find the method
+        for symbol in &self.symbol_table.symbols {
+            if symbol.qualified_name == qualified_method_name {
+                if let SymbolKind::Function { type_id, .. } = symbol.kind {
+                    // Get the function from the UserDefinedType
+                    if let UserDefinedType::Function(func) = &self.symbol_table.types[type_id as usize] {
+                        // Proto methods have return_type as Option<Type>, but Function has return_type as Type
+                        // Convert Type::Primitive(Unit) to None for consistency
+                        let return_type = if func.return_type == Type::Primitive(PrimitiveType::Unit) {
+                            None
+                        } else {
+                            Some(func.return_type.clone())
+                        };
+                        return Some((func.params.clone(), return_type));
+                    }
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// Helper to check if two types are equal
+    fn types_equal(&self, a: &Type, b: &Type) -> bool {
+        match (a, b) {
+            (Type::Primitive(a), Type::Primitive(b)) => a == b,
+            (Type::Array(a), Type::Array(b)) => self.types_equal(a, b),
+            (Type::Reference(a), Type::Reference(b)) => self.types_equal(a, b),
+            (Type::Struct(a), Type::Struct(b)) => a == b,
+            (Type::Enum(a), Type::Enum(b)) => a == b,
+            (Type::Proto(a), Type::Proto(b)) => a == b,
+            (Type::BoxType(a), Type::BoxType(b)) => self.types_equal(a, b),
+            _ => false,
+        }
+    }
+    
+    /// Helper to convert a type to a string for error messages
+    fn type_to_string(&self, ty: &Type) -> String {
+        match ty {
+            Type::Primitive(p) => format!("{:?}", p).to_lowercase(),
+            Type::Array(inner) => format!("array<{}>", self.type_to_string(inner)),
+            Type::Reference(inner) => format!("ref {}", self.type_to_string(inner)),
+            Type::Struct(id) => {
+                if let UserDefinedType::Struct(s) = &self.symbol_table.types[*id as usize] {
+                    s.qualified_name.clone()
+                } else {
+                    format!("struct#{}", id)
+                }
+            }
+            Type::Enum(id) => {
+                if let UserDefinedType::Enum(e) = &self.symbol_table.types[*id as usize] {
+                    e.qualified_name.clone()
+                } else {
+                    format!("enum#{}", id)
+                }
+            }
+            Type::Proto(id) => {
+                if let UserDefinedType::Proto(p) = &self.symbol_table.types[*id as usize] {
+                    p.qualified_name.clone()
+                } else {
+                    format!("proto#{}", id)
+                }
+            }
+            Type::BoxType(inner) => format!("box<{}>", self.type_to_string(inner)),
+            Type::Function(id) => {
+                if let UserDefinedType::Function(f) = &self.symbol_table.types[*id as usize] {
+                    f.qualified_name.clone()
+                } else {
+                    format!("function#{}", id)
+                }
+            }
+        }
     }
 }

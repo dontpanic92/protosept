@@ -1,0 +1,18 @@
+// compile_fail: struct method has wrong parameter types
+// Test struct protocol conformance - wrong method signature
+import test.test;
+
+// Define a protocol
+proto Calculator {
+  fn add(self: ref Calculator, x: int, y: int) -> int;
+}
+
+// Struct with wrong parameter types (using float instead of int)
+struct[Calculator] BadCalculator(
+  value: int,
+) {
+  pub fn add(self: ref BadCalculator, x: float, y: float) -> int {
+    42
+  }
+}
+

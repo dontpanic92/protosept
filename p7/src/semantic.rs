@@ -129,6 +129,8 @@ pub struct Struct {
     pub generic_field_types: Option<Vec<crate::ast::Type>>,
     // For monomorphized structs: stores the base generic struct's TypeId and concrete type arguments
     pub monomorphization: Option<(TypeId, Vec<Type>)>,
+    // Protocol conformances
+    pub conforming_to: Vec<TypeId>,
 }
 
 #[derive(Debug, Clone)]
