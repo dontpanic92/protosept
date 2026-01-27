@@ -13,6 +13,7 @@ pub type ContextResult<T> = std::result::Result<T, RuntimeError>;
 pub enum Data {
     Int(i32),
     Float(f64),
+    String(String),
     /// Reference to a heap-allocated struct (index into Context.heap).
     StructRef(u32),
     /// Reference to a heap-allocated box (index into Context.box_heap).
@@ -36,6 +37,12 @@ impl From<f64> for Data {
     }
 }
 
+impl From<String> for Data {
+    fn from(value: String) -> Self {
+        Data::String(value)
+    }
+}
+
 macro_rules! arithmetic_op {
     ($self: ident, $op:tt) => {
         let b = $self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
@@ -52,6 +59,10 @@ macro_rules! arithmetic_op {
             }
             (Data::Float(a), Data::Int(b)) => {
                 $self.stack_frame_mut()?.stack.push(Data::Float(a $op (b as f64)));
+            }
+            (Data::String(_), _) | (_, Data::String(_)) => {
+                // Arithmetic on strings is invalid.
+                return Err(RuntimeError::Other("Arithmetic on string".to_string()));
             }
             (Data::StructRef(_), _) | (_, Data::StructRef(_)) => {
                 // Arithmetic on struct references is invalid.
@@ -86,6 +97,10 @@ macro_rules! comparison_op {
             }
             (Data::Float(a), Data::Int(b)) => {
                 $self.stack_frame_mut()?.stack.push(Data::Int((a $op (b as f64)) as i32));
+            }
+            (Data::String(_), _) | (_, Data::String(_)) => {
+                // Comparison with strings not supported in v1
+                return Err(RuntimeError::Other("Comparison on string".to_string()));
             }
             (Data::StructRef(_), _) | (_, Data::StructRef(_)) => {
                 // Comparison with struct refs not supported
@@ -250,6 +265,12 @@ impl Context {
             match instruction {
                 Instruction::Ldi(val) => self.stack_frame_mut()?.stack.push(Data::Int(val)),
                 Instruction::Ldf(val) => self.stack_frame_mut()?.stack.push(Data::Float(val)),
+                Instruction::Lds(string_index) => {
+                    let string_const = self.modules[0].string_constants.get(string_index as usize)
+                        .ok_or_else(|| RuntimeError::Other(format!("String constant index {} out of bounds", string_index)))?
+                        .clone();
+                    self.stack_frame_mut()?.stack.push(Data::String(string_const));
+                }
                 Instruction::Ldvar(idx) => {
                     if (idx as usize) < self.stack_frame_mut()?.locals.len() {
                         let local = self.stack_frame_mut()?.locals[idx as usize].clone();
@@ -298,6 +319,9 @@ impl Context {
                         match data {
                             Data::Int(i) => self.stack_frame_mut()?.stack.push(Data::Int(-i)),
                             Data::Float(f) => self.stack_frame_mut()?.stack.push(Data::Float(-f)),
+                            Data::String(_) => {
+                                return Err(RuntimeError::Other("Cannot negate string".to_string()));
+                            }
                             Data::StructRef(_) => {
                                 return Err(RuntimeError::VariableNotFound);
                             }
@@ -329,6 +353,9 @@ impl Context {
                                 .stack_frame_mut()?
                                 .stack
                                 .push(Data::Int((f == 0.0) as i32)),
+                            Data::String(_) => {
+                                return Err(RuntimeError::Other("Cannot apply logical NOT to string".to_string()));
+                            }
                             Data::StructRef(_) => {
                                 return Err(RuntimeError::VariableNotFound);
                             }

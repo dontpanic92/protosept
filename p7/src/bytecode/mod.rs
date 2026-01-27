@@ -139,6 +139,12 @@ pub enum Instruction {
     // Parameters: (proto_id, method_name_hash)
     #[brw(magic = 35u8)]
     CallProtoMethod(u32, u32),
+    
+    // Load a string constant from the string table.
+    // Expects: [...] -> pushes string value
+    // Parameters: string_index (index into Module.string_constants)
+    #[brw(magic = 36u8)]
+    Lds(u32),
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {
@@ -163,6 +169,7 @@ pub struct Module {
     pub instructions: Vec<u8>,
     pub symbols: Vec<Symbol>,
     pub types: Vec<crate::semantic::UserDefinedType>,
+    pub string_constants: Vec<String>,
 }
 
 impl Module {

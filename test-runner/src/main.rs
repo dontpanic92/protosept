@@ -121,6 +121,7 @@ fn run_test_case(
     let actual_type = match p7_result {
         P7Value::Int(_) => "int",
         P7Value::Float(_) => "float",
+        P7Value::String(_) => "string",
         _ => "unknown",
     }
     .to_string();
@@ -132,15 +133,16 @@ fn run_test_case(
         }));
     }
 
-    let is_match = match p7_result {
+    let is_match = match &p7_result {
         P7Value::Int(actual_val) => expected_value_str
             .parse::<i32>()
-            .map_or(false, |expected_val| actual_val == expected_val),
+            .map_or(false, |expected_val| *actual_val == expected_val),
         P7Value::Float(actual_val) => expected_value_str
             .parse::<f64>()
             .map_or(false, |expected_val| {
                 (actual_val - expected_val).abs() < 1e-9
             }),
+        P7Value::String(actual_val) => actual_val == expected_value_str,
         _ => {
             let actual_value = format!("{:?}", p7_result);
             actual_value == *expected_value_str
@@ -152,6 +154,7 @@ fn run_test_case(
         let found = match p7_result {
             P7Value::Int(i) => i.to_string(),
             P7Value::Float(f) => f.to_string(),
+            P7Value::String(s) => s.clone(),
             _ => format!("{:?}", p7_result),
         };
         return Ok(TestResult::Failure(FailureReason::ValueMismatch {
