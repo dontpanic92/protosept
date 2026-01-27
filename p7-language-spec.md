@@ -5,7 +5,7 @@ Status: Draft (v1 target)
 Design goals (north star):
 - **Statically typed scripting**: concise, readable, low ceremony.
 - **Limited syntax/grammar**: features must pay rent in simplicity and interop.
-- **Readability first**: prefer clarity and obvious semantics over brevity; avoid sigil-heavy syntax when it obscures ownership, aliasing, or lifetime-like constraints.
+- **Readability first**: prefer clarity and obvious semantics over brevity.
 - **Correctness by default**: explicit nullability, explicit borrowing, explicit identity/mutation.
 - **Host interop**: easy to embed; predictable runtime values and errors.
 
@@ -575,6 +575,7 @@ Expressions include:
 - `if` expressions
 - `loop` expressions
 - `try` expressions
+- `match` expressions
 
 `yield` is only available under the Fiber extension (§21).
 
@@ -650,7 +651,7 @@ Operator precedence (highest to lowest):
 10) Assignment: `=` (right-associative). Assignment is a statement form; it does not yield a value.
 
 Notes:
-- `if ... else ...`, `try`, and `loop` are expression forms written with blocks and bind looser than any operator above.
+- `if ... else ...`, `try`, `match`, and `loop` are expression forms written with blocks and bind looser than any operator above.
 - `if` without `else` is statement-only and does not participate in operator precedence.
 - Prefix `!x` (logical NOT) and postfix `x!` (force unwrap) are distinct by position.
 
@@ -727,6 +728,79 @@ loop {
 ```
 
 This desugaring is normative; implementations MAY optimize but MUST preserve the observable semantics of this desugaring, including the behavior of `break` and `continue` within `body`.
+
+---
+
+### 9.6 `match` expression
+
+`match` selects the first matching arm from an ordered list.
+
+Form:
+```p7
+match scrutinee {
+  pattern1 => expr1,
+  pattern2 => expr2,
+  ...
+}
+```
+
+Arm separator:
+- Arms are separated by `,`.
+- A trailing comma is permitted.
+- Each `expr` may be any expression, including a block.
+
+#### 9.6.1 Patterns (v1)
+
+In v1, patterns are **value patterns** (equality tests), optionally with a binding.
+
+Grammar sketch:
+```
+named_pattern := [name ':'] pattern
+pattern       := literal | path
+path          := ident ('.' ident)*
+literal       := int_lit | float_lit | string_lit
+```
+
+Supported pattern forms:
+- **Wildcard**: `_` matches any value.
+- **Literal patterns**: `42`, `3.14`, `"hi"` match values equal to that literal.
+- **Path patterns**: `EnumName.VariantName` (and longer qualified paths) match values equal to that path’s value.
+- **Named binding**: `name: pattern` binds `name` to the scrutinee value **when the arm matches**, then evaluates the arm expression.
+  - Commonly used with wildcard: `name: _`.
+
+Notes:
+- v1 does not support payload destructuring such as `Result.Ok(x) => ...` or `Result.Ok(_) => ...`.
+- Implementations may further restrict which types are valid scrutinee/pattern types based on available equality semantics.
+
+#### 9.6.2 Evaluation and control flow
+
+- The `scrutinee` expression is evaluated exactly once.
+- Arms are tried in source order.
+- For each arm:
+  - If `pattern` matches, the arm’s binding (if present) is introduced, then the arm expression is evaluated and becomes the result of the `match`.
+  - If `pattern` does not match, the next arm is tried.
+
+#### 9.6.3 Typing
+
+- All arm expressions MUST have the same type in v1.
+- The `match` expression has that common type.
+
+#### 9.6.4 Exhaustiveness (v1)
+
+`match` MUST be exhaustive.
+
+- If it is not statically provable that some arm matches, the program is ill-formed (ERROR).
+- The simplest portable way to be exhaustive is to include a final wildcard arm `_ => ...`.
+
+Example:
+```p7
+fn classify(x: int) -> int {
+  match x {
+    0 => 0,
+    n: _ => n,
+  }
+}
+```
 
 ---
 
@@ -955,7 +1029,6 @@ Variants are always referenced qualified by the enum name:
 #### Restrictions
 
 v1 does not support:
-- Pattern matching operators (`match`)
 - Variant introspection operators (`is`)
 - Payload extraction operators (`as?`)
 
