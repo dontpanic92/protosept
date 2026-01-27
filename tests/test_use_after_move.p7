@@ -1,4 +1,4 @@
-// Test use-after-move errors
+// compile_fail: use-after-move
 import test.test;
 
 // This test should fail to compile - use after move
