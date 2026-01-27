@@ -409,6 +409,7 @@ impl Generator {
                 attributes,
                 type_parameters,
                 values,
+                methods,
             } => {
                 let qualified_name = self
                     .symbol_table
@@ -452,16 +453,19 @@ impl Generator {
                 let type_id = self.symbol_table.add_udt(UserDefinedType::Enum(ty));
 
                 let symbol =
-                    Symbol::new(name.name.clone(), qualified_name, SymbolKind::Enum(type_id));
+                    Symbol::new(name.name.clone(), qualified_name.clone(), SymbolKind::Enum(type_id));
 
-                let next_symbol_id = self.symbol_table.symbols.len() as u32;
-                let current_symbol = self.symbol_table.get_current_symbol_mut().unwrap();
-                current_symbol.children.insert(name.name, next_symbol_id);
-                self.symbol_table.symbols.push(symbol);
+                self.symbol_table.push_symbol(symbol);
+
+                // Process enum methods
+                for method in methods {
+                    self.process_function_declaration(method.function)?;
+                }
 
                 // TODO: Store is_pub for module visibility checking
                 let _ = is_pub;
 
+                self.symbol_table.pop_symbol();
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
             Statement::StructDeclaration {

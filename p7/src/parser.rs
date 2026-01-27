@@ -871,33 +871,42 @@ impl Parser {
         let name = self.parse_identifier()?;
         let type_parameters = self.parse_type_parameters()?;
 
-        self.consume_match(TokenType::OpenBrace)?;
+        // New syntax: enum Name( ... ) or enum Name( ... );
+        self.consume_match(TokenType::OpenParen)?;
 
         let mut values = Vec::new();
         while let Some(token) = self.peek() {
-            if token.token_type == TokenType::CloseBrace {
+            if token.token_type == TokenType::CloseParen {
                 self.consume();
                 break;
             }
 
             let variant_name = self.parse_identifier()?;
             
-            // Check if this is a payload variant (has parentheses)
-            let fields = if self.peek_match(TokenType::OpenParen) {
-                self.consume_match(TokenType::OpenParen)?;
-                let mut field_types = Vec::new();
+            // Check if this is a payload variant (has colon)
+            let fields = if self.peek_match(TokenType::Colon) {
+                self.consume_match(TokenType::Colon)?;
                 
-                // Parse comma-separated list of types
-                while !self.peek_match(TokenType::CloseParen) {
-                    field_types.push(self.parse_type()?);
+                // Check if we have a tuple type (multi-field payload)
+                if self.peek_match(TokenType::OpenParen) {
+                    self.consume_match(TokenType::OpenParen)?;
+                    let mut field_types = Vec::new();
                     
-                    if !self.peek_match(TokenType::CloseParen) {
-                        self.consume_match(TokenType::Comma)?;
+                    // Parse comma-separated list of types in the tuple
+                    while !self.peek_match(TokenType::CloseParen) {
+                        field_types.push(self.parse_type()?);
+                        
+                        if !self.peek_match(TokenType::CloseParen) {
+                            self.consume_match(TokenType::Comma)?;
+                        }
                     }
+                    
+                    self.consume_match(TokenType::CloseParen)?;
+                    field_types
+                } else {
+                    // Single-field payload
+                    vec![self.parse_type()?]
                 }
-                
-                self.consume_match(TokenType::CloseParen)?;
-                field_types
             } else {
                 // Unit variant - no fields
                 Vec::new()
@@ -909,10 +918,34 @@ impl Parser {
             });
 
             let comma = self.consume_match(TokenType::Comma);
-            if !self.peek_match(TokenType::CloseBrace) {
+            if !self.peek_match(TokenType::CloseParen) {
                 comma?;
             }
         }
+
+        // Check if there's a method block or just a semicolon
+        let methods = if self.peek_match(TokenType::OpenBrace) {
+            self.consume_match(TokenType::OpenBrace)?;
+            let mut methods = Vec::new();
+            
+            while !self.peek_match(TokenType::CloseBrace) {
+                // Parse attributes for the method
+                let attributes = self.parse_attributes()?;
+                let is_pub = self.consume_match(TokenType::Pub).is_ok();
+                let function = self.parse_function_declaration(attributes, is_pub)?;
+                methods.push(StructMethod { 
+                    is_pub, 
+                    function 
+                });
+            }
+            
+            self.consume_match(TokenType::CloseBrace)?;
+            methods
+        } else {
+            // No method block, expect semicolon
+            self.consume_match(TokenType::Semicolon)?;
+            Vec::new()
+        };
 
         Ok(Statement::EnumDeclaration {
             is_pub,
@@ -920,6 +953,7 @@ impl Parser {
             attributes,
             type_parameters,
             values,
+            methods,
         })
     }
 
