@@ -29,6 +29,8 @@ pub struct Generator {
     pending_monomorphizations: Vec<(u32, TypeId, Vec<Statement>, Vec<String>, Vec<Type>)>, // (symbol_id, type_id, body, param_names, params)
     module_provider: Box<dyn crate::ModuleProvider>,
     imported_modules: std::collections::HashMap<String, Module>,
+    // Track which variables have been moved (by their index in local scope)
+    moved_variables: std::collections::HashSet<u32>,
 }
 
 impl Generator {
@@ -40,6 +42,7 @@ impl Generator {
             pending_monomorphizations: Vec::new(),
             module_provider,
             imported_modules: std::collections::HashMap::new(),
+            moved_variables: std::collections::HashSet::new(),
         }
     }
 
@@ -75,6 +78,7 @@ impl Generator {
                     .collect();
                 
                 let saved_local_scope = self.local_scope.take();
+                self.clear_moved_variables(); // Clear moved variables when entering new function
                 self.local_scope = Some(LocalSymbolScope::new(variables));
                 
                 let _ = self.generate_block(body, vec![])?;
@@ -114,6 +118,21 @@ impl Generator {
         // Create a new generator for the imported module with a cloned provider
         let mut module_gen = Generator::new(self.module_provider.clone_boxed());
         module_gen.generate(statements)
+    }
+
+    /// Helper to mark a variable as moved
+    fn mark_variable_moved(&mut self, var_id: u32) {
+        self.moved_variables.insert(var_id);
+    }
+
+    /// Helper to check if a variable has been moved
+    fn is_variable_moved(&self, var_id: u32) -> bool {
+        self.moved_variables.contains(&var_id)
+    }
+
+    /// Helper to clear moved variables when entering a new function scope
+    fn clear_moved_variables(&mut self) {
+        self.moved_variables.clear();
     }
 
     fn generate_block(
@@ -313,7 +332,36 @@ impl Generator {
                 identifier,
                 expression,
             } => {
+                // Check if this expression involves a move (before consuming it)
+                let move_info = if let Expression::Identifier(ref ident) = expression {
+                    if let Some(var_id) = self.local_scope.as_ref().unwrap().find_variable(&ident.name) {
+                        let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
+                        if !ty.is_copy_treated(&self.symbol_table) {
+                            Some(var_id)
+                        } else {
+                            None
+                        }
+                    } else if let Some(param_id) = self.local_scope.as_ref().unwrap().find_param(&ident.name) {
+                        let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
+                        if !ty.is_copy_treated(&self.symbol_table) {
+                            Some(param_id)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
                 let ty = self.generate_expression(expression)?;
+
+                // Mark variable as moved if needed
+                if let Some(var_id) = move_info {
+                    self.mark_variable_moved(var_id);
+                }
+
                 let var_id = self
                     .local_scope
                     .as_mut()
@@ -548,7 +596,36 @@ impl Generator {
                 ));
             }
             Statement::Return(expression) => {
+                // Check if this expression involves a move (before consuming it)
+                let move_info = if let Expression::Identifier(ref ident) = *expression {
+                    if let Some(var_id) = self.local_scope.as_ref().unwrap().find_variable(&ident.name) {
+                        let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
+                        if !ty.is_copy_treated(&self.symbol_table) {
+                            Some(var_id)
+                        } else {
+                            None
+                        }
+                    } else if let Some(param_id) = self.local_scope.as_ref().unwrap().find_param(&ident.name) {
+                        let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
+                        if !ty.is_copy_treated(&self.symbol_table) {
+                            Some(param_id)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
                 let ty = self.generate_expression(*expression)?;
+
+                // Mark variable as moved if needed
+                if let Some(var_id) = move_info {
+                    self.mark_variable_moved(var_id);
+                }
+
                 if matches!(ty, Type::Reference(_)) {
                     return Err(SemanticError::Other(
                         "Cannot return a non-escapable ref value".to_string(),
@@ -700,6 +777,16 @@ impl Generator {
                     .unwrap()
                     .find_variable(&identifier.name)
                 {
+                    // Check if the variable has been moved
+                    if self.is_variable_moved(var_id) {
+                        return Err(SemanticError::UseAfterMove {
+                            name: identifier.name,
+                            pos: Some(SourcePos {
+                                line: identifier.line,
+                                col: identifier.col,
+                            }),
+                        });
+                    }
                     self.builder.ldvar(var_id);
                     let ty = self.local_scope.as_mut().unwrap().get_variable_type(var_id);
                     Ok(ty)
@@ -709,6 +796,16 @@ impl Generator {
                     .unwrap()
                     .find_param(&identifier.name)
                 {
+                    // Check if the parameter has been moved
+                    if self.is_variable_moved(param_id) {
+                        return Err(SemanticError::UseAfterMove {
+                            name: identifier.name,
+                            pos: Some(SourcePos {
+                                line: identifier.line,
+                                col: identifier.col,
+                            }),
+                        });
+                    }
                     self.builder.ldpar(param_id);
                     let ty = self.local_scope.as_mut().unwrap().get_param_type(param_id);
                     Ok(ty)
@@ -1535,6 +1632,7 @@ impl Generator {
         // Only generate function body for non-generic functions
         // Generic functions will be monomorphized when called
         if !is_generic {
+            self.clear_moved_variables(); // Clear moved variables when entering new function
             self.local_scope = Some(LocalSymbolScope::new(params.clone()));
             let ty = self.generate_block(declaration.body, vec![])?;
             // Always emit Ret so unit-returning functions don't fall-through into subsequent code.
@@ -1623,7 +1721,35 @@ impl Generator {
                     
                     // Generate argument evaluation
                     for expr in ordered_exprs {
+                        // Check if this expression involves a move (before consuming it)
+                        let move_info = if let Expression::Identifier(ref ident) = expr {
+                            if let Some(var_id) = self.local_scope.as_ref().unwrap().find_variable(&ident.name) {
+                                let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
+                                if !ty.is_copy_treated(&self.symbol_table) {
+                                    Some(var_id)
+                                } else {
+                                    None
+                                }
+                            } else if let Some(param_id) = self.local_scope.as_ref().unwrap().find_param(&ident.name) {
+                                let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
+                                if !ty.is_copy_treated(&self.symbol_table) {
+                                    Some(param_id)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
                         self.generate_expression(expr)?;
+
+                        // Mark variable as moved if needed
+                        if let Some(var_id) = move_info {
+                            self.mark_variable_moved(var_id);
+                        }
                     }
                     
                     // Call the monomorphized function using symbol_id
@@ -2411,7 +2537,35 @@ impl Generator {
         }
 
         for (expr, param_ty) in arguments.into_iter().zip(param_types.iter()) {
+            // Check if this expression involves a move (before consuming it)
+            let move_info = if let Expression::Identifier(ref ident) = expr {
+                if let Some(var_id) = self.local_scope.as_ref().unwrap().find_variable(&ident.name) {
+                    let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
+                    if !ty.is_copy_treated(&self.symbol_table) {
+                        Some(var_id)
+                    } else {
+                        None
+                    }
+                } else if let Some(param_id) = self.local_scope.as_ref().unwrap().find_param(&ident.name) {
+                    let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
+                    if !ty.is_copy_treated(&self.symbol_table) {
+                        Some(param_id)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             let arg_ty = self.generate_expression(expr)?;
+
+            // Mark variable as moved if needed
+            if let Some(var_id) = move_info {
+                self.mark_variable_moved(var_id);
+            }
 
             match (param_ty, &arg_ty) {
                 (Type::Reference(param_inner), Type::Reference(arg_inner)) => {

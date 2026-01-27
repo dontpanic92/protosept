@@ -1,0 +1,15 @@
+// compile_fail: use-after-move
+import test.test;
+
+// This test should fail to compile - use after move
+struct Point(
+  pub x: int,
+  pub y: int,
+);
+
+@test(expected_type = "int", expected_value = "0")
+fn test_use_after_move() -> int {
+  let p = Point(x = 1, y = 2);
+  let q = p;  // Move p into q
+  return p.x;  // ERROR: Use of moved value 'p'
+}

@@ -168,6 +168,43 @@ impl Type {
     pub fn is_struct(&self) -> bool {
         matches!(self, Type::Struct(_))
     }
+
+    /// Check if this type is "copy-treated" according to the spec (§6.3):
+    /// - Primitives (int, float, bool, char, string, unit) are copy-treated
+    /// - ref T is copy-treated (view/handle copy)
+    /// - box<T> is copy-treated (handle copy)
+    /// - User-defined structs/enums are copy-treated ONLY if they conform to Copy proto
+    pub fn is_copy_treated(&self, symbol_table: &SymbolTable) -> bool {
+        match self {
+            // All primitives are copy-treated by default
+            Type::Primitive(_) => true,
+            // ref T and box<T> are copy-treated (handle/view copy)
+            Type::Reference(_) | Type::BoxType(_) => true,
+            // User-defined structs: check for Copy proto conformance
+            Type::Struct(type_id) => {
+                if let UserDefinedType::Struct(s) = symbol_table.get_udt(*type_id) {
+                    // Check if struct conforms to Copy proto
+                    s.conforming_to.iter().any(|proto_id| {
+                        if let Some(UserDefinedType::Proto(proto)) = symbol_table.types.get(*proto_id as usize) {
+                            proto.qualified_name.ends_with(".Copy") || proto.qualified_name == "Copy"
+                        } else {
+                            false
+                        }
+                    })
+                } else {
+                    false
+                }
+            }
+            // User-defined enums: check for Copy proto conformance
+            // Note: Enums don't have conforming_to field yet, so they can't be copy-treated
+            Type::Enum(_type_id) => {
+                // TODO: When enum conformance is implemented, check for Copy proto
+                false
+            }
+            // Arrays, Functions, and Protos: not copy-treated by default in v1
+            Type::Array(_) | Type::Function(_) | Type::Proto(_) => false,
+        }
+    }
 }
 
 impl Clone for Type {
