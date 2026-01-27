@@ -1419,6 +1419,8 @@ impl Generator {
             (ret_type, None)
         };
 
+        let intrinsic_name = Self::extract_intrinsic_name(&declaration.attributes);
+
         let ty = Function {
             qualified_name: qualified_name.clone(),
             params: params.iter().map(|var| var.ty.clone()).collect(),
@@ -1426,6 +1428,7 @@ impl Generator {
             param_defaults: param_defaults.clone(),
             return_type,
             attributes: declaration.attributes.clone(),
+            intrinsic_name,
             type_parameters: type_param_names.clone(),
             generic_param_types,
             generic_return_type,
@@ -2326,6 +2329,18 @@ impl Generator {
                 Ok(Type::Array(Box::new(ty)))
             }
             ParsedType::Generic { base, type_args } => {
+                // Handle box<T> specially (builtin generic type)
+                if base.name == "box" {
+                    if type_args.len() != 1 {
+                        return Err(SemanticError::Other(format!(
+                            "box<T> requires exactly one type argument, found {} at line {} column {}",
+                            type_args.len(), base.line, base.col
+                        )));
+                    }
+                    let inner_ty = self.get_semantic_type(&type_args[0])?;
+                    return Ok(Type::BoxType(Box::new(inner_ty)));
+                }
+                
                 // Implement proper generic type resolution with monomorphization
                 
                 // First, find the base generic type
@@ -2711,6 +2726,7 @@ impl Generator {
             param_defaults: base_func.param_defaults.clone(),
             return_type: monomorphized_return_type,
             attributes: base_func.attributes.clone(),
+            intrinsic_name: base_func.intrinsic_name.clone(),
             type_parameters: Vec::new(), // Monomorphized functions have no type parameters
             generic_param_types: None,
             generic_return_type: None,
@@ -2777,6 +2793,16 @@ impl Generator {
             }
             Type::Array(inner) => {
                 ParsedType::Array(Box::new(self.type_to_parsed_type(inner)))
+            }
+            Type::BoxType(inner) => {
+                ParsedType::Generic {
+                    base: Identifier {
+                        name: "box".to_string(),
+                        line: SYNTHETIC_LINE,
+                        col: SYNTHETIC_COL,
+                    },
+                    type_args: vec![self.type_to_parsed_type(inner)],
+                }
             }
             Type::Struct(type_id) => {
                 // Get the struct name from the symbol table
@@ -2858,5 +2884,24 @@ impl Generator {
                 }
             }
         }
+    }
+    
+    /// Extract intrinsic name from @intrinsic attribute
+    fn extract_intrinsic_name(attributes: &[crate::ast::Attribute]) -> Option<String> {
+        for attr in attributes {
+            if attr.name.name == "intrinsic" {
+                // Look for the intrinsic name in the arguments
+                for (name_opt, expr) in &attr.arguments {
+                    // Check if this is a positional argument (first arg) or named "name"
+                    let is_target = name_opt.as_ref().map_or(true, |n| n.name == "name");
+                    if is_target {
+                        if let Expression::StringLiteral(s) = expr {
+                            return Some(s.clone());
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 }

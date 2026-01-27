@@ -89,6 +89,8 @@ pub struct Function {
     pub param_defaults: Vec<Option<crate::ast::Expression>>,
     pub return_type: Type,
     pub attributes: Vec<crate::ast::Attribute>,
+    // Intrinsic name if this is an intrinsic function
+    pub intrinsic_name: Option<String>,
     // For generic functions: stores the original type parameter names
     pub type_parameters: Vec<String>,
     // For generic functions: stores the original parsed parameter types (before substitution)
@@ -152,6 +154,7 @@ pub enum Type {
     Primitive(PrimitiveType),
     Reference(Box<Type>),
     Array(Box<Type>),
+    BoxType(Box<Type>),
     Function(TypeId),
     Enum(TypeId),
     Struct(TypeId),
@@ -170,6 +173,7 @@ impl Clone for Type {
             Type::Primitive(primitive_type) => Type::Primitive(*primitive_type),
             Type::Reference(r) => Type::Reference(r.clone()),
             Type::Array(a) => Type::Array(a.clone()),
+            Type::BoxType(b) => Type::BoxType(b.clone()),
             Type::Function(f) => Type::Function(*f),
             Type::Enum(e) => Type::Enum(*e),
             Type::Struct(s) => Type::Struct(*s),
@@ -184,6 +188,7 @@ impl PartialEq for Type {
             (Type::Primitive(a), Type::Primitive(b)) => a == b,
             (Type::Reference(a), Type::Reference(b)) => *a == *b,
             (Type::Array(a), Type::Array(b)) => *a == *b,
+            (Type::BoxType(a), Type::BoxType(b)) => *a == *b,
             (Type::Function(a), Type::Function(b)) => *a == *b,
             (Type::Enum(a), Type::Enum(b)) => *a == *b,
             (Type::Struct(a), Type::Struct(b)) => *a == *b,
@@ -202,6 +207,7 @@ impl std::hash::Hash for Type {
             Type::Primitive(p) => p.hash(state),
             Type::Reference(r) => r.hash(state),
             Type::Array(a) => a.hash(state),
+            Type::BoxType(b) => b.hash(state),
             Type::Function(f) => f.hash(state),
             Type::Enum(e) => e.hash(state),
             Type::Struct(s) => s.hash(state),
@@ -223,6 +229,7 @@ impl ToString for Type {
             },
             Type::Reference(r) => format!("ref {}", r.to_string()),
             Type::Array(a) => format!("[{}]", a.to_string()),
+            Type::BoxType(b) => format!("box<{}>", b.to_string()),
             Type::Function(f) => format!("function({})", f.to_string()),
             Type::Enum(e) => format!("enum({})", e.to_string()),
             Type::Struct(s) => format!("struct({})", s.to_string()),
