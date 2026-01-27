@@ -738,12 +738,28 @@ impl Generator {
                     }
                     TokenType::Multiply => {
                         // `*r` where `r: ref T` yields a `T`. No runtime op yet.
+                        // `*b` where `b: box<T>` yields a `T` (only for primitive T).
                         if let Type::Reference(inner) = ty {
                             Ok(*inner)
+                        } else if let Type::BoxType(inner) = ty {
+                            // Check that inner type is primitive
+                            match &*inner {
+                                Type::Primitive(_) => {
+                                    // Generate box deref instruction
+                                    self.builder.box_deref();
+                                    Ok(*inner)
+                                }
+                                _ => {
+                                    Err(SemanticError::Other(format!(
+                                        "Cannot dereference box<{}> - only primitive types are supported at line {} column {}",
+                                        inner.to_string(), operator.line, operator.col
+                                    )))
+                                }
+                            }
                         } else {
                             Err(SemanticError::TypeMismatch {
                                 lhs: ty.to_string(),
-                                rhs: "ref <T>".to_string(),
+                                rhs: "ref <T> or box<T>".to_string(),
                                 pos: Some(SourcePos {
                                     line: operator.line,
                                     col: operator.col,
@@ -1881,6 +1897,36 @@ impl Generator {
         } else {
             // Non-field callee: top-level function or constructor by name
             let call_name = call_name;
+            
+            // Handle box(expr) intrinsic constructor
+            if call_name == "box" {
+                // box(expr) takes one argument and returns box<T> where T is the type of expr
+                if arguments.len() != 1 {
+                    return Err(SemanticError::Other(format!(
+                        "box() requires exactly one argument, found {} at line {} column {}",
+                        arguments.len(), call_line, call_col
+                    )));
+                }
+                
+                // Check if argument is named (not allowed for box)
+                let (name_opt, expr) = &arguments[0];
+                if name_opt.is_some() {
+                    return Err(SemanticError::Other(format!(
+                        "box() does not accept named arguments at line {} column {}",
+                        call_line, call_col
+                    )));
+                }
+                
+                // Generate code for the argument expression
+                let inner_ty = self.generate_expression(expr.clone())?;
+                
+                // Generate box allocation instruction
+                self.builder.box_alloc();
+                
+                // Return box<T> type
+                return Ok(Type::BoxType(Box::new(inner_ty)));
+            }
+            
             // First try type-name constructor (e.g., Point(...))
             if let Some(ty) = self.symbol_table.find_type_in_scope(&call_name)
                 && let Type::Struct(type_id) = ty
