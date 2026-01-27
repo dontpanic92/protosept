@@ -1555,8 +1555,11 @@ impl Generator {
             }
             Expression::While { condition, body, pos } => {
                 // while condition { body }
-                // Desugars to: loop { if condition { body } else { break; } }
-                // Generates:
+                // 
+                // According to spec §9.5, while semantically desugars to:
+                //   loop { if condition { body } else { break; } }
+                //
+                // However, we generate the bytecode directly for efficiency:
                 //   loop_start:
                 //     <condition>
                 //     not

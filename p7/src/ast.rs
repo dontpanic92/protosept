@@ -164,20 +164,20 @@ pub enum Expression {
         pos: (usize, usize),
     },
     
-    // While statement
+    // While expression (conditional loop)
     While {
         condition: Box<Expression>,
         body: Box<Expression>,
         pos: (usize, usize),
     },
     
-    // Break statement/expression (with optional value)
+    // Break expression (with optional value for future use)
     Break {
         value: Option<Box<Expression>>,
         pos: (usize, usize),
     },
     
-    // Continue statement
+    // Continue expression
     Continue {
         pos: (usize, usize),
     },
