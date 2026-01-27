@@ -181,11 +181,11 @@ Identifiers start with `_` or a letter and continue with letters, digits, or `_`
 
 Types in v1:
 - Primitive: `int`, `float`, `bool`, `char`, `unit`
-- Built-in value types: `string`, `array<T>`
+- Built-in value types: `string`, `array<T>`, tuples `(T1, T2, ...)`
 - Nullability: `?T`
 - Borrowed view: `ref T`
 - Owned heap handle: `box<T>`
-- User-defined: `struct Name(...)`, `enum Name { ... }`, `proto Name { ... }`
+- User-defined: `struct Name(...)`, `enum Name(...)`, `proto Name { ... }`
 - Compile-time generics: `T`, `array<T>`, `box<T>`, etc. (§19)
 
 ---
@@ -283,7 +283,61 @@ v1 boxed-array mutation is via library operations (not indexing assignment). [[T
 
 ---
 
-## 3.4 Nullable types: `?T`
+## 3.4 Tuple types
+
+Tuples are built-in **immutable value types** that group multiple values of potentially different types.
+
+### 3.4.1 Tuple type syntax
+
+A tuple type is written as `(T1, T2, ..., Tn)` where `n >= 2`.
+
+Examples:
+- `(int, string)` — a 2-tuple (pair) of an `int` and a `string`
+- `(float, float, float)` — a 3-tuple of three `float` values
+- `(int, (string, bool))` — nested tuples are allowed
+
+Special cases:
+- `()` is the **unit type** (not a tuple), with a single value `()`.
+- `(T)` is **not** a tuple type; it is interpreted as a parenthesized type expression (i.e., just `T`).
+
+### 3.4.2 Tuple literals
+
+A tuple literal is written as `(e1, e2, ..., en)` where `n >= 2`.
+
+Examples:
+```p7
+let pair = (1, "hello");           // type: (int, string)
+let triple = (3.14, true, 42);     // type: (float, bool, int)
+let nested = (1, ("a", false));    // type: (int, (string, bool))
+```
+
+Special cases:
+- `()` is the **unit literal** (not a tuple literal).
+- `(e)` is **not** a tuple literal; it is a parenthesized expression (grouping).
+
+### 3.4.3 Element access
+
+Tuple elements are accessed using dot notation with zero-based integer indices:
+- `t.0` accesses the first element
+- `t.1` accesses the second element
+- `t.N` accesses the element at index `N`
+
+Example:
+```p7
+let p = (42, "test");
+let x = p.0;  // x has type int, value 42
+let y = p.1;  // y has type string, value "test"
+```
+
+### 3.4.4 Structural rules
+
+- Tuple types are **Copy-treated** when all component types are Copy-treated.
+- Tuple types are **Send** when all component types are Send.
+- Tuple elements cannot be mutated in-place (tuples are immutable value types).
+
+---
+
+## 3.5 Nullable types: `?T`
 
 - `?T` is either `null` or a non-null `T`.
 - `null` is assignable only to `?T`.
@@ -291,7 +345,7 @@ v1 boxed-array mutation is via library operations (not indexing assignment). [[T
 
 ---
 
-## 3.5 Borrowed view types: `ref T`
+## 3.6 Borrowed view types: `ref T`
 
 `ref T` is a **read-only view** of an existing addressable location that holds a `T` (§7).
 
@@ -302,7 +356,7 @@ v1 boxed-array mutation is via library operations (not indexing assignment). [[T
 
 ---
 
-## 3.6 Owned heap handle types: `box<T>`
+## 3.7 Owned heap handle types: `box<T>`
 
 `box<T>` is an **owned heap-allocated identity container** holding a `T`.
 
@@ -765,6 +819,7 @@ Supported pattern forms:
 - **Wildcard**: `_` matches any value.
 - **Literal patterns**: `42`, `3.14`, `"hi"` match values equal to that literal.
 - **Path patterns**: `EnumName.VariantName` (and longer qualified paths) match values equal to that path’s value.
+  - For enums, path patterns are valid only for **unit variants** in v1. Payload variants cannot be matched with path patterns alone.
 - **Named binding**: `name: pattern` binds `name` to the scrutinee value **when the arm matches**, then evaluates the arm expression.
   - Commonly used with wildcard: `name: _`.
 
@@ -978,28 +1033,48 @@ Enums are sum types with one or more named variants. Each variant can be:
 
 #### Syntax
 
+Enum declarations mirror struct syntax using parentheses:
+
+**No-method form** (ends with `;`):
 ```p7
-enum EnumName {
+enum EnumName(
   UnitVariant,
-  PayloadVariant(Type1, Type2, ...),
+  PayloadVariant: Type,
+  ...
+);
+```
+
+**Method form** (includes method block):
+```p7
+enum EnumName(
+  UnitVariant,
+  PayloadVariant: Type,
+  ...
+) {
+  fn method_name(...) -> ... { ... }
 }
 ```
 
+Variant syntax:
+- **Unit variant**: `VariantName` (no type annotation)
+- **Payload variant**: `VariantName: Type` for single-field payloads
+- **Multi-field payload variant**: `VariantName: (Type1, Type2, ...)` using tuple types
+
 Example with unit variants only:
 ```p7
-enum SomeErrors {
+enum SomeErrors(
   NumberIsNot42,
   DivisionByZero,
-}
+);
 ```
 
 Example with both unit and payload variants:
 ```p7
-enum Status {
+enum Status(
   Pending,
-  Active(int),
-  Failed(string, int),
-}
+  Active: int,
+  Failed: (string, int),
+);
 ```
 
 ### 13.2 Variant naming and construction
@@ -1046,10 +1121,10 @@ This enables enums to satisfy object protos structurally (§18).
 
 Example:
 ```p7
-enum Option<T> {
+enum Option<T>(
   None,
-  Some(T),
-} {
+  Some: T,
+) {
   pub fn is_some(self: ref Self) -> bool { ... }
 }
 ```
@@ -1263,11 +1338,11 @@ struct[Printable, Copy] Vec2(
   pub fn print(self: ref Self) -> unit { ... }
 }
 
-enum[Printable, Copy] Status {
+enum[Printable, Copy] Status(
   Pending,
-  Active(int),
-  Failed(string, int),
-} {
+  Active: int,
+  Failed: (string, int),
+) {
   pub fn print(self: ref Self) -> unit { ... }
 }
 ```
@@ -1451,11 +1526,11 @@ fn needs_pair() -> Pair<int, string> {
 
 Generic enums support type parameters:
 ```p7
-enum Name<T, U> {
+enum Name<T, U>(
   Variant1,
-  Variant2(T),
-  Variant3(T, U),
-}
+  Variant2: T,
+  Variant3: (T, U),
+);
 ```
 
 #### Type arguments in type positions
@@ -1489,10 +1564,10 @@ Rules:
 #### Example: `Option<T>`
 
 ```p7
-enum Option<T> {
+enum Option<T>(
   None,
-  Some(T),
-}
+  Some: T,
+);
 
 fn example() -> unit {
   // Explicit type arguments (always allowed)
@@ -1517,10 +1592,10 @@ fn example() -> unit {
 #### Example: `Result<T, E>`
 
 ```p7
-enum Result<T, E> {
-  Ok(T),
-  Err(E),
-}
+enum Result<T, E>(
+  Ok: T,
+  Err: E,
+);
 
 fn example() -> unit {
   // Explicit type arguments (always allowed)
