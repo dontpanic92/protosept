@@ -1,8 +1,0 @@
-// Simple test for while loop
-fn main() -> int {
-    let x = 0;
-    while x < 5 {
-        let x = x + 1;
-    }
-    x
-}
