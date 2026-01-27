@@ -684,8 +684,26 @@ impl Context {
     /// Update a single Data value with new box index
     fn update_data(data: &mut Data, index_map: &[Option<u32>]) {
         if let Data::BoxRef(old_idx) = data {
-            if let Some(Some(new_idx)) = index_map.get(*old_idx as usize) {
-                *old_idx = *new_idx;
+            match index_map.get(*old_idx as usize) {
+                Some(Some(new_idx)) => {
+                    *old_idx = *new_idx;
+                }
+                Some(None) => {
+                    // This box was garbage collected, but we're trying to update a reference to it.
+                    // This should never happen if mark phase is correct.
+                    panic!(
+                        "BUG: Attempted to update reference to garbage-collected box at index {}",
+                        old_idx
+                    );
+                }
+                None => {
+                    // Index out of bounds - this should never happen
+                    panic!(
+                        "BUG: BoxRef index {} is out of bounds (heap size: {})",
+                        old_idx,
+                        index_map.len()
+                    );
+                }
             }
         }
     }
