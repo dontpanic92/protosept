@@ -136,6 +136,9 @@ pub struct Lexer {
     pub errors: Vec<LexerError>,
 }
 
+// Maximum number of hex digits allowed in a \u{...} Unicode escape sequence
+const MAX_UNICODE_ESCAPE_DIGITS: usize = 6;
+
 impl Lexer {
     pub fn new(input: String) -> Self {
         let lexer = Lexer {
@@ -284,7 +287,7 @@ impl Lexer {
                         }
                         self.read_char(); // Skip '}'
                         
-                        if hex_digits.is_empty() || hex_digits.len() > 6 {
+                        if hex_digits.is_empty() || hex_digits.len() > MAX_UNICODE_ESCAPE_DIGITS {
                             return Err(LexerError::InvalidUnicodeEscape(
                                 format!("\\u{{{}}}", hex_digits),
                                 (self.line, self.col),
