@@ -4,15 +4,15 @@ import test.test;
 
 // ===== Error Type Definitions =====
 
-enum ErrorType {
+enum ErrorType(
     ErrorA,
     ErrorB,
-    ErrorC,
-}
+    ErrorC
+);
 
-enum SimpleError {
-    NotFound,
-}
+enum SimpleError(
+    NotFound
+);
 
 // ===== Helper Functions =====
 

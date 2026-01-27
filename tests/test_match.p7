@@ -6,16 +6,16 @@ struct test(
 
 // ===== Enum Definitions =====
 
-enum Status {
+enum Status(
     Pending,
     Active,
-    Failed,
-}
+    Failed
+);
 
-enum Result {
-    Ok(int),
-    Err(int),
-}
+enum Result(
+    Ok: int,
+    Err: int
+);
 
 // ===== Tests for match with literals =====
 

@@ -230,6 +230,7 @@ pub enum Statement {
         attributes: Vec<Attribute>,
         type_parameters: Vec<TypeParameter>,
         values: Vec<EnumVariant>,
+        methods: Vec<StructMethod>,
     },
     StructDeclaration {
         is_pub: bool,

@@ -62,11 +62,11 @@ fn test_nested_if() -> int {
 // ===== Pattern Matching Tests =====
 // These tests use try/else error handling with pattern matching
 
-enum ErrorType {
+enum ErrorType(
     ErrorA,
     ErrorB,
-    ErrorC,
-}
+    ErrorC
+);
 
 fn thrower(value: int) -> int throws {
     if value == 1 {

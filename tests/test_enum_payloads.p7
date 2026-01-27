@@ -7,17 +7,17 @@ struct test(
 // ===== Enum Definitions with Payloads =====
 
 // Enum with mix of unit and payload variants
-enum Status {
+enum Status(
     Pending,
-    Active(int),
-    Failed(int, int),
-}
+    Active: int,
+    Failed: (int, int)
+);
 
 // Enum with only payload variants
-enum Point {
-    TwoD(int, int),
-    ThreeD(int, int, int),
-}
+enum Point(
+    TwoD: (int, int),
+    ThreeD: (int, int, int)
+);
 
 // ===== Tests for Unit Variants =====
 

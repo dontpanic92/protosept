@@ -14,10 +14,10 @@ pub struct MyStruct(
     pub y: int = 0,
 );
 
-pub enum MyEnum {
+pub enum MyEnum(
     Value1,
-    Value2,
-}
+    Value2
+);
 
 @test(expected_type = "int", expected_value = "52")
 fn test_pub_declarations() -> int {
