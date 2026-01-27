@@ -1,0 +1,51 @@
+// Test move semantics for function parameters and returns
+import test.test;
+
+proto Copy {
+}
+
+struct Point(
+  pub x: int,
+  pub y: int,
+);
+
+// Test 1: Passing non-copy struct to function should move it
+fn consume_point(p: Point) -> int {
+  return p.x + p.y;
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_move_to_function() -> int {
+  let p = Point(x = 1, y = 2);
+  return consume_point(p);  // p is moved into function
+}
+
+// Test 2: Returning non-copy struct should work
+fn make_point() -> Point {
+  let p = Point(x = 5, y = 10);
+  return p;  // p is moved out of function
+}
+
+@test(expected_type = "int", expected_value = "15")
+fn test_move_from_function() -> int {
+  let p = make_point();
+  return p.x + p.y;
+}
+
+// Test 3: Copy struct can be passed multiple times
+struct[Copy] CopyPoint(
+  pub x: int,
+  pub y: int,
+);
+
+fn use_copy_point(p: CopyPoint) -> int {
+  return p.x + p.y;
+}
+
+@test(expected_type = "int", expected_value = "8")
+fn test_copy_to_function() -> int {
+  let p = CopyPoint(x = 2, y = 1);
+  let r1 = use_copy_point(p);  // Copy, r1 = 3
+  let r2 = use_copy_point(p);  // Copy again, r2 = 3
+  return r1 + r2 + p.x;  // 3 + 3 + 2 = 8
+}
