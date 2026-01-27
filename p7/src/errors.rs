@@ -121,6 +121,10 @@ pub enum SemanticError {
         module_path: String,
         pos: SourcePos,
     },
+    UseAfterMove {
+        name: String,
+        pos: Option<SourcePos>,
+    },
     Other(String),
 }
 
@@ -164,6 +168,14 @@ impl fmt::Display for SemanticError {
             SemanticError::ImportError { module_path, pos } => {
                 write!(f, "Cannot import module: {} at {}", module_path, pos)
             }
+            SemanticError::UseAfterMove { name, pos } => match pos {
+                Some(p) => write!(
+                    f,
+                    "Use of moved value: {} at {}",
+                    name, p
+                ),
+                None => write!(f, "Use of moved value: {}", name),
+            },
             SemanticError::Other(msg) => write!(f, "Semantic error: {}", msg),
         }
     }

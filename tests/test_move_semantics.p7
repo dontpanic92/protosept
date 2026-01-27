@@ -1,0 +1,77 @@
+// Test move-by-default semantics
+import test.test;
+
+// First, define the Copy proto (constraint proto)
+proto Copy {
+}
+
+// Test 1: Primitives are copy-treated (should work)
+@test(expected_type = "int", expected_value = "30")
+fn test_primitive_copy() -> int {
+  let x = 10;
+  let y = x;  // Copy, not move (primitives are copy-treated)
+  let z = x;  // Should still work - x is not moved
+  return x + y + z;  // 10 + 10 + 10 = 30
+}
+
+// Test 2: box<T> is copy-treated (handle copy)
+@test(expected_type = "int", expected_value = "30")
+fn test_box_copy() -> int {
+  let x = box(10);
+  let y = x;  // Copy handle (box is copy-treated)
+  let z = x;  // Should still work - x is not moved
+  return *x + *y + *z;  // 10 + 10 + 10 = 30
+}
+
+// Test 3: Struct without [Copy] should move
+struct Point(
+  pub x: int,
+  pub y: int,
+);
+
+@test(expected_type = "int", expected_value = "3")
+fn test_struct_move() -> int {
+  let p = Point(x = 1, y = 2);
+  let q = p;  // Move (struct is not copy-treated by default)
+  return q.x + q.y;  // 1 + 2 = 3
+}
+
+// Test 4: Struct with [Copy] conformance should copy
+struct[Copy] CopyPoint(
+  pub x: int,
+  pub y: int,
+);
+
+@test(expected_type = "int", expected_value = "6")
+fn test_struct_copy() -> int {
+  let p = CopyPoint(x = 1, y = 2);
+  let q = p;  // Copy (struct conforms to Copy proto)
+  return p.x + p.y + q.x + q.y;  // 1 + 2 + 1 + 2 = 6
+}
+
+// Test 5: Enum without [Copy] should move
+enum Status {
+  Pending,
+  Active,
+  Done
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_enum_move() -> int {
+  let s = Status.Active;
+  let t = s;  // Move (enum is not copy-treated by default)
+  return match t {
+    Status.Active => 1,
+    _ => 0,
+  };
+}
+
+// Test 6: ref T is copy-treated
+@test(expected_type = "int", expected_value = "20")
+fn test_ref_copy() -> int {
+  let x = 10;
+  let r = ref x;
+  let s = r;  // Copy (ref is copy-treated)
+  return *r + *s;  // 10 + 10 = 20
+}
+
