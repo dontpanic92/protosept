@@ -83,6 +83,8 @@ pub enum LexerError {
     UnexpectedCharacter(char, (usize, usize)),
     UnterminatedString((usize, usize)),
     InvalidNumber(String, (usize, usize)),
+    InvalidEscapeSequence(String, (usize, usize)),
+    InvalidUnicodeEscape(String, (usize, usize)),
 }
 
 impl std::error::Error for LexerError {}
@@ -105,6 +107,20 @@ impl std::fmt::Display for LexerError {
                     f,
                     "Invalid number: {} at line: {} column: {}",
                     num, line, col
+                )
+            }
+            LexerError::InvalidEscapeSequence(seq, (line, col)) => {
+                write!(
+                    f,
+                    "Invalid escape sequence: {} at line: {} column: {}",
+                    seq, line, col
+                )
+            }
+            LexerError::InvalidUnicodeEscape(val, (line, col)) => {
+                write!(
+                    f,
+                    "Invalid unicode escape: {} at line: {} column: {}",
+                    val, line, col
                 )
             }
         }
@@ -200,20 +216,119 @@ impl Lexer {
             return Err(LexerError::UnterminatedString((self.line, self.col)));
         }
 
-        let start_position = self.position + 1;
-        self.read_char();
+        let mut result = String::new();
+        self.read_char(); // Skip opening "
+        
         while let Some(c) = self.peek_char() {
             if c == '"' {
                 break;
             }
-            self.read_char();
+            if c == '\n' {
+                return Err(LexerError::UnterminatedString((self.line, self.col)));
+            }
+            if c == '\\' {
+                // Handle escape sequence
+                self.read_char(); // Skip backslash
+                match self.peek_char() {
+                    Some('\\') => {
+                        result.push('\\');
+                        self.read_char();
+                    }
+                    Some('"') => {
+                        result.push('"');
+                        self.read_char();
+                    }
+                    Some('n') => {
+                        result.push('\n');
+                        self.read_char();
+                    }
+                    Some('r') => {
+                        result.push('\r');
+                        self.read_char();
+                    }
+                    Some('t') => {
+                        result.push('\t');
+                        self.read_char();
+                    }
+                    Some('0') => {
+                        result.push('\0');
+                        self.read_char();
+                    }
+                    Some('u') => {
+                        self.read_char(); // Skip 'u'
+                        if self.peek_char() != Some('{') {
+                            return Err(LexerError::InvalidEscapeSequence(
+                                "\\u".to_string(),
+                                (self.line, self.col),
+                            ));
+                        }
+                        self.read_char(); // Skip '{'
+                        
+                        let mut hex_digits = String::new();
+                        while let Some(c) = self.peek_char() {
+                            if c == '}' {
+                                break;
+                            }
+                            if !c.is_ascii_hexdigit() {
+                                return Err(LexerError::InvalidUnicodeEscape(
+                                    format!("\\u{{{}}}", hex_digits),
+                                    (self.line, self.col),
+                                ));
+                            }
+                            hex_digits.push(c);
+                            self.read_char();
+                        }
+                        
+                        if self.peek_char() != Some('}') {
+                            return Err(LexerError::UnterminatedString((self.line, self.col)));
+                        }
+                        self.read_char(); // Skip '}'
+                        
+                        if hex_digits.is_empty() || hex_digits.len() > 6 {
+                            return Err(LexerError::InvalidUnicodeEscape(
+                                format!("\\u{{{}}}", hex_digits),
+                                (self.line, self.col),
+                            ));
+                        }
+                        
+                        let code_point = u32::from_str_radix(&hex_digits, 16).map_err(|_| {
+                            LexerError::InvalidUnicodeEscape(
+                                format!("\\u{{{}}}", hex_digits),
+                                (self.line, self.col),
+                            )
+                        })?;
+                        
+                        // Check if it's a valid Unicode scalar (not a surrogate)
+                        let ch = char::from_u32(code_point).ok_or_else(|| {
+                            LexerError::InvalidUnicodeEscape(
+                                format!("\\u{{{:x}}}", code_point),
+                                (self.line, self.col),
+                            )
+                        })?;
+                        
+                        result.push(ch);
+                    }
+                    Some(other) => {
+                        return Err(LexerError::InvalidEscapeSequence(
+                            format!("\\{}", other),
+                            (self.line, self.col),
+                        ));
+                    }
+                    None => {
+                        return Err(LexerError::UnterminatedString((self.line, self.col)));
+                    }
+                }
+            } else {
+                result.push(c);
+                self.read_char();
+            }
         }
+        
         if self.peek_char() != Some('"') {
             return Err(LexerError::UnterminatedString((self.line, self.col)));
         }
 
-        let result = self.input[start_position..self.position].to_string();
-        self.read_char();
+        self.read_char(); // Skip closing "
         Ok(result)
     }
 

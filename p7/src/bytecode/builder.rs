@@ -31,6 +31,10 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::Ldf(value));
     }
 
+    pub fn lds(&mut self, string_index: u32) {
+        self.add_instruction(Instruction::Lds(string_index));
+    }
+
     pub fn ldvar(&mut self, var_id: u32) {
         self.add_instruction(Instruction::Ldvar(var_id));
     }

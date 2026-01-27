@@ -39,6 +39,8 @@ pub struct Generator {
     moved_variables: std::collections::HashSet<u32>,
     // Stack of loop contexts for nested loops
     loop_context_stack: Vec<LoopContext>,
+    // String constant pool for string literals
+    string_constants: Vec<String>,
 }
 
 impl Generator {
@@ -52,6 +54,7 @@ impl Generator {
             imported_modules: std::collections::HashMap::new(),
             moved_variables: std::collections::HashSet::new(),
             loop_context_stack: Vec::new(),
+            string_constants: Vec::new(),
         }
     }
 
@@ -101,6 +104,7 @@ impl Generator {
             instructions: self.builder.get_bytecode(),
             symbols: self.symbol_table.symbols.clone(),
             types: self.symbol_table.types.clone(),
+            string_constants: self.string_constants.clone(),
         })
     }
 
@@ -837,7 +841,18 @@ impl Generator {
                 Ok(Type::Primitive(PrimitiveType::Float))
             }
             Expression::StringLiteral(value) => {
-                unimplemented!();
+                // Add string to the constant pool if not already present
+                let string_index = if let Some(idx) = self.string_constants.iter().position(|s| s == &value) {
+                    idx as u32
+                } else {
+                    let idx = self.string_constants.len() as u32;
+                    self.string_constants.push(value.clone());
+                    idx
+                };
+                
+                // Emit instruction to load string constant
+                self.builder.lds(string_index);
+                Ok(Type::Primitive(PrimitiveType::String))
             }
             Expression::BooleanLiteral(value) => {
                 self.builder.ldi(if value { 1 } else { 0 });
