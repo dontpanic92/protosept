@@ -59,5 +59,7 @@ fn test_dynamic_dispatch_cat() -> int {
 // Test 4: Cast and use immediately
 @test(expected_type = "int", expected_value = "42")
 fn test_cast_inline() -> int {
-  (box(Dog(name = "Spot")) as box<Printable>).print()
+  let dog = box(Dog(name = "Spot"));
+  let p = dog as box<Printable>;
+  p.print()
 }
