@@ -325,6 +325,17 @@ impl Parser {
         let mut left = self.parse_unary_expression()?;
 
         while let Some(token) = self.peek() {
+            // Handle 'as' cast expression
+            if token.token_type == TokenType::As {
+                self.consume(); // consume 'as'
+                let target_type = self.parse_type()?;
+                left = Expression::Cast {
+                    expression: Box::new(left),
+                    target_type,
+                };
+                continue;
+            }
+            
             let prec = Self::get_precedence(&token.token_type);
             if prec < min_prec || prec == 0 {
                 break;

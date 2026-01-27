@@ -151,6 +151,12 @@ pub enum Expression {
     Ref(Identifier),
 
     BlockValue(Box<Expression>),
+    
+    // Type cast expression (e.g., expr as box<Proto>)
+    Cast {
+        expression: Box<Expression>,
+        target_type: Type,
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -243,6 +249,9 @@ impl Expression {
                     .join(", ");
                 format!("{}<{}>", base.name, args)
             }
+            Expression::Cast { expression, target_type } => {
+                format!("{} as {}", expression.get_name(), target_type.get_name())
+            }
             _ => "".to_string(),
         }
     }
@@ -254,6 +263,7 @@ impl Expression {
             Expression::FieldAccess { object: _, field } => (field.line, field.col),
             Expression::Ref(identifier) => (identifier.line, identifier.col),
             Expression::GenericInstantiation { base, .. } => (base.line, base.col),
+            Expression::Cast { expression, .. } => expression.get_pos(),
             _ => (0, 0),
         }
     }

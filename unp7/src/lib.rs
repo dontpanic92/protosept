@@ -248,6 +248,8 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
         Instruction::NewStruct(count) => format!("{}  newstruct {}", offset_hex, count),
         Instruction::BoxAlloc => format!("{}  box_alloc", offset_hex),
         Instruction::BoxDeref => format!("{}  box_deref", offset_hex),
+        Instruction::BoxToProto(struct_id, proto_id) => format!("{}  box_to_proto {} {}", offset_hex, struct_id, proto_id),
+        Instruction::CallProtoMethod(proto_id, method_hash) => format!("{}  call_proto_method {} {:#x}", offset_hex, proto_id, method_hash),
     }
 }
 
