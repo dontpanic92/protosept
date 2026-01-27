@@ -1,0 +1,57 @@
+// Comprehensive example demonstrating while and loop control flow
+// This example shows how to use while loops, infinite loops with break/continue
+
+fn example_while_basic() -> int {
+    // While loop that never enters (condition is false)
+    let x = 10;
+    while x < 5 {
+        return 999;  // This should never execute
+    }
+    0  // Returns 0 since loop body never executes
+}
+
+fn example_while_with_break() -> int {
+    // While loop with break statement
+    let counter = 0;
+    while counter < 100 {
+        if counter == 0 {
+            break;  // Exit the loop immediately
+        }
+    }
+    42  // Returns 42 after breaking
+}
+
+fn example_loop_with_break() -> int {
+    // Infinite loop with conditional break
+    let value = 5;
+    loop {
+        if value == 5 {
+            break;  // Exit when condition is met
+        }
+    }
+    1  // Returns 1 after breaking
+}
+
+fn example_nested_loops() -> int {
+    // Nested loops with inner break
+    loop {
+        let inner_value = 10;
+        loop {
+            if inner_value == 10 {
+                break;  // Break from inner loop only
+            }
+        }
+        break;  // Break from outer loop
+    }
+    2  // Returns 2 after both loops exit
+}
+
+fn main() -> int {
+    let result1 = example_while_basic();
+    let result2 = example_while_with_break();
+    let result3 = example_loop_with_break();
+    let result4 = example_nested_loops();
+    
+    // Sum all results
+    result1 + result2 + result3 + result4  // Should be 0 + 42 + 1 + 2 = 45
+}
