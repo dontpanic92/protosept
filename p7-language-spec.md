@@ -227,7 +227,9 @@ Minimum v1 operations (exact spelling may be in a prelude/stdlib; these names ar
 Indexing policy:
 - No `s[i]` syntax for strings in v1.
 
-[[TODO]] literal escapes, concatenation spelling, slicing APIs.
+String literal syntax and escapes are defined in §4.3.
+
+[[TODO]] concatenation spelling, slicing APIs.
 
 ---
 
@@ -320,8 +322,20 @@ Decimal with `.` and optional `_`: `1.0`, `3.1415`, `1_000.5`
 [[TODO]] exponent notation.
 
 ### 4.3 String literals
-Double-quoted strings: `"hello"`  
-[[TODO]] escapes.
+Double-quoted strings: `"hello"`
+
+String literals MUST NOT contain unescaped newlines.
+
+Escape sequences:
+- `\\` (backslash)
+- `\"` (double quote)
+- `\n` (newline)
+- `\r` (carriage return)
+- `\t` (tab)
+- `\0` (NUL)
+- `\u{...}` Unicode scalar escape with 1–6 hex digits; the value MUST be a Unicode scalar (no surrogates).
+
+Any other `\`-escape sequence is an ERROR.
 
 ### 4.4 Boolean literals
 `true`, `false`
@@ -617,7 +631,7 @@ Operator precedence (highest to lowest):
 - `ref` (borrow)
 - `*` (deref)
 - Unary `-`, unary `+`
-- Logical NOT: `!` (if you choose symbolic form) or `not`
+- Logical NOT: `!`
 
 3) Multiplicative: `*`, `/`, `%`
 
@@ -627,9 +641,9 @@ Operator precedence (highest to lowest):
 
 6) Equality: `==`, `!=`
 
-7) Logical AND: `&&` (or `and`)
+7) Logical AND: `&&`
 
-8) Logical OR: `||` (or `or`)
+8) Logical OR: `||`
 
 9) Null-coalescing: `??`
 
@@ -638,7 +652,7 @@ Operator precedence (highest to lowest):
 Notes:
 - `if ... else ...`, `try`, and `loop` are expression forms written with blocks and bind looser than any operator above.
 - `if` without `else` is statement-only and does not participate in operator precedence.
-- Choose either symbolic or keyword forms for logical operators and reserve the other.
+- Prefix `!x` (logical NOT) and postfix `x!` (force unwrap) are distinct by position.
 
 ### 9.4 `loop` expressions
 
@@ -1389,7 +1403,7 @@ fn example() -> unit {
   let b = Option.Some("hi");     // OK: inferred as Option<string>.Some("hi")
   
   // Unit variant requires context
-  let c: ?int = Option.None;     // OK: inferred from annotation as Option<int>.None
+  let c: Option<int> = Option.None;  // OK: inferred from annotation as Option<int>.None
   // let d = Option.None;         // ERROR: cannot infer T (no payload, no context)
   
   // Inference from expected type (return type)
@@ -1554,18 +1568,15 @@ If both extensions enabled:
 
 ## 23. Open items / TODO list (curated)
 
-1) Float NaN/Inf behavior and conversions
-2) String literal escapes, concatenation spelling, slicing APIs
-3) Box deref semantics for non-Copy inner `T` (confirm ERROR vs read-only rule) (§7.1/§7.4)
-4) Box surface syntax details (`*b =`, `replace`, auto-deref and view-taking) (§7.4)
-5) Boxed array mutation API surface and semantics (§3.3.3)
-6) Enum payload variants and how enum opt-in conformances work (Copy-treated gating, etc.) (§13, §6.3)
-7) Operator set and precedence table (§9.3)
-8) Pattern syntax for `try ... else { ... }` handlers (§14.2)
-9) Coercion sites and cast spelling for `box<T> -> box<P>` (§18.5)
-10) Generic enum payload variants and syntax (§20.4)
-11) Enablement mechanisms for extensions (§21, §22)
-12) Host ABI: concrete API surfaces for calling, fibers, threads (§17, §21.4, §22)
+1) String concatenation spelling, slicing APIs
+2) Box deref semantics for non-Copy inner `T` (confirm ERROR vs read-only rule) (§7.1/§7.4)
+3) Box surface syntax details (`*b =`, `replace`, auto-deref and view-taking) (§7.4)
+4) Boxed array mutation API surface and semantics (§3.3.3)
+5) Enum payload variants and how enum opt-in conformances work (Copy-treated gating, etc.) (§13, §6.3)
+6) Pattern syntax for `try ... else { ... }` handlers (§14.2)
+7) Coercion sites and cast spelling for `box<T> -> box<P>` (§18.5)
+8) Enablement mechanisms for extensions (§21, §22)
+9) Host ABI: concrete API surfaces for calling, fibers, threads (§17, §21.4, §22)
 
 ---
 End.
