@@ -3029,7 +3029,21 @@ impl Generator {
                 }
                 
                 // Check each parameter type matches
+                // Special handling for first parameter (self) which should be ref to the struct/proto type
                 for (i, (expected_type, actual_type)) in param_types.iter().zip(method_params.iter()).enumerate() {
+                    // For the first parameter (self), check if both are reference types
+                    // The proto has `self: ref Proto` and the struct has `self: ref Struct`
+                    // These should be considered compatible for conformance checking
+                    if i == 0 {
+                        let proto_is_ref_to_proto = matches!(expected_type, Type::Reference(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id));
+                        let struct_is_ref_to_struct = matches!(actual_type, Type::Reference(inner) if matches!(**inner, Type::Struct(sid) if sid == struct_type_id));
+                        
+                        if proto_is_ref_to_proto && struct_is_ref_to_struct {
+                            // Both are reference types to their respective types, this is correct
+                            continue;
+                        }
+                    }
+                    
                     if !self.types_equal(expected_type, actual_type) {
                         return Err(SemanticError::Other(format!(
                             "Method '{}' in struct '{}' has parameter {} with type '{}', but protocol '{}' requires type '{}' at line {} column {}",
@@ -3045,7 +3059,13 @@ impl Generator {
                 // Check return type matches
                 match (return_type, method_return_type) {
                     (Some(expected), Some(actual)) => {
-                        if !self.types_equal(&expected, &actual) {
+                        // Both unit and no return type should be considered equivalent
+                        let expected_is_unit = matches!(expected, Type::Primitive(PrimitiveType::Unit));
+                        let actual_is_unit = matches!(actual, Type::Primitive(PrimitiveType::Unit));
+                        
+                        if expected_is_unit && actual_is_unit {
+                            // Both return unit, this is fine
+                        } else if !self.types_equal(&expected, &actual) {
                             return Err(SemanticError::Other(format!(
                                 "Method '{}' in struct '{}' returns type '{}', but protocol '{}' requires return type '{}' at line {} column {}",
                                 method_name, struct_def.qualified_name,
@@ -3056,14 +3076,34 @@ impl Generator {
                             )));
                         }
                     }
-                    (None, None) => {
-                        // Both are unit/void, this is fine
+                    (Some(expected), None) => {
+                        // Proto requires a return type, but struct method returns nothing (unit)
+                        // If proto expects unit, this is fine
+                        if !matches!(expected, Type::Primitive(PrimitiveType::Unit)) {
+                            return Err(SemanticError::Other(format!(
+                                "Method '{}' in struct '{}' returns nothing, but protocol '{}' requires return type '{}' at line {} column {}",
+                                method_name, struct_def.qualified_name,
+                                proto.qualified_name,
+                                self.type_to_string(&expected),
+                                line, col
+                            )));
+                        }
                     }
-                    _ => {
-                        return Err(SemanticError::Other(format!(
-                            "Method '{}' in struct '{}' has mismatched return type with protocol '{}' at line {} column {}",
-                            method_name, struct_def.qualified_name, proto.qualified_name, line, col
-                        )));
+                    (None, Some(actual)) => {
+                        // Proto expects no return, but struct returns something
+                        // If struct returns unit, this is fine
+                        if !matches!(actual, Type::Primitive(PrimitiveType::Unit)) {
+                            return Err(SemanticError::Other(format!(
+                                "Method '{}' in struct '{}' returns type '{}', but protocol '{}' expects no return type at line {} column {}",
+                                method_name, struct_def.qualified_name,
+                                self.type_to_string(&actual),
+                                proto.qualified_name,
+                                line, col
+                            )));
+                        }
+                    }
+                    (None, None) => {
+                        // Both return nothing, this is fine
                     }
                 }
             }
