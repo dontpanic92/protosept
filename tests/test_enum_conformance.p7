@@ -1,0 +1,61 @@
+// Test enum protocol conformance
+import test.test;
+
+// Define a simple protocol
+proto Printable {
+  fn print(self: ref Printable) -> unit;
+}
+
+proto Displayable {
+  fn display(self: ref Displayable) -> int;
+}
+
+// Enum conforming to Printable
+enum[Printable] Status(
+  Pending,
+  Active: int,
+  Failed: string,
+) {
+  pub fn print(self: ref Status) -> unit {
+    // Implementation
+  }
+}
+
+// Enum conforming to multiple protocols
+enum[Printable, Displayable] SimpleResult(
+  Ok: int,
+  Err: string,
+) {
+  pub fn print(self: ref SimpleResult) -> unit {
+    // Implementation
+  }
+  
+  pub fn display(self: ref SimpleResult) -> int {
+    42
+  }
+}
+
+// Test that enums can be created
+@test(expected_type = "int", expected_value = "10")
+fn test_conformance_basic() -> int {
+  let s = Status.Active(10);
+  10
+}
+
+@test(expected_type = "int", expected_value = "100")
+fn test_conformance_multiple() -> int {
+  let r = SimpleResult.Ok(100);
+  100
+}
+
+@test(expected_type = "int", expected_value = "99")
+fn test_enum_without_conformance() -> int {
+  // Enum without conformance should still work
+  enum SimpleEnum(
+    A,
+    B: int,
+  );
+  
+  let e = SimpleEnum.B(99);
+  99
+}

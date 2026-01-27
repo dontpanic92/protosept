@@ -115,6 +115,8 @@ pub struct Enum {
     pub generic_variant_types: Option<Vec<Vec<crate::ast::Type>>>,
     // For monomorphized enums: stores the base generic enum's TypeId and concrete type arguments
     pub monomorphization: Option<(TypeId, Vec<Type>)>,
+    // Protocol conformances
+    pub conforming_to: Vec<TypeId>,
 }
 
 #[derive(Debug, Clone)]

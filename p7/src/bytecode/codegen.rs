@@ -407,6 +407,7 @@ impl Generator {
                 is_pub,
                 name,
                 attributes,
+                conformance,
                 type_parameters,
                 values,
                 methods,
@@ -442,6 +443,13 @@ impl Generator {
                     (resolved_variants, None)
                 };
                 
+                // Resolve protocol conformances
+                let mut conforming_to = Vec::new();
+                for proto_name in conformance {
+                    let proto_type_id = self.resolve_proto_identifier(&proto_name)?;
+                    conforming_to.push(proto_type_id);
+                }
+                
                 let ty = Enum {
                     qualified_name: qualified_name.clone(),
                     variants,
@@ -449,6 +457,7 @@ impl Generator {
                     type_parameters: type_parameters.iter().map(|tp| tp.name.name.clone()).collect(),
                     generic_variant_types,
                     monomorphization: None,
+                    conforming_to: conforming_to.clone(),
                 };
                 let type_id = self.symbol_table.add_udt(UserDefinedType::Enum(ty));
 
@@ -461,6 +470,9 @@ impl Generator {
                 for method in methods {
                     self.process_function_declaration(method.function)?;
                 }
+                
+                // Check conformance after processing methods
+                self.check_struct_conformance(type_id, &conforming_to, name.line, name.col)?;
 
                 // TODO: Store is_pub for module visibility checking
                 let _ = is_pub;
@@ -1485,37 +1497,65 @@ impl Generator {
                 // For now, we only support box<T> -> box<P> casts
                 match (&expr_ty, &target_ty) {
                     (Type::BoxType(inner_ty), Type::BoxType(target_inner_ty)) => {
-                        // Check if casting box<Struct> to box<Proto>
-                        if let (Type::Struct(struct_id), Type::Proto(proto_id)) = (inner_ty.as_ref(), target_inner_ty.as_ref()) {
-                            // Verify that the struct satisfies the proto
-                            let struct_def = match &self.symbol_table.types[*struct_id as usize] {
-                                UserDefinedType::Struct(s) => s,
-                                _ => return Err(SemanticError::Other("Expected struct type".to_string())),
-                            };
-                            
-                            // Check if struct conforms to proto (either declared or structural)
-                            let conforms = struct_def.conforming_to.contains(proto_id);
-                            
-                            if !conforms {
-                                // Check structural conformance
-                                self.check_struct_conformance(
-                                    *struct_id,
-                                    &[*proto_id],
-                                    line,
-                                    col,
-                                )?;
+                        // Check if casting box<Struct/Enum> to box<Proto>
+                        match (inner_ty.as_ref(), target_inner_ty.as_ref()) {
+                            (Type::Struct(struct_id), Type::Proto(proto_id)) => {
+                                // Verify that the struct satisfies the proto
+                                let struct_def = match &self.symbol_table.types[*struct_id as usize] {
+                                    UserDefinedType::Struct(s) => s,
+                                    _ => return Err(SemanticError::Other("Expected struct type".to_string())),
+                                };
+                                
+                                // Check if struct conforms to proto (either declared or structural)
+                                let conforms = struct_def.conforming_to.contains(proto_id);
+                                
+                                if !conforms {
+                                    // Check structural conformance
+                                    self.check_struct_conformance(
+                                        *struct_id,
+                                        &[*proto_id],
+                                        line,
+                                        col,
+                                    )?;
+                                }
+                                
+                                // Generate BoxToProto instruction
+                                self.builder.add_instruction(Instruction::BoxToProto(*struct_id, *proto_id));
+                                
+                                return Ok(target_ty);
                             }
-                            
-                            // Generate BoxToProto instruction
-                            self.builder.add_instruction(Instruction::BoxToProto(*struct_id, *proto_id));
-                            
-                            return Ok(target_ty);
-                        } else {
-                            return Err(SemanticError::TypeMismatch {
-                                lhs: format!("box<{}>", self.type_to_string(&**inner_ty)),
-                                rhs: format!("box<{}>", self.type_to_string(&**target_inner_ty)),
-                                pos: Some(SourcePos { line, col }),
-                            });
+                            (Type::Enum(enum_id), Type::Proto(proto_id)) => {
+                                // Verify that the enum satisfies the proto
+                                let enum_def = match &self.symbol_table.types[*enum_id as usize] {
+                                    UserDefinedType::Enum(e) => e,
+                                    _ => return Err(SemanticError::Other("Expected enum type".to_string())),
+                                };
+                                
+                                // Check if enum conforms to proto (either declared or structural)
+                                let conforms = enum_def.conforming_to.contains(proto_id);
+                                
+                                if !conforms {
+                                    // Check structural conformance
+                                    self.check_struct_conformance(
+                                        *enum_id,
+                                        &[*proto_id],
+                                        line,
+                                        col,
+                                    )?;
+                                }
+                                
+                                // Generate BoxToProto instruction
+                                self.builder.add_instruction(Instruction::BoxToProto(*enum_id, *proto_id));
+                                
+                                return Ok(target_ty);
+                            }
+                            _ => {
+                                return Err(SemanticError::TypeMismatch {
+                                    lhs: format!("box<{}>", self.type_to_string(&**inner_ty)),
+                                    rhs: format!("box<{}>", self.type_to_string(&**target_inner_ty)),
+                                    pos: Some(SourcePos { line, col }),
+                                });
+                            }
                         }
                     }
                     _ => {
@@ -3059,6 +3099,7 @@ impl Generator {
             type_parameters: Vec::new(), // Monomorphized enums have no type parameters
             generic_variant_types: None,
             monomorphization: Some((base_type_id, type_args.clone())),
+            conforming_to: base_enum.conforming_to.clone(),
         };
         
         // Add to type table
@@ -3416,18 +3457,19 @@ impl Generator {
     /// Check that a struct conforms to all declared protocols
     fn check_struct_conformance(
         &self,
-        struct_type_id: TypeId,
+        type_id: TypeId,
         conforming_to: &[TypeId],
         line: usize,
         col: usize,
     ) -> SaResult<()> {
-        // Get the struct definition
-        let struct_def = match &self.symbol_table.types[struct_type_id as usize] {
-            UserDefinedType::Struct(s) => s,
-            _ => return Err(SemanticError::Other("Expected struct type".to_string())),
+        // Get the type definition (struct or enum)
+        let (type_name, qualified_name) = match &self.symbol_table.types[type_id as usize] {
+            UserDefinedType::Struct(s) => ("Struct", s.qualified_name.clone()),
+            UserDefinedType::Enum(e) => ("Enum", e.qualified_name.clone()),
+            _ => return Err(SemanticError::Other("Expected struct or enum type".to_string())),
         };
         
-        // For each protocol the struct claims to conform to
+        // For each protocol the type claims to conform to
         for &proto_id in conforming_to {
             let proto = match &self.symbol_table.types[proto_id as usize] {
                 UserDefinedType::Proto(p) => p,
@@ -3436,38 +3478,38 @@ impl Generator {
             
             // Check each required method in the protocol
             for (method_name, param_types, return_type) in &proto.methods {
-                // Find the corresponding method in the struct
-                let struct_method = self.find_struct_method(struct_type_id, method_name);
+                // Find the corresponding method in the type
+                let type_method = self.find_type_method(type_id, method_name);
                 
-                if struct_method.is_none() {
+                if type_method.is_none() {
                     return Err(SemanticError::Other(format!(
-                        "Struct '{}' does not implement required method '{}' from protocol '{}' at line {} column {}",
-                        struct_def.qualified_name, method_name, proto.qualified_name, line, col
+                        "{} '{}' does not implement required method '{}' from protocol '{}' at line {} column {}",
+                        type_name, qualified_name, method_name, proto.qualified_name, line, col
                     )));
                 }
                 
-                let (method_params, method_return_type) = struct_method.unwrap();
+                let (method_params, method_return_type) = type_method.unwrap();
                 
                 // Check parameter count matches
                 if method_params.len() != param_types.len() {
                     return Err(SemanticError::Other(format!(
-                        "Method '{}' in struct '{}' has {} parameters, but protocol '{}' requires {} parameters at line {} column {}",
-                        method_name, struct_def.qualified_name, method_params.len(),
+                        "Method '{}' in {} '{}' has {} parameters, but protocol '{}' requires {} parameters at line {} column {}",
+                        method_name, type_name, qualified_name, method_params.len(),
                         proto.qualified_name, param_types.len(), line, col
                     )));
                 }
                 
                 // Check each parameter type matches
-                // Special handling for first parameter (self) which should be ref to the struct/proto type
+                // Special handling for first parameter (self) which should be ref to the type/proto type
                 for (i, (expected_type, actual_type)) in param_types.iter().zip(method_params.iter()).enumerate() {
                     // For the first parameter (self), check if both are reference types
-                    // The proto has `self: ref Proto` and the struct has `self: ref Struct`
+                    // The proto has `self: ref Proto` and the type has `self: ref Type`
                     // These should be considered compatible for conformance checking
                     if i == 0 {
                         let proto_is_ref_to_proto = matches!(expected_type, Type::Reference(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id));
-                        let struct_is_ref_to_struct = matches!(actual_type, Type::Reference(inner) if matches!(**inner, Type::Struct(sid) if sid == struct_type_id));
+                        let type_is_ref_to_self = matches!(actual_type, Type::Reference(inner) if matches!(**inner, Type::Struct(sid) if sid == type_id) || matches!(**inner, Type::Enum(eid) if eid == type_id));
                         
-                        if proto_is_ref_to_proto && struct_is_ref_to_struct {
+                        if proto_is_ref_to_proto && type_is_ref_to_self {
                             // Both are reference types to their respective types, this is correct
                             continue;
                         }
@@ -3475,8 +3517,8 @@ impl Generator {
                     
                     if !self.types_equal(expected_type, actual_type) {
                         return Err(SemanticError::Other(format!(
-                            "Method '{}' in struct '{}' has parameter {} with type '{}', but protocol '{}' requires type '{}' at line {} column {}",
-                            method_name, struct_def.qualified_name, i,
+                            "Method '{}' in {} '{}' has parameter {} with type '{}', but protocol '{}' requires type '{}' at line {} column {}",
+                            method_name, type_name, qualified_name, i,
                             self.type_to_string(actual_type),
                             proto.qualified_name,
                             self.type_to_string(expected_type),
@@ -3496,8 +3538,8 @@ impl Generator {
                             // Both return unit, this is fine
                         } else if !self.types_equal(&expected, &actual) {
                             return Err(SemanticError::Other(format!(
-                                "Method '{}' in struct '{}' returns type '{}', but protocol '{}' requires return type '{}' at line {} column {}",
-                                method_name, struct_def.qualified_name,
+                                "Method '{}' in {} '{}' returns type '{}', but protocol '{}' requires return type '{}' at line {} column {}",
+                                method_name, type_name, qualified_name,
                                 self.type_to_string(&actual),
                                 proto.qualified_name,
                                 self.type_to_string(&expected),
@@ -3506,12 +3548,12 @@ impl Generator {
                         }
                     }
                     (Some(expected), None) => {
-                        // Proto requires a return type, but struct method returns nothing (unit)
+                        // Proto requires a return type, but type method returns nothing (unit)
                         // If proto expects unit, this is fine
                         if !matches!(expected, Type::Primitive(PrimitiveType::Unit)) {
                             return Err(SemanticError::Other(format!(
-                                "Method '{}' in struct '{}' returns nothing, but protocol '{}' requires return type '{}' at line {} column {}",
-                                method_name, struct_def.qualified_name,
+                                "Method '{}' in {} '{}' returns nothing, but protocol '{}' requires return type '{}' at line {} column {}",
+                                method_name, type_name, qualified_name,
                                 proto.qualified_name,
                                 self.type_to_string(&expected),
                                 line, col
@@ -3519,12 +3561,12 @@ impl Generator {
                         }
                     }
                     (None, Some(actual)) => {
-                        // Proto expects no return, but struct returns something
-                        // If struct returns unit, this is fine
+                        // Proto expects no return, but type returns something
+                        // If type returns unit, this is fine
                         if !matches!(actual, Type::Primitive(PrimitiveType::Unit)) {
                             return Err(SemanticError::Other(format!(
-                                "Method '{}' in struct '{}' returns type '{}', but protocol '{}' expects no return type at line {} column {}",
-                                method_name, struct_def.qualified_name,
+                                "Method '{}' in {} '{}' returns type '{}', but protocol '{}' expects no return type at line {} column {}",
+                                method_name, type_name, qualified_name,
                                 self.type_to_string(&actual),
                                 proto.qualified_name,
                                 line, col
@@ -3541,15 +3583,16 @@ impl Generator {
         Ok(())
     }
     
-    /// Find a method in a struct by name and return its signature
-    fn find_struct_method(&self, struct_type_id: TypeId, method_name: &str) -> Option<(Vec<Type>, Option<Type>)> {
-        // Search for a function with the qualified name struct_name.method_name
-        let struct_def = match &self.symbol_table.types[struct_type_id as usize] {
-            UserDefinedType::Struct(s) => s,
+    /// Find a method in a type (struct or enum) by name and return its signature
+    fn find_type_method(&self, type_id: TypeId, method_name: &str) -> Option<(Vec<Type>, Option<Type>)> {
+        // Search for a function with the qualified name type_name.method_name
+        let qualified_name = match &self.symbol_table.types[type_id as usize] {
+            UserDefinedType::Struct(s) => s.qualified_name.clone(),
+            UserDefinedType::Enum(e) => e.qualified_name.clone(),
             _ => return None,
         };
         
-        let qualified_method_name = format!("{}.{}", struct_def.qualified_name, method_name);
+        let qualified_method_name = format!("{}.{}", qualified_name, method_name);
         
         // Look through all symbols to find the method
         for symbol in &self.symbol_table.symbols {
