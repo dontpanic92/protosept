@@ -89,7 +89,8 @@ pub struct Function {
     pub param_defaults: Vec<Option<crate::ast::Expression>>,
     pub return_type: Type,
     pub attributes: Vec<crate::ast::Attribute>,
-    // Intrinsic name if this is an intrinsic function
+    // Intrinsic name if this is an intrinsic function (e.g., "box_new" for box() constructor)
+    // Extracted from @intrinsic("name") attribute for special compiler-recognized functions
     pub intrinsic_name: Option<String>,
     // For generic functions: stores the original type parameter names
     pub type_parameters: Vec<String>,

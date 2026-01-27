@@ -258,7 +258,7 @@ impl Context {
                             }
                             Data::BoxRef(_) => {
                                 return Err(RuntimeError::Other(
-                                    "Cannot negate box reference".to_string(),
+                                    "Cannot apply logical NOT to box reference".to_string(),
                                 ));
                             }
                             Data::Exception(_) => {
