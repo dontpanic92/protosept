@@ -1,0 +1,22 @@
+// Simple test without test framework
+import test.test;
+
+// Define a protocol
+proto Printable {
+  fn print(self: ref Printable) -> int;
+}
+
+// Simple struct implementing the protocol
+struct[Printable] Dog(
+  x: int,
+) {
+  pub fn print(self: ref Dog) -> int {
+    42
+  }
+}
+
+fn main() -> int {
+  let dog = box(Dog(x = 10));
+  let p: box<Printable> = dog as box<Printable>;
+  p.print()
+}
