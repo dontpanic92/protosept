@@ -157,6 +157,30 @@ pub enum Expression {
         expression: Box<Expression>,
         target_type: Type,
     },
+    
+    // Loop expression (infinite loop)
+    Loop {
+        body: Box<Expression>,
+        pos: (usize, usize),
+    },
+    
+    // While expression (conditional loop)
+    While {
+        condition: Box<Expression>,
+        body: Box<Expression>,
+        pos: (usize, usize),
+    },
+    
+    // Break expression (with optional value for future use)
+    Break {
+        value: Option<Box<Expression>>,
+        pos: (usize, usize),
+    },
+    
+    // Continue expression
+    Continue {
+        pos: (usize, usize),
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -252,6 +276,10 @@ impl Expression {
             Expression::Cast { expression, target_type } => {
                 format!("{} as {}", expression.get_name(), target_type.get_name())
             }
+            Expression::Loop { .. } => "loop".to_string(),
+            Expression::While { .. } => "while".to_string(),
+            Expression::Break { .. } => "break".to_string(),
+            Expression::Continue { .. } => "continue".to_string(),
             _ => "".to_string(),
         }
     }
@@ -264,6 +292,10 @@ impl Expression {
             Expression::Ref(identifier) => (identifier.line, identifier.col),
             Expression::GenericInstantiation { base, .. } => (base.line, base.col),
             Expression::Cast { expression, .. } => expression.get_pos(),
+            Expression::Loop { pos, .. } => *pos,
+            Expression::While { pos, .. } => *pos,
+            Expression::Break { pos, .. } => *pos,
+            Expression::Continue { pos, .. } => *pos,
             _ => (0, 0),
         }
     }

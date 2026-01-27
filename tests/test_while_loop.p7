@@ -1,0 +1,37 @@
+// Tests for while loop control flow
+import test.test;
+
+// ===== Basic While Loop Tests =====
+
+@test(expected_type = "int", expected_value = "0")
+fn test_while_false_condition() -> int {
+    let x = 10;
+    while x < 5 {
+        return 999;  // Should never execute
+    }
+    0
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_while_break_immediately() -> int {
+    let x = 0;
+    while x < 100 {
+        break;
+    }
+    42
+}
+
+// ===== Nested While Tests =====
+
+@test(expected_type = "int", expected_value = "1")
+fn test_nested_while_both_false() -> int {
+    let x = 10;
+    while x < 5 {
+        let y = 10;
+        while y < 5 {
+            return 999;  // Should never execute
+        }
+        return 888;  // Should never execute
+    }
+    1
+}

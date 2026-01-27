@@ -205,6 +205,18 @@ impl Parser {
                 TokenType::If => {
                     return self.parse_if_expression();
                 }
+                TokenType::Loop => {
+                    return self.parse_loop_expression();
+                }
+                TokenType::While => {
+                    return self.parse_while_expression();
+                }
+                TokenType::Break => {
+                    return self.parse_break_expression();
+                }
+                TokenType::Continue => {
+                    return self.parse_continue_expression();
+                }
                 TokenType::Ref => {
                     self.consume();
                     let ident = self.parse_identifier()?;
@@ -393,6 +405,147 @@ impl Parser {
             then_branch: Box::new(then_branch),
             else_branch,
             pos: if_pos,
+        })
+    }
+
+    fn parse_loop_expression(&mut self) -> ParseResult<Expression> {
+        // consume the 'loop' token and capture its position
+        let loop_token = match self.consume() {
+            Some(t) if t.token_type == TokenType::Loop => t.clone(),
+            Some(t) => {
+                return Err(ParseError::ExpectedToken {
+                    expected: format!("{:?}", TokenType::Loop),
+                    found: format!("{:?}", t.token_type),
+                    pos: Some(SourcePos {
+                        line: t.line,
+                        col: t.col,
+                    }),
+                });
+            }
+            None => {
+                return Err(ParseError::UnexpectedEof {
+                    pos: self.peek_previous().map(|t| SourcePos {
+                        line: t.line,
+                        col: t.col,
+                    }),
+                });
+            }
+        };
+        let loop_pos = (loop_token.line, loop_token.col);
+
+        let body = self.parse_expression()?;
+
+        Ok(Expression::Loop {
+            body: Box::new(body),
+            pos: loop_pos,
+        })
+    }
+
+    fn parse_while_expression(&mut self) -> ParseResult<Expression> {
+        // consume the 'while' token and capture its position
+        let while_token = match self.consume() {
+            Some(t) if t.token_type == TokenType::While => t.clone(),
+            Some(t) => {
+                return Err(ParseError::ExpectedToken {
+                    expected: format!("{:?}", TokenType::While),
+                    found: format!("{:?}", t.token_type),
+                    pos: Some(SourcePos {
+                        line: t.line,
+                        col: t.col,
+                    }),
+                });
+            }
+            None => {
+                return Err(ParseError::UnexpectedEof {
+                    pos: self.peek_previous().map(|t| SourcePos {
+                        line: t.line,
+                        col: t.col,
+                    }),
+                });
+            }
+        };
+        let while_pos = (while_token.line, while_token.col);
+
+        let condition = self.parse_expression()?;
+        let body = self.parse_expression()?;
+
+        Ok(Expression::While {
+            condition: Box::new(condition),
+            body: Box::new(body),
+            pos: while_pos,
+        })
+    }
+
+    fn parse_break_expression(&mut self) -> ParseResult<Expression> {
+        // consume the 'break' token and capture its position
+        let break_token = match self.consume() {
+            Some(t) if t.token_type == TokenType::Break => t.clone(),
+            Some(t) => {
+                return Err(ParseError::ExpectedToken {
+                    expected: format!("{:?}", TokenType::Break),
+                    found: format!("{:?}", t.token_type),
+                    pos: Some(SourcePos {
+                        line: t.line,
+                        col: t.col,
+                    }),
+                });
+            }
+            None => {
+                return Err(ParseError::UnexpectedEof {
+                    pos: self.peek_previous().map(|t| SourcePos {
+                        line: t.line,
+                        col: t.col,
+                    }),
+                });
+            }
+        };
+        let break_pos = (break_token.line, break_token.col);
+
+        // Check if there's a value to break with
+        // Break can optionally have a value: break expr;
+        // We need to check if the next token indicates end of statement/expression
+        let value = match self.peek() {
+            Some(t) if matches!(
+                t.token_type,
+                TokenType::Semicolon | TokenType::CloseBrace | TokenType::EOF
+            ) => None,
+            Some(_) => Some(Box::new(self.parse_expression()?)),
+            None => None,
+        };
+
+        Ok(Expression::Break {
+            value,
+            pos: break_pos,
+        })
+    }
+
+    fn parse_continue_expression(&mut self) -> ParseResult<Expression> {
+        // consume the 'continue' token and capture its position
+        let continue_token = match self.consume() {
+            Some(t) if t.token_type == TokenType::Continue => t.clone(),
+            Some(t) => {
+                return Err(ParseError::ExpectedToken {
+                    expected: format!("{:?}", TokenType::Continue),
+                    found: format!("{:?}", t.token_type),
+                    pos: Some(SourcePos {
+                        line: t.line,
+                        col: t.col,
+                    }),
+                });
+            }
+            None => {
+                return Err(ParseError::UnexpectedEof {
+                    pos: self.peek_previous().map(|t| SourcePos {
+                        line: t.line,
+                        col: t.col,
+                    }),
+                });
+            }
+        };
+        let continue_pos = (continue_token.line, continue_token.col);
+
+        Ok(Expression::Continue {
+            pos: continue_pos,
         })
     }
 
