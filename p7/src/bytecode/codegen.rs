@@ -343,6 +343,7 @@ impl Generator {
         match statement {
             Statement::Let {
                 identifier,
+                type_annotation: _,
                 expression,
             } => {
                 // Check if this expression involves a move (before consuming it)

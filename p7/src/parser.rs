@@ -196,6 +196,13 @@ impl Parser {
                     let statements = self.parse_block()?;
                     Expression::Block(statements)
                 }
+                TokenType::OpenParen => {
+                    // Parse parenthesized expression
+                    self.consume(); // consume '('
+                    let expr = self.parse_expression()?;
+                    self.consume_match(TokenType::CloseParen)?;
+                    return self.parse_expression_suffix(expr);
+                }
                 TokenType::Try => {
                     return self.parse_try_expression();
                 }
@@ -1475,12 +1482,22 @@ impl Parser {
                 self.consume();
 
                 let identifier = self.parse_identifier()?;
+                
+                // Check for optional type annotation: let p: Type = ...
+                let type_annotation = if self.peek_match(TokenType::Colon) {
+                    self.consume(); // consume ':'
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
+                
                 self.consume_match(TokenType::Assignment)?;
                 let expression = self.parse_expression()?;
                 self.consume_match(TokenType::Semicolon)?;
 
                 Ok(Statement::Let {
                     identifier,
+                    type_annotation,
                     expression,
                 })
             }

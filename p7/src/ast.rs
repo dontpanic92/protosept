@@ -218,6 +218,7 @@ pub struct NamedPattern {
 pub enum Statement {
     Let {
         identifier: Identifier,
+        type_annotation: Option<Type>,
         expression: Expression,
     },
     Expression(Expression),
