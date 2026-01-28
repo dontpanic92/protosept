@@ -1,0 +1,13 @@
+// Simple type construction test
+import test.test;
+
+type UserId(int) {
+    pub fn new(id: int) -> UserId {
+        return Self(id);
+    }
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_simple() -> int {
+    return 42;
+}

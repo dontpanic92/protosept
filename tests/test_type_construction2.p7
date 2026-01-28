@@ -1,0 +1,25 @@
+// Test type construction, field access, and method calling
+import test.test;
+
+// Type with representation
+type UserId(int) {
+    pub fn new(id: int) -> UserId {
+        return Self(id);
+    }
+    
+    pub fn value(ref self) -> int {
+        return self.0;
+    }
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_type_construction() -> int {
+    let uid = UserId.new(42);
+    uid.value()
+}
+
+@test(expected_type = "int", expected_value = "100")
+fn test_type_field_access() -> int {
+    let uid = UserId.new(100);
+    uid.0
+}
