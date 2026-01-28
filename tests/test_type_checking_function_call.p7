@@ -1,0 +1,9 @@
+// compile_fail: Type mismatch in function call
+
+fn takes_int(x: int) -> int {
+    x
+}
+
+fn test_wrong_type_arg() -> int {
+    takes_int("string")  // ERROR: passing string to int parameter
+}

@@ -343,7 +343,7 @@ impl Generator {
         match statement {
             Statement::Let {
                 identifier,
-                type_annotation: _,
+                type_annotation,
                 expression,
             } => {
                 // Check if this expression involves a move (before consuming it)
@@ -369,18 +369,40 @@ impl Generator {
                     None
                 };
 
-                let ty = self.generate_expression(expression)?;
+                let inferred_ty = self.generate_expression(expression)?;
 
                 // Mark variable as moved if needed
                 if let Some(var_id) = move_info {
                     self.mark_variable_moved(var_id);
                 }
 
+                // Validate type annotation if provided
+                let final_ty = if let Some(annotation) = type_annotation {
+                    let annotated_ty = self.get_semantic_type(&annotation)?;
+                    
+                    // Check if inferred type is compatible with annotation
+                    if !self.types_compatible(&inferred_ty, &annotated_ty) {
+                        return Err(SemanticError::TypeMismatch {
+                            lhs: format!("inferred type {}", inferred_ty.to_string()),
+                            rhs: format!("annotated type {}", annotated_ty.to_string()),
+                            pos: Some(SourcePos {
+                                line: identifier.line,
+                                col: identifier.col,
+                            }),
+                        });
+                    }
+                    
+                    // Use the annotated type (which may be more specific, e.g., float when int was inferred)
+                    annotated_ty
+                } else {
+                    inferred_ty
+                };
+
                 let var_id = self
                     .local_scope
                     .as_mut()
                     .unwrap()
-                    .add_variable(identifier.name.clone(), ty)
+                    .add_variable(identifier.name.clone(), final_ty)
                     .map_err(|_| SemanticError::VariableOutsideFunction {
                         name: identifier.name.clone(),
                         pos: Some(SourcePos {
@@ -973,7 +995,7 @@ impl Generator {
                     // Handle LHS without generating its value (we need the target)
                     match *left {
                         Expression::Identifier(identifier) => {
-                            let _rhs_ty = self.generate_expression(*right)?;
+                            let rhs_ty = self.generate_expression(*right)?;
 
                             // Prefer local variable, fallback to parameter
                             if let Some(var_id) = self
@@ -982,15 +1004,26 @@ impl Generator {
                                 .unwrap()
                                 .find_variable(&identifier.name)
                             {
+                                let lhs_ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
+                                
                                 // `ref` is read-only: disallow assignment to ref locals.
-                                if matches!(
-                                    self.local_scope.as_ref().unwrap().get_variable_type(var_id),
-                                    Type::Reference(_)
-                                ) {
+                                if matches!(lhs_ty, Type::Reference(_)) {
                                     return Err(SemanticError::Other(format!(
                                         "Cannot assign to read-only ref '{}'",
                                         identifier.name
                                     )));
+                                }
+                                
+                                // Check type compatibility
+                                if !self.types_compatible(&rhs_ty, &lhs_ty) {
+                                    return Err(SemanticError::TypeMismatch {
+                                        lhs: format!("variable '{}' has type {}", identifier.name, lhs_ty.to_string()),
+                                        rhs: format!("assigned value has type {}", rhs_ty.to_string()),
+                                        pos: Some(SourcePos {
+                                            line: identifier.line,
+                                            col: identifier.col,
+                                        }),
+                                    });
                                 }
 
                                 self.builder.stvar(var_id);
@@ -1001,15 +1034,26 @@ impl Generator {
                                 .unwrap()
                                 .find_param(&identifier.name)
                             {
+                                let lhs_ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
+                                
                                 // `ref` is read-only: disallow assignment to ref parameters.
-                                if matches!(
-                                    self.local_scope.as_ref().unwrap().get_param_type(param_id),
-                                    Type::Reference(_)
-                                ) {
+                                if matches!(lhs_ty, Type::Reference(_)) {
                                     return Err(SemanticError::Other(format!(
                                         "Cannot assign to read-only ref parameter '{}'",
                                         identifier.name
                                     )));
+                                }
+                                
+                                // Check type compatibility
+                                if !self.types_compatible(&rhs_ty, &lhs_ty) {
+                                    return Err(SemanticError::TypeMismatch {
+                                        lhs: format!("parameter '{}' has type {}", identifier.name, lhs_ty.to_string()),
+                                        rhs: format!("assigned value has type {}", rhs_ty.to_string()),
+                                        pos: Some(SourcePos {
+                                            line: identifier.line,
+                                            col: identifier.col,
+                                        }),
+                                    });
                                 }
 
                                 // Store into parameter slot (no separate stpar instruction exists;
@@ -1028,7 +1072,7 @@ impl Generator {
                         }
                         Expression::FieldAccess { object, field } => {
                             let object_ty = self.generate_expression(*object.clone())?;
-                            let _rhs_ty = self.generate_expression(*right.clone())?;
+                            let rhs_ty = self.generate_expression(*right.clone())?;
 
                             // `ref` is read-only: disallow `ref_struct.field = ...`.
                             if matches!(object_ty, Type::Reference(_)) {
@@ -1039,53 +1083,83 @@ impl Generator {
                                 )));
                             }
 
-                            if let Type::Struct(type_id) = object_ty {
-                                let udt = self.symbol_table.get_udt(type_id);
-                                if let UserDefinedType::Struct(struct_def) = udt {
-                                    if let Some((idx, (_fname, _ftype))) = struct_def
-                                        .fields
-                                        .iter()
-                                        .enumerate()
-                                        .find(|(_i, (fname, _))| fname == &field.name)
-                                    {
-                                        // Stack is now [object][value], as required by stfield
-                                        self.builder.stfield(idx as u32);
-                                        return Ok(Type::Primitive(PrimitiveType::Unit));
+                            // Handle both direct struct and boxed struct
+                            let struct_type_id = match &object_ty {
+                                Type::Struct(type_id) => *type_id,
+                                Type::BoxType(inner) => {
+                                    if let Type::Struct(type_id) = **inner {
+                                        type_id
                                     } else {
                                         return Err(SemanticError::TypeMismatch {
-                                            lhs: format!(
-                                                "Struct instance '{}: {}'",
-                                                object.get_name(),
-                                                struct_def.qualified_name
-                                            ),
-                                            rhs: format!(
-                                                "Unknown field '.{}' on struct",
-                                                field.name
-                                            ),
+                                            lhs: object_ty.to_string(),
+                                            rhs: "Struct or box<Struct>".to_string(),
                                             pos: Some(SourcePos {
                                                 line: field.line,
                                                 col: field.col,
                                             }),
                                         });
                                     }
-                                } else {
-                                    unimplemented!(
-                                        "Internal error: Type ID resolved to non-Struct UDT"
-                                    );
                                 }
-                            }
+                                _ => {
+                                    return Err(SemanticError::TypeMismatch {
+                                        lhs: object_ty.to_string(),
+                                        rhs: "Struct or box<Struct>".to_string(),
+                                        pos: Some(SourcePos {
+                                            line: field.line,
+                                            col: field.col,
+                                        }),
+                                    });
+                                }
+                            };
 
-                            return Err(SemanticError::TypeMismatch {
-                                lhs: object_ty.to_string(),
-                                rhs: "Struct instance".to_string(),
-                                pos: Some(SourcePos {
-                                    line: field.line,
-                                    col: field.col,
-                                }),
-                            });
+                            let udt = self.symbol_table.get_udt(struct_type_id);
+                            if let UserDefinedType::Struct(struct_def) = udt {
+                                if let Some((idx, (_fname, ftype))) = struct_def
+                                    .fields
+                                    .iter()
+                                    .enumerate()
+                                    .find(|(_i, (fname, _))| fname == &field.name)
+                                {
+                                    // Check type compatibility
+                                    if !self.types_compatible(&rhs_ty, ftype) {
+                                        return Err(SemanticError::TypeMismatch {
+                                            lhs: format!("field '{}' has type {}", field.name, ftype.to_string()),
+                                            rhs: format!("assigned value has type {}", rhs_ty.to_string()),
+                                            pos: Some(SourcePos {
+                                                line: field.line,
+                                                col: field.col,
+                                            }),
+                                        });
+                                    }
+                                    
+                                    // Stack is now [object][value], as required by stfield
+                                    self.builder.stfield(idx as u32);
+                                    return Ok(Type::Primitive(PrimitiveType::Unit));
+                                } else {
+                                    return Err(SemanticError::TypeMismatch {
+                                        lhs: format!(
+                                            "Struct instance '{}: {}'",
+                                            object.get_name(),
+                                            struct_def.qualified_name
+                                        ),
+                                        rhs: format!(
+                                            "Unknown field '.{}' on struct",
+                                            field.name
+                                        ),
+                                        pos: Some(SourcePos {
+                                            line: field.line,
+                                            col: field.col,
+                                        }),
+                                    });
+                                }
+                            } else {
+                                unimplemented!(
+                                    "Internal error: Type ID resolved to non-Struct UDT"
+                                );
+                            }
                         }
                         _ => {
-                            // Other lvalues (like indexing, deref) not supported yet.
+                            // Other lvalues (like indexing, box deref) not supported yet.
                             unimplemented!("assignment to this lvalue is not implemented");
                         }
                     }
@@ -2814,7 +2888,17 @@ impl Generator {
                     });
                 }
                 _ => {
-                    // Keep existing loose typing rules for non-ref parameters for now.
+                    // Check type compatibility for non-ref parameters
+                    if !self.types_compatible(&arg_ty, param_ty) {
+                        return Err(SemanticError::TypeMismatch {
+                            lhs: format!("argument type {}", arg_ty.to_string()),
+                            rhs: format!("parameter type {}", param_ty.to_string()),
+                            pos: Some(SourcePos {
+                                line: call_line,
+                                col: call_col,
+                            }),
+                        });
+                    }
                 }
             }
         }
@@ -2823,13 +2907,29 @@ impl Generator {
     }
 
     fn types_compatible(&self, actual: &Type, expected: &Type) -> bool {
-        actual == expected || {
-            // Handle references
-            match (actual, expected) {
-                (Type::Reference(a), Type::Reference(e)) => a == e,
-                _ => false,
-            }
+        // Direct equality
+        if actual == expected {
+            return true;
         }
+        
+        // Handle references
+        match (actual, expected) {
+            (Type::Reference(a), Type::Reference(e)) => {
+                return a == e;
+            }
+            _ => {}
+        }
+        
+        // Allow implicit int <-> float promotion (spec allows this for compatibility)
+        match (actual, expected) {
+            (Type::Primitive(PrimitiveType::Int), Type::Primitive(PrimitiveType::Float))
+            | (Type::Primitive(PrimitiveType::Float), Type::Primitive(PrimitiveType::Int)) => {
+                return true;
+            }
+            _ => {}
+        }
+        
+        false
     }
 
     fn get_semantic_type(&mut self, parsed_type: &ParsedType) -> SaResult<Type> {
