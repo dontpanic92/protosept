@@ -1,0 +1,40 @@
+// Test ref<P> with structs that have fields
+import test.test;
+
+// Define a protocol
+proto Measurable {
+  fn measure(self: ref<Measurable>) -> int;
+}
+
+// Struct with fields implementing the protocol
+struct[Measurable] Point(
+  x: int,
+  y: int,
+) {
+  pub fn measure(self: ref<Point>) -> int {
+    self.x + self.y
+  }
+}
+
+// Test: ref<P> can access methods that use fields
+@test(expected_type = "int", expected_value = "15")
+fn test_ref_proto_with_fields() -> int {
+  let p = Point(x = 7, y = 8);
+  let r = ref(p);
+  let m = r as ref<Measurable>;
+  m.measure()
+}
+
+// Test: Multiple casts with field access
+@test(expected_type = "int", expected_value = "42")
+fn test_ref_proto_multiple_casts() -> int {
+  let p1 = Point(x = 10, y = 20);
+  let r1 = ref(p1);
+  let m1 = r1 as ref<Measurable>;
+  
+  let p2 = Point(x = 5, y = 7);
+  let r2 = ref(p2);
+  let m2 = r2 as ref<Measurable>;
+  
+  m1.measure() + m2.measure()
+}

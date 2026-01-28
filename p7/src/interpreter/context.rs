@@ -443,9 +443,9 @@ impl Context {
                     self.stack.push(new_frame);
                 }
                 Instruction::Ldfield(field_idx) => {
-                    // Expect a StructRef or BoxRef on the stack; pop it and push the requested field value.
+                    // Expect a StructRef, BoxRef, or ProtoRefRef on the stack; pop it and push the requested field value.
                     if let Some(data) = self.stack_frame_mut()?.stack.pop() {
-                        // Resolve BoxRef to the underlying value (for ref(*box) support)
+                        // Resolve BoxRef/ProtoBoxRef/ProtoRefRef to the underlying value
                         let resolved_data = match &data {
                             Data::BoxRef(idx) | Data::ProtoBoxRef { box_idx: idx, .. } => {
                                 self.box_heap.get(*idx as usize)
@@ -453,6 +453,10 @@ impl Context {
                                     .ok_or_else(|| RuntimeError::Other(
                                         format!("Invalid box reference: {}", idx)
                                     ))?
+                            }
+                            Data::ProtoRefRef { ref_idx, .. } => {
+                                // ProtoRefRef points to heap location like StructRef
+                                Data::StructRef(*ref_idx)
                             }
                             other => other.clone(),
                         };
