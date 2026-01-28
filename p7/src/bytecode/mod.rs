@@ -1,5 +1,8 @@
 pub mod builder;
 pub mod codegen;
+mod helpers;
+mod type_check;
+mod monomorph;
 
 use binrw::{BinRead, binrw};
 
