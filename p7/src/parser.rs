@@ -646,18 +646,20 @@ impl Parser {
     fn parse_try_expression(&mut self) -> ParseResult<Expression> {
         self.consume_match(TokenType::Try)?;
         let try_block = self.parse_expression()?;
-        let else_block = if self.consume_match(TokenType::Else).is_ok() {
+        let else_arms = if self.consume_match(TokenType::Else).is_ok() {
             if self.consume_match(TokenType::OpenBrace).is_ok() {
-                let mut statements = vec![];
+                let mut arms = vec![];
                 loop {
-                    let named_pattern = self.parse_named_pattern()?;
-                    self.consume_match(TokenType::FatRightArrow)?;
+                    // Check if we've reached the end
+                    if self.consume_match(TokenType::CloseBrace).is_ok() {
+                        break;
+                    }
 
+                    let pattern = self.parse_named_pattern()?;
+                    self.consume_match(TokenType::FatRightArrow)?;
                     let expression = self.parse_expression()?;
-                    statements.push(Statement::Branch {
-                        named_pattern,
-                        expression,
-                    });
+
+                    arms.push(crate::ast::MatchArm { pattern, expression });
 
                     let ends_with_brace = self.ends_with_brace();
                     let comma = self.consume_match(TokenType::Comma);
@@ -669,18 +671,28 @@ impl Parser {
                         break;
                     }
                 }
-
-                Some(Box::new(Expression::Block(statements)))
+                arms
             } else {
-                Some(Box::new(self.parse_expression()?))
+                // Single expression else: `try expr else fallback`
+                // Treat as a wildcard arm that matches anything
+                let pattern = NamedPattern {
+                    name: None,
+                    pattern: Pattern::Identifier(Identifier {
+                        name: "_".to_string(),
+                        line: 0,
+                        col: 0,
+                    }),
+                };
+                let expression = self.parse_expression()?;
+                vec![crate::ast::MatchArm { pattern, expression }]
             }
         } else {
-            None
+            vec![]
         };
 
         Ok(Expression::Try {
             try_block: Box::new(try_block),
-            else_block,
+            else_arms,
         })
     }
 

@@ -136,7 +136,7 @@ pub enum Expression {
     Block(StatementBlock),
     Try {
         try_block: Box<Expression>,
-        else_block: Option<Box<Expression>>,
+        else_arms: Vec<MatchArm>,
     },
     Match {
         scrutinee: Box<Expression>,
@@ -247,10 +247,6 @@ pub enum Statement {
         name: Identifier,
         attributes: Vec<Attribute>,
         methods: Vec<ProtoMethod>,
-    },
-    Branch {
-        named_pattern: NamedPattern,
-        expression: Expression,
     },
     Return(Box<Expression>),
     Import {

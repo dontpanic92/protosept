@@ -1229,16 +1229,60 @@ If `expr` throws, the thrown enum value is propagated out of the current functio
 
 2) Handle:
 - `try expr else fallback_expr`
-- or `try expr else { cases }` (match-like handler) [[TODO]] specify patterns
+- `try expr else { arms }`
+
+**Simple handler form** (`try expr else fallback_expr`):
+- If `expr` throws any error, `fallback_expr` is evaluated and becomes the result.
+- The thrown value is discarded (not bound to any variable).
+
+**Pattern-matching handler form** (`try expr else { arms }`):
+- Arms use the same syntax as `match` arms (§9.6).
+- The thrown enum value is the scrutinee for pattern matching.
+- Arms are tried in source order; the first matching arm's expression becomes the result.
+
+Syntax:
+```p7
+try expr else {
+  pattern1 => expr1,
+  pattern2 => expr2,
+  _ => fallback_expr,
+}
+```
+
+Example:
+```p7
+enum FileError(
+  NotFound,
+  PermissionDenied,
+);
+
+fn read_file(path: string) -> string throws<FileError> { ... }
+
+fn safe_read(path: string) -> string {
+  try read_file(path) else {
+    err: FileError.NotFound => "",
+    err: FileError.PermissionDenied => "[access denied]",
+  }
+}
+```
+
+Arm patterns follow the same rules as `match` (§9.6.1):
+- **Wildcard**: `_` matches any thrown value.
+- **Path patterns**: `EnumName.VariantName` matches a specific enum variant (unit variants only in v1).
+- **Named binding**: `name: pattern` binds `name` to the thrown value when the arm matches.
 
 Rules:
 - If `expr` completes normally, its value is the result.
 - If `expr` throws:
   - in propagate form: current function evaluation aborts and the thrown value is propagated;
-  - in handle form: the `else` branch value is the result.
+  - in handle form: the `else` branch (or matching arm) value is the result.
 
 Type rule:
-- Handle form: normal and else results MUST have identical type in v1.
+- Handle form: normal result and all else arm results MUST have identical type in v1.
+
+Exhaustiveness:
+- The pattern-matching handler form MUST be exhaustive (same as `match`, §9.6.4).
+- Include a wildcard arm `_ => ...` to handle all error variants.
 
 ### 14.3 Calling `throws` functions (explicitness rule)
 
@@ -1852,14 +1896,10 @@ If both extensions enabled:
 ## 23. Open items / TODO list (curated)
 
 1) String concatenation spelling, slicing APIs
-2) Box deref semantics for non-Copy inner `T` (confirm ERROR vs read-only rule) (§7.1/§7.4)
-3) Box surface syntax details (`*b =`, `replace`, auto-deref and view-taking) (§7.4)
-4) Boxed array mutation API surface and semantics (§3.3.3)
-5) Enum payload variants and how enum opt-in conformances work (Copy-treated gating, etc.) (§13, §6.3)
-6) Pattern syntax for `try ... else { ... }` handlers (§14.2)
-7) Coercion sites and cast spelling for `box<T> -> box<P>` (§18.5)
-8) Enablement mechanisms for extensions (§21, §22)
-9) Host ABI: concrete API surfaces for calling, fibers, threads (§17, §21.4, §22)
+2) Boxed array mutation API surface and semantics (§3.3.3)
+3) Coercion sites and cast spelling for `box<T> -> box<P>` (§18.5)
+4) Enablement mechanisms for extensions (§21, §22)
+5) Host ABI: concrete API surfaces for calling, fibers, threads (§17, §21.4, §22)
 
 ---
 End.

@@ -1,7 +1,7 @@
 use crate::errors::SourcePos;
 use crate::{
     ast::{
-        Expression, FunctionCall, FunctionDeclaration, Identifier, Pattern, Statement,
+        Expression, FunctionCall, FunctionDeclaration, Identifier, MatchArm, Pattern, Statement,
         Type as ParsedType,
     },
     bytecode::{builder::ByteCodeBuilder, Instruction},
@@ -164,34 +164,9 @@ impl Generator {
 
         let mut ty = Type::Primitive(PrimitiveType::Unit);
 
-        // Check if this block contains Branch statements (pattern matching)
-        let has_branches = statements
-            .iter()
-            .any(|s| matches!(s, Statement::Branch { .. }));
-
-        if has_branches {
-            // Special handling for blocks with pattern matching branches
-            let mut end_jumps = Vec::new();
-
-            for statement in statements {
-                if let Statement::Branch { .. } = statement {
-                    // Generate the branch, collecting end jump addresses
-                    ty = self.generate_branch_statement(statement, &mut end_jumps)?;
-                } else {
-                    ty = self.generate_statement(statement)?;
-                }
-            }
-
-            // Patch all end jumps to point here
-            let end_address = self.builder.next_address();
-            for jump_address in end_jumps {
-                self.builder.patch_jump_address(jump_address, end_address);
-            }
-        } else {
-            // Normal block handling
-            for statement in statements {
-                ty = self.generate_statement(statement)?;
-            }
+        // Normal block handling
+        for statement in statements {
+            ty = self.generate_statement(statement)?;
         }
 
         self.local_scope.as_mut().unwrap().pop_scope();
@@ -216,127 +191,74 @@ impl Generator {
         }
     }
 
-    fn generate_branch_statement(
+    /// Generate pattern matching code for a list of match arms.
+    /// The scrutinee value should already be on the stack.
+    fn generate_pattern_matching(
         &mut self,
-        statement: Statement,
-        end_jumps: &mut Vec<u32>,
+        arms: &[MatchArm],
+        scrutinee_ty: Type,
     ) -> SaResult<Type> {
-        if let Statement::Branch {
-            named_pattern,
-            expression,
-        } = statement
-        {
-            // The exception value is on top of the stack (already unwrapped)
+        // Track jump addresses for all arms to jump to end
+        let mut end_jumps = Vec::new();
+        let mut result_ty = None;
 
-            match &named_pattern.pattern {
-                Pattern::FieldAccess { object, field } => {
-                    // Enum variant pattern like "SomeErrors.NumberIsNot42"
+        for (i, arm) in arms.iter().enumerate() {
+            let is_last_arm = i == arms.len() - 1;
 
-                    // Duplicate the exception value for comparison
-                    self.builder.dup();
+            // Check if this is a wildcard pattern
+            if !arm.pattern.pattern.is_wildcard() {
+                // Non-wildcard pattern: need to compare
+                self.builder.dup();
 
-                    // Generate code to load the enum variant index
-                    let pattern_expr = self.pattern_to_expression(&named_pattern.pattern)?;
-                    self.generate_expression(pattern_expr)?;
+                // Generate code to load the pattern value
+                let pattern_expr = self.pattern_to_expression(&arm.pattern.pattern)?;
+                self.generate_expression(pattern_expr)?;
 
-                    // Compare: are they equal?
-                    self.builder.eq();
+                // Compare: are they equal?
+                self.builder.eq();
 
-                    // Negate the result: 1 if not equal, 0 if equal
-                    self.builder.not();
+                // Negate the result: 1 if not equal, 0 if equal
+                self.builder.not();
 
-                    // If not equal (result is 1 after not), jump to next branch
-                    let no_match_jump_placeholder = self.builder.next_address();
-                    self.builder.jif(0); // Placeholder
+                // If not equal (result is 1 after not), jump to next arm
+                let no_match_jump_placeholder = self.builder.next_address();
+                self.builder.jif(0); // Placeholder
 
-                    // Pattern matched!
-                    // Bind to variable if there's a name
-                    if let Some(name) = &named_pattern.name {
-                        let var_id = self
-                            .local_scope
-                            .as_mut()
-                            .unwrap()
-                            .add_variable(name.name.clone(), Type::Primitive(PrimitiveType::Int))
-                            .map_err(|_| SemanticError::VariableOutsideFunction {
-                                name: name.name.clone(),
-                                pos: Some(SourcePos {
-                                    line: name.line,
-                                    col: name.col,
-                                }),
-                            })?;
-                        self.builder.stvar(var_id);
-                    } else {
-                        // No name binding, pop the exception value
-                        self.builder.pop();
-                    }
+                // Pattern matched! Bind to variable if there's a name
+                self.bind_pattern_variable(&arm.pattern.name, scrutinee_ty.clone())?;
 
-                    // Generate the expression for this branch
-                    let expr_type = self.generate_expression(expression)?;
+                // Generate the expression for this arm
+                let arm_ty = self.generate_expression(arm.expression.clone())?;
+                self.validate_match_arm_type(&mut result_ty, arm_ty)?;
 
-                    // Jump to end of all branches
+                // Jump to end of all arms (unless this is the last arm)
+                if !is_last_arm {
                     let end_jump_address = self.builder.next_address();
                     self.builder.jmp(0); // Placeholder
                     end_jumps.push(end_jump_address);
-
-                    // Patch the no-match jump to point here (next branch)
-                    let next_branch_address = self.builder.next_address();
-                    self.builder
-                        .patch_jump_address(no_match_jump_placeholder, next_branch_address);
-
-                    Ok(expr_type)
                 }
-                Pattern::Identifier(identifier) => {
-                    // Wildcard pattern (_) - matches everything
-                    // This is typically the last branch, no jump needed
 
-                    // Bind to variable if named
-                    if identifier.name == "_" {
-                        // Wildcard, just pop the exception value if not bound
-                        if named_pattern.name.is_none() {
-                            self.builder.pop();
-                        }
-                    }
+                // Patch the no-match jump to point here (next arm)
+                let next_arm_address = self.builder.next_address();
+                self.builder
+                    .patch_jump_address(no_match_jump_placeholder, next_arm_address);
+            } else {
+                // Wildcard pattern - matches everything
+                self.bind_pattern_variable(&arm.pattern.name, scrutinee_ty.clone())?;
 
-                    if let Some(name) = &named_pattern.name {
-                        let var_id = self
-                            .local_scope
-                            .as_mut()
-                            .unwrap()
-                            .add_variable(name.name.clone(), Type::Primitive(PrimitiveType::Int))
-                            .map_err(|_| SemanticError::VariableOutsideFunction {
-                                name: name.name.clone(),
-                                pos: Some(SourcePos {
-                                    line: name.line,
-                                    col: name.col,
-                                }),
-                            })?;
-                        self.builder.stvar(var_id);
-                    } else if identifier.name != "_" {
-                        // Not a wildcard and not a named binding - this is an error in the pattern
-                        return Err(SemanticError::Other(format!(
-                            "Identifier pattern '{}' must be '_' or bound to a name",
-                            identifier.name
-                        )));
-                    }
-
-                    // Generate the expression
-                    let expr_type = self.generate_expression(expression)?;
-
-                    Ok(expr_type)
-                }
-                Pattern::IntegerLiteral(_)
-                | Pattern::FloatLiteral(_)
-                | Pattern::StringLiteral(_)
-                | Pattern::BooleanLiteral(_) => {
-                    return Err(SemanticError::Other(
-                        "Pattern matching for literal patterns not yet implemented".to_string(),
-                    ));
-                }
+                // Generate the expression for this arm
+                let arm_ty = self.generate_expression(arm.expression.clone())?;
+                self.validate_match_arm_type(&mut result_ty, arm_ty)?;
             }
-        } else {
-            // Not a branch statement, use regular handling
-            self.generate_statement(statement)
         }
+
+        // Patch all end jumps to point here
+        let end_address = self.builder.next_address();
+        for jump_address in end_jumps {
+            self.builder.patch_jump_address(jump_address, end_address);
+        }
+
+        Ok(result_ty.unwrap_or(Type::Primitive(PrimitiveType::Unit)))
     }
 
     fn generate_statement(&mut self, statement: Statement) -> SaResult<Type> {
@@ -635,17 +557,6 @@ impl Generator {
                 let _ = is_pub;
 
                 Ok(Type::Primitive(PrimitiveType::Unit))
-            }
-            Statement::Branch {
-                named_pattern,
-                expression,
-            } => {
-                // Branch statements should be handled by generate_branch_statement
-                // when they appear in a pattern matching context.
-                // If we reach here, it's an error - branches should only appear in try-else blocks
-                return Err(SemanticError::Other(
-                    "Branch statements can only appear in try-else blocks".to_string(),
-                ));
             }
             Statement::Return(expression) => {
                 // Check if this expression involves a move (before consuming it)
@@ -1441,18 +1352,18 @@ impl Generator {
             Expression::Block(statements) => self.generate_block(statements, vec![]),
             Expression::Try {
                 try_block,
-                else_block,
+                else_arms,
             } => {
                 // Generate the try block expression
                 let ty = self.generate_expression(*try_block)?;
 
-                if let Some(else_block) = else_block {
+                if !else_arms.is_empty() {
                     // After try_block, check if result is an exception
-                    // If exception, jump to else_block handler
+                    // If exception, jump to else_arms handler
                     let check_exception_placeholder = self.builder.next_address();
                     self.builder.check_exception(0); // Placeholder address
 
-                    // Normal path: no exception, jump over else block
+                    // Normal path: no exception, jump over else arms
                     let jump_over_else_placeholder = self.builder.next_address();
                     self.builder.jmp(0); // Placeholder address
 
@@ -1461,35 +1372,20 @@ impl Generator {
                     self.builder
                         .patch_jump_address(check_exception_placeholder, else_block_address);
 
-                    // Unwrap the exception value for the else block to use
+                    // Unwrap the exception value for pattern matching
                     self.builder.unwrap_exception();
 
-                    // Check if else_block has pattern matching (Branch statements)
-                    let has_pattern_matching =
-                        if let Expression::Block(statements) = else_block.as_ref() {
-                            statements
-                                .iter()
-                                .any(|s| matches!(s, Statement::Branch { .. }))
-                        } else {
-                            false
-                        };
-
-                    // If no pattern matching, pop the exception value since we won't use it
-                    if !has_pattern_matching {
-                        self.builder.pop();
-                    }
-
-                    // Generate the else block (which may contain Statement::Branch for pattern matching)
-                    self.generate_expression(*else_block)?;
+                    // Use shared pattern matching logic (exception value is on stack as scrutinee)
+                    // For now, use int type for exception values (enum variant index)
+                    let exception_ty = Type::Primitive(PrimitiveType::Int);
+                    self.generate_pattern_matching(&else_arms, exception_ty)?;
 
                     // End of exception handler
                     let end_address = self.builder.next_address();
                     self.builder
                         .patch_jump_address(jump_over_else_placeholder, end_address);
-                } else {
-                    // No else block - if there's an exception, it propagates
-                    // The exception is already on the stack, so it will return to caller
                 }
+                // If no else_arms - exception propagates automatically
 
                 Ok(ty)
             }
@@ -1497,67 +1393,8 @@ impl Generator {
                 // Generate the scrutinee expression and keep it on stack
                 let scrutinee_ty = self.generate_expression(*scrutinee)?;
 
-                // Track jump addresses for all arms to jump to end
-                let mut end_jumps = Vec::new();
-                let mut result_ty = None;
-
-                for (i, arm) in arms.iter().enumerate() {
-                    let is_last_arm = i == arms.len() - 1;
-
-                    // Check if this is a wildcard pattern
-                    if !arm.pattern.pattern.is_wildcard() {
-                        // Non-wildcard pattern: need to compare
-                        self.builder.dup();
-
-                        // Generate code to load the pattern value
-                        let pattern_expr = self.pattern_to_expression(&arm.pattern.pattern)?;
-                        self.generate_expression(pattern_expr)?;
-
-                        // Compare: are they equal?
-                        self.builder.eq();
-
-                        // Negate the result: 1 if not equal, 0 if equal
-                        self.builder.not();
-
-                        // If not equal (result is 1 after not), jump to next arm
-                        let no_match_jump_placeholder = self.builder.next_address();
-                        self.builder.jif(0); // Placeholder
-
-                        // Pattern matched! Bind to variable if there's a name
-                        self.bind_pattern_variable(&arm.pattern.name, scrutinee_ty.clone())?;
-
-                        // Generate the expression for this arm
-                        let arm_ty = self.generate_expression(arm.expression.clone())?;
-                        self.validate_match_arm_type(&mut result_ty, arm_ty)?;
-
-                        // Jump to end of all arms (unless this is the last arm)
-                        if !is_last_arm {
-                            let end_jump_address = self.builder.next_address();
-                            self.builder.jmp(0); // Placeholder
-                            end_jumps.push(end_jump_address);
-                        }
-
-                        // Patch the no-match jump to point here (next arm)
-                        let next_arm_address = self.builder.next_address();
-                        self.builder
-                            .patch_jump_address(no_match_jump_placeholder, next_arm_address);
-                    } else {
-                        // Wildcard pattern - matches everything
-                        self.bind_pattern_variable(&arm.pattern.name, scrutinee_ty.clone())?;
-
-                        // Generate the expression for this arm
-                        let arm_ty = self.generate_expression(arm.expression.clone())?;
-                        self.validate_match_arm_type(&mut result_ty, arm_ty)?;
-                    }
-                }
-
-                // Patch all end jumps to point here
-                let end_address = self.builder.next_address();
-                for jump_address in end_jumps {
-                    self.builder.patch_jump_address(jump_address, end_address);
-                }
-
-                Ok(result_ty.unwrap_or(Type::Primitive(PrimitiveType::Unit)))
+                // Use shared pattern matching logic
+                self.generate_pattern_matching(&arms, scrutinee_ty)
             }
             Expression::BlockValue(expression) => {
                 let ty = self.generate_expression(*expression)?;
