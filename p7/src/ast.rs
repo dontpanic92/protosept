@@ -29,7 +29,7 @@ impl Type {
         match self {
             Type::Identifier(identifier) => identifier.name.clone(),
             Type::Reference(r) => {
-                format!("ref {}", r.get_name())
+                format!("ref<{}>", r.get_name())
             }
             Type::Array(a) => {
                 format!("{}[]", a.get_name())
@@ -148,7 +148,7 @@ pub enum Expression {
         type_args: Vec<Type>,
     },
 
-    Ref(Identifier),
+    Ref(Box<Expression>),
 
     BlockValue(Box<Expression>),
     
@@ -263,7 +263,7 @@ impl Expression {
             Expression::FieldAccess { object, field } => {
                 format!("{}.{}", object.get_name(), field.name)
             }
-            Expression::Ref(identifier) => format!("ref {}", identifier.name),
+            Expression::Ref(expr) => format!("ref({})", expr.get_name()),
             Expression::GenericInstantiation { base, type_args } => {
                 let args = type_args
                     .iter()
@@ -288,7 +288,7 @@ impl Expression {
             Expression::Identifier(identifier) => (identifier.line, identifier.col),
             Expression::FunctionCall(function_call) => function_call.callee.get_pos(),
             Expression::FieldAccess { object: _, field } => (field.line, field.col),
-            Expression::Ref(identifier) => (identifier.line, identifier.col),
+            Expression::Ref(expr) => expr.get_pos(),
             Expression::GenericInstantiation { base, .. } => (base.line, base.col),
             Expression::Cast { expression, .. } => expression.get_pos(),
             Expression::Loop { pos, .. } => *pos,

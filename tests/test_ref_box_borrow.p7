@@ -1,0 +1,38 @@
+// Test borrowing boxed contents using ref(*b)
+// According to spec section 7.4: ref(*b) produces a ref<T> view of boxed contents
+// Permitted for ANY T, including non-Copy-treated types
+
+import test.test;
+
+// Test 1: ref(*b) with struct (non-Copy type) - member access
+struct Point(x: int, y: int);
+
+@test(expected_type = "int", expected_value = "5")
+fn test_ref_box_non_copy_struct() -> int {
+    let p = Point(x = 5, y = 10);
+    let b = box(p);
+    let r = ref(*b);
+    r.x
+}
+
+// Test 2: ref(*b) passed to function expecting ref<Struct>
+fn get_x(p: ref<Point>) -> int {
+    p.x
+}
+
+@test(expected_type = "int", expected_value = "7")
+fn test_ref_box_non_copy_to_function() -> int {
+    let p = Point(x = 7, y = 14);
+    let b = box(p);
+    get_x(ref(*b))
+}
+
+// Test 3: Member access on ref(*b)
+@test(expected_type = "int", expected_value = "20")
+fn test_ref_box_member_access() -> int {
+    let p = Point(x = 20, y = 30);
+    let b = box(p);
+    let r = ref(*b);
+    r.x
+}
+

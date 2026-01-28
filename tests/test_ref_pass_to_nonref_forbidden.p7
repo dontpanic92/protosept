@@ -3,5 +3,5 @@ fn g(x: float) -> float { x }
 
 fn test() -> float {
     let a = 1.1;
-    g(ref a)
+    g(ref(a))
 }

@@ -173,14 +173,14 @@ impl Type {
 
     /// Check if this type is "copy-treated" according to the spec (§6.3):
     /// - Primitives (int, float, bool, char, string, unit) are copy-treated
-    /// - ref T is copy-treated (view/handle copy)
+    /// - ref<T> is copy-treated (view/handle copy)
     /// - box<T> is copy-treated (handle copy)
     /// - User-defined structs/enums are copy-treated ONLY if they conform to Copy proto
     pub fn is_copy_treated(&self, symbol_table: &SymbolTable) -> bool {
         match self {
             // All primitives are copy-treated by default
             Type::Primitive(_) => true,
-            // ref T and box<T> are copy-treated (handle/view copy)
+            // ref<T> and box<T> are copy-treated (handle/view copy)
             Type::Reference(_) | Type::BoxType(_) => true,
             // User-defined structs: check for Copy proto conformance
             Type::Struct(type_id) => {
@@ -269,7 +269,7 @@ impl ToString for Type {
                 PrimitiveType::String => "string".to_string(),
                 PrimitiveType::Unit => "unit".to_string(),
             },
-            Type::Reference(r) => format!("ref {}", r.to_string()),
+            Type::Reference(r) => format!("ref<{}>", r.to_string()),
             Type::Array(a) => format!("[{}]", a.to_string()),
             Type::BoxType(b) => format!("box<{}>", b.to_string()),
             Type::Function(f) => format!("function({})", f.to_string()),

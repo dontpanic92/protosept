@@ -820,7 +820,7 @@ impl Generator {
                         Ok(ty)
                     }
                     TokenType::Multiply => {
-                        // `*r` where `r: ref T` yields a `T`. No runtime op yet.
+                        // `*r` where `r: ref<T>` yields a `T`. No runtime op yet.
                         // `*b` where `b: box<T>` yields a `T` (only for primitive T).
                         if let Type::Reference(inner) = ty {
                             Ok(*inner)
@@ -853,48 +853,35 @@ impl Generator {
                     _ => unimplemented!(),
                 }
             }
-            Expression::Ref(identifier) => {
-                // `ref x` produces a `ref T` typed value (view).
-                // Lowering is currently just loading the underlying slot value.
-                if let Some(var_id) = self
-                    .local_scope
-                    .as_mut()
-                    .unwrap()
-                    .find_variable(&identifier.name)
-                {
-                    self.builder.ldvar(var_id);
-                    let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
-                    if matches!(ty, Type::Reference(_)) {
-                        return Err(SemanticError::Other(format!(
-                            "Cannot take ref of ref '{}'",
-                            identifier.name
-                        )));
+            Expression::Ref(expr) => {
+                // `ref(place)` produces a `ref<T>` typed value (view).
+                // The place expression must be an addressable location.
+                
+                // Special case: ref(*b) where b is a box
+                // According to spec, ref(*b) is allowed for ANY T, including non-Copy types
+                if let Expression::Unary { operator, right } = expr.as_ref() {
+                    if operator.token_type == TokenType::Multiply {
+                        // This is ref(*expr), check if expr is a box
+                        let inner_ty = self.generate_expression((**right).clone())?;
+                        if let Type::BoxType(boxed_inner) = inner_ty {
+                            // ref(*b) where b: box<T> produces ref<T>
+                            // We keep the box on the stack, and the type system tracks it as ref<T>
+                            return Ok(Type::Reference(boxed_inner));
+                        }
                     }
-                    Ok(Type::Reference(Box::new(ty)))
-                } else if let Some(param_id) = self
-                    .local_scope
-                    .as_mut()
-                    .unwrap()
-                    .find_param(&identifier.name)
-                {
-                    self.builder.ldpar(param_id);
-                    let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
-                    if matches!(ty, Type::Reference(_)) {
-                        return Err(SemanticError::Other(format!(
-                            "Cannot take ref of ref parameter '{}'",
-                            identifier.name
-                        )));
-                    }
-                    Ok(Type::Reference(Box::new(ty)))
-                } else {
-                    Err(SemanticError::VariableNotFound {
-                        name: identifier.name,
-                        pos: Some(SourcePos {
-                            line: identifier.line,
-                            col: identifier.col,
-                        }),
-                    })
                 }
+                
+                // Default case: evaluate the expression and wrap in Reference
+                let ty = self.generate_expression((*expr).clone())?;
+                
+                // Check that we're not creating a ref of ref
+                if matches!(ty, Type::Reference(_)) {
+                    return Err(SemanticError::Other(format!(
+                        "Cannot take ref of ref"
+                    )));
+                }
+                
+                Ok(Type::Reference(Box::new(ty)))
             }
             Expression::Binary {
                 left,
@@ -3441,7 +3428,7 @@ impl Generator {
                 // Special handling for first parameter (self) which should be ref to the type/proto type
                 for (i, (expected_type, actual_type)) in param_types.iter().zip(method_params.iter()).enumerate() {
                     // For the first parameter (self), check if both are reference types
-                    // The proto has `self: ref Proto` and the type has `self: ref Type`
+                    // The proto has `self: ref<Proto>` and the type has `self: ref<Type>`
                     // These should be considered compatible for conformance checking
                     if i == 0 {
                         let proto_is_ref_to_proto = matches!(expected_type, Type::Reference(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id));
