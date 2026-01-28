@@ -4,7 +4,6 @@ use crate::{
         Expression, FunctionCall, FunctionDeclaration, Identifier, MatchArm, Statement,
     },
     bytecode::{builder::ByteCodeBuilder, Instruction},
-    lexer::TokenType,
     semantic::{
         Enum, Function, LocalSymbolScope, PrimitiveType, Proto, Struct, Symbol, SymbolKind,
         SymbolTable, Type, TypeId, UserDefinedType, Variable,

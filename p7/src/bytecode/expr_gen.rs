@@ -1,13 +1,13 @@
 use crate::errors::SourcePos;
 use crate::{
-    ast::{Expression, FunctionCall, Identifier},
+    ast::{Expression},
     bytecode::Instruction,
     lexer::TokenType,
-    semantic::{Enum, Function, PrimitiveType, Proto, Struct, Symbol, SymbolKind, Type, TypeId, UserDefinedType},
+    semantic::{PrimitiveType, Type, UserDefinedType},
 };
 use crate::errors::SemanticError;
 
-use super::codegen::{Generator, LoopContext, SaResult, SYNTHETIC_LINE, SYNTHETIC_COL};
+use super::codegen::{Generator, LoopContext, SaResult};
 
 impl Generator {
     pub(super) fn generate_expression(&mut self, expression: Expression) -> SaResult<Type> {

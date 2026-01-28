@@ -1,8 +1,7 @@
 use crate::errors::SourcePos;
 use crate::{
-    ast::{Expression, Identifier, MatchArm, Statement},
-    lexer::TokenType,
-    semantic::{Enum, PrimitiveType, Proto, Struct, Symbol, SymbolKind, Type, UserDefinedType, Variable},
+    ast::{Expression, Statement},
+    semantic::{Enum, PrimitiveType, Proto, Struct, Symbol, SymbolKind, Type, UserDefinedType},
 };
 use crate::errors::SemanticError;
 
