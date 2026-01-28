@@ -199,7 +199,7 @@ Types in v1:
 - Primitive: `int`, `float`, `bool`, `char`, `unit`
 - Built-in value types: `string`, `array<T>`, tuples `(T1, T2, ...)`
 - Nullability: `?T`
-- Borrowed view: `ref T`
+- Borrowed view: `ref<T>`
 - Owned heap handle: `box<T>`
 - User-defined: `struct Name(...)`, `enum Name(...)`, `proto Name { ... }`
 - Compile-time generics: `T`, `array<T>`, `box<T>`, etc. (§19)
@@ -361,14 +361,14 @@ let y = p.1;  // y has type string, value "test"
 
 ---
 
-## 3.6 Borrowed view types: `ref T`
+## 3.6 Borrowed view types: `ref<T>`
 
-`ref T` is a **read-only view** of an existing addressable location that holds a `T` (§7).
+`ref<T>` is a **read-only view** of an existing addressable location that holds a `T` (§7).
 
-- `ref T` values are **Copy-treated** (copying a `ref T` copies the view/handle; it does not copy the underlying `T`).
-- `ref T` values are **non-escapable** (§7.3).
+- `ref<T>` values are **Copy-treated** (copying a `ref<T>` copies the view/handle; it does not copy the underlying `T`).
+- `ref<T>` values are **non-escapable** (§7.3).
 
-`ref ?T` is permitted and means a view of a nullable location.
+`ref<?T>` is permitted and means a view of a nullable location.
 
 ---
 
@@ -501,7 +501,7 @@ Copy-eligible (structural `T: Copy`) in v1:
 - Primitives: `int`, `float`, `bool`, `char`, `unit`
 - `string`
 - `box<T>` (handle copy)
-- `ref T` (view/handle copy)
+- `ref<T>` (view/handle copy)
 - `?T` iff `T` is Copy-eligible
 - `array<T>` iff `T` is Copy-eligible
 - `struct` iff all fields are Copy-eligible
@@ -511,7 +511,7 @@ Copy-treated by default in v1:
 - Primitives
 - `string`
 - `box<T>`
-- `ref T`
+- `ref<T>`
 - `?T` iff `T` is Copy-treated (by composition)
 - User-defined `struct` types are Copy-treated **only if** they opt in via `struct[Copy] ...`.
 - User-defined `enum` types are Copy-treated **only if** they opt in via `enum[Copy] ...` 
@@ -542,25 +542,25 @@ Send-eligible in v1:
 
 Not Send-eligible:
 - `box<T>`
-- `ref T`
-- Any type transitively containing `box<...>` or `ref ...`
+- `ref<T>`
+- Any type transitively containing `box<...>` or `ref<...>`
 
 `Send` is primarily used by the Threading extension (§22), but is always available in the core language.
 
 ---
 
-## 7. Borrowed views (`ref T`) and boxes (`box<T>`)
+## 7. Borrowed views (`ref<T>`) and boxes (`box<T>`)
 
-### 7.1 Meaning of `ref T`
+### 7.1 Meaning of `ref<T>`
 
-A value of type `ref T` is a read-only view of an addressable location holding a `T`.
+A value of type `ref<T>` is a read-only view of an addressable location holding a `T`.
 
 - Dereference: `*r` reads the current value of the referent location.
 - Read semantics: `*r` yields a value of type `T`:
   - if `T` is Copy-treated, `*r` yields a copy;
   - otherwise, `*r` causes an ERROR.
 
-**Operations on `ref T` values:**
+**Operations on `ref<T>` values:**
 
 - Member access (`r.field`) and method calls (`r.method(...)`) are permitted without copying `T`:
   - These operations access the referent location directly.
@@ -568,16 +568,16 @@ A value of type `ref T` is a read-only view of an addressable location holding a
 
 ### 7.2 Taking views
 
-`ref x` produces a `ref T` when `x` is an addressable location of type `T`.
+`ref(place)` produces a `ref<T>` when `place` is an addressable location of type `T`.
 
 In v1, borrowing is always explicit:
-- There is no implicit borrowing at call sites.
+- There is no implicit borrowing at call sites (except for method-call auto-borrow sugar; see §11.3.1).
 
 ### 7.3 Non-escapable rule (hard rule in v1)
 
-Values of type `ref T` MUST NOT escape their scope.
+Values of type `ref<T>` MUST NOT escape their scope.
 
-A `ref T` value MUST NOT be:
+A `ref<T>` value MUST NOT be:
 - returned from a function
 - stored into a struct field
 - stored into an array element
@@ -587,14 +587,14 @@ A `ref T` value MUST NOT be:
 - passed across host interop boundaries as a persistent value
 
 Consequences:
-- User-defined types MUST NOT contain `ref ...` fields.
-- `array<ref T>` is ERROR.
+- User-defined types MUST NOT contain `ref<...>` fields.
+- `array<ref<T>>` is ERROR.
 
 **Example (ref cannot be stored in heap):**
 ```p7
 let x = 42;
-let r = ref x;
-let b = box(r);  // ERROR: cannot store ref T in box<...>
+let r = ref(x);
+let b = box(r);  // ERROR: cannot store ref<T> in box<...>
 ```
 
 ### 7.4 Meaning and operations of `box<T>`
@@ -619,10 +619,10 @@ Operations (surface syntax v1):
   - Writes `new_value` into the box and returns the previous value.
   - This is the way to extract non-Copy values from a box without leaving it uninitialized.
 
-- **Borrowing boxed contents**: `ref *b`
-  - Produces a `ref T` view of the boxed contents.
+- **Borrowing boxed contents**: `ref(*b)`
+  - Produces a `ref<T>` view of the boxed contents.
   - Permitted for **any** `T`, including non-Copy-treated types.
-  - The resulting `ref T` follows all `ref` rules (§7.1, §7.3).
+  - The resulting `ref<T>` follows all `ref<...>` rules (§7.1, §7.3).
 
 - Member auto-deref:
   - `b.field`, `b.method(...)` act as if on the inner `T`.
@@ -716,7 +716,6 @@ Operator precedence (highest to lowest):
 - Force unwrap: postfix `!`
 
 2) Prefix unary
-- `ref` (borrow)
 - `*` (deref)
 - Unary `-`, unary `+`
 - Logical NOT: `!`
@@ -987,11 +986,32 @@ effect_qualifier := 'throws' | 'throws' '<' enum_type '>'
 
 At call sites, argument passing uses the value-flow rule (§6.1).
 
-For `ref T` parameters:
-- Caller MUST pass an addressable location explicitly with `ref`:
-  - `f(ref x)`.
+For `ref<T>` parameters:
+- Caller MUST pass an addressable location explicitly with `ref(...)`:
+  - `f(ref(x))`.
 
 Mutation requires `box<T>` parameters.
+
+#### 11.3.1 Method-call auto-borrow sugar for `ref self` receivers
+
+For method calls only, p7 provides auto-borrow sugar when the method has a `ref self` receiver:
+
+**Sugar rules:**
+
+- `recv.method(args...)` where `method` has a `ref self` receiver desugars as follows:
+  - If `recv` has type `Self` and is an addressable location: desugars to `Type.method(ref(recv), args...)`.
+  - If `recv` has type `box<Self>`: desugars to `Type.method(ref(*recv), args...)`. The receiver `recv` may be any value (including temporaries), as the borrow is taken of the dereferenced contents `*recv`.
+  - If `recv` already has type `ref<Self>`: it is passed directly to the `ref self` parameter without desugaring.
+  - The receiver is evaluated exactly once.
+
+**Restrictions:**
+
+- Applies only to methods with `ref self` receivers; does NOT apply to free functions with `ref<T>` parameters.
+- When the receiver has type `Self`, it MUST be an addressable location; borrowing of temporaries is not permitted.
+
+**Rationale:**
+
+This sugar reduces ceremony at method call sites while maintaining explicit borrowing for free function calls, providing ergonomics where method chaining and fluent APIs are common.
 
 ### 11.4 Method receivers (v1)
 
@@ -1003,9 +1023,10 @@ Methods on structs, enums, and protos may declare a receiver parameter. The rece
    - Type: `Self` (the declaring type).
    - Passes ownership; subject to value-flow rules (§6.1).
 
-2. `self: ref Self` or shorthand `ref self` – borrowed receiver:
-   - Type: `ref Self`.
+2. `self: ref<Self>` or shorthand `ref self` – borrowed receiver:
+   - Type: `ref<Self>`.
    - Caller passes a read-only view of an addressable location.
+   - Method-call syntax automatically applies the auto-borrow sugar (§11.3.1).
 
 3. `self: box<Self>` or shorthand `box self` – boxed receiver:
    - Type: `box<Self>`.
@@ -1016,9 +1037,9 @@ Methods on structs, enums, and protos may declare a receiver parameter. The rece
 **Rules:**
 
 - The receiver is the first parameter; it is written before other parameters without a trailing comma.
-- No implicit boxing or borrowing occurs to satisfy a receiver:
+- No implicit boxing occurs to satisfy a receiver:
   - A method with `self: box<Self>` requires the caller to have `box<Self>`, not just `Self`.
-  - A method with `self: ref Self` requires the caller to pass `ref x`.
+- For methods with `ref self` receivers, the auto-borrow sugar (§11.3.1) applies at method call sites.
 - Boxed receivers (`self: box<Self>`) pass the box handle, which is Copy-treated. This allows multiple method calls on the same box without moving the box itself.
 
 **Example:**
@@ -1035,7 +1056,7 @@ struct Counter(count: int) {
 let c = box(Counter(0));
 c.increment();   // ok: box handle is Copy-treated, box is not moved
 c.increment();   // ok: can call again
-let n = c.get(); // ok: passes ref c implicitly (auto-ref at method call sites)
+let n = c.get(); // ok: desugars to Counter.get(ref(*c)) per §11.3.1
 ```
 
 ---
@@ -1377,14 +1398,14 @@ Host may register functions callable by p7.
 
 Interop requirements:
 - `?T` maps to/from host null.
-- `ref T` MUST NOT cross the boundary as a persistent value (may be disallowed entirely; [[TODO]] define).
+- `ref<T>` MUST NOT cross the boundary as a persistent value (may be disallowed entirely; [[TODO]] define).
 - `box<T>` is the primary mechanism for passing identity/mutable objects across the boundary.
 - `box<P>` (proto boxes) is the mechanism for dynamic dispatch across the boundary (§18).
 
 ### 17.3 Ownership rules
 
 - Passing a value type follows move/copy rules.
-- Passing `box<T>` or `ref T` passes/copies the handle/view per §6.
+- Passing `box<T>` or `ref<T>` passes/copies the handle/view per §6.
 
 ### 17.4 Generics and interop
 
@@ -1424,7 +1445,7 @@ proto Mutator {
 **Receiver requirements:**
 
 Proto methods may declare receivers as defined in §11.4:
-- `self: ref Self` (or shorthand `ref self`) – borrowed receiver
+- `self: ref<Self>` (or shorthand `ref self`) – borrowed receiver
 - `self: box<Self>` (or shorthand `box self`) – boxed receiver
 
 v1 restrictions:
@@ -1464,7 +1485,7 @@ struct[Printable, Copy] Vec2(
   x: float,
   y: float,
 ) {
-  pub fn print(self: ref Self) -> unit { ... }
+  pub fn print(self: ref<Self>) -> unit { ... }
 }
 
 enum[Printable, Copy] Status(
@@ -1472,7 +1493,7 @@ enum[Printable, Copy] Status(
   Active: int,
   Failed: (string, int),
 ) {
-  pub fn print(self: ref Self) -> unit { ... }
+  pub fn print(self: ref<Self>) -> unit { ... }
 }
 ```
 
@@ -1494,7 +1515,7 @@ Calling a proto method on `box<P>` performs dynamic dispatch:
 
 **Receiver semantics:**
 
-- For methods with `ref self` receivers: the proto box handle is passed and dereferenced to obtain a `ref T` view of the boxed contents.
+- For methods with `ref self` receivers: the proto box handle is passed and dereferenced to obtain a `ref<T>` view of the boxed contents.
 - For methods with `box self` receivers: the proto box handle itself is passed (as `box<P>`), aliasing the original box. The method receives a boxed handle, which is Copy-treated; multiple calls do not move the box.
 
 Example:
@@ -1806,10 +1827,10 @@ When disabled, `suspend fn` and `yield` are ERROR.
 A `suspend fn` may suspend via `yield;`.
 
 Borrow restriction (v1):
-- In a `suspend fn`, use of `ref` is forbidden:
-  - parameters of type `ref T` are ERROR
-  - locals of type `ref T` are ERROR
-  - `ref x` expression is ERROR
+- In a `suspend fn`, use of `ref<...>` is forbidden:
+  - parameters of type `ref<T>` are ERROR
+  - locals of type `ref<T>` are ERROR
+  - `ref(x)` expression is ERROR
 Rationale: avoids views living across suspension points without lifetime tracking.
 
 Direct calling restriction (recommended):
