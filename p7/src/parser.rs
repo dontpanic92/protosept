@@ -226,8 +226,10 @@ impl Parser {
                 }
                 TokenType::Ref => {
                     self.consume();
-                    let ident = self.parse_identifier()?;
-                    Expression::Ref(ident)
+                    self.consume_match(TokenType::OpenParen)?;
+                    let expr = self.parse_expression()?;
+                    self.consume_match(TokenType::CloseParen)?;
+                    Expression::Ref(Box::new(expr))
                 }
                 _ => {
                     return Err(ParseError::UnexpectedToken {

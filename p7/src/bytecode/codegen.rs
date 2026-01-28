@@ -853,48 +853,19 @@ impl Generator {
                     _ => unimplemented!(),
                 }
             }
-            Expression::Ref(identifier) => {
-                // `ref x` produces a `ref T` typed value (view).
-                // Lowering is currently just loading the underlying slot value.
-                if let Some(var_id) = self
-                    .local_scope
-                    .as_mut()
-                    .unwrap()
-                    .find_variable(&identifier.name)
-                {
-                    self.builder.ldvar(var_id);
-                    let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
-                    if matches!(ty, Type::Reference(_)) {
-                        return Err(SemanticError::Other(format!(
-                            "Cannot take ref of ref '{}'",
-                            identifier.name
-                        )));
-                    }
-                    Ok(Type::Reference(Box::new(ty)))
-                } else if let Some(param_id) = self
-                    .local_scope
-                    .as_mut()
-                    .unwrap()
-                    .find_param(&identifier.name)
-                {
-                    self.builder.ldpar(param_id);
-                    let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
-                    if matches!(ty, Type::Reference(_)) {
-                        return Err(SemanticError::Other(format!(
-                            "Cannot take ref of ref parameter '{}'",
-                            identifier.name
-                        )));
-                    }
-                    Ok(Type::Reference(Box::new(ty)))
-                } else {
-                    Err(SemanticError::VariableNotFound {
-                        name: identifier.name,
-                        pos: Some(SourcePos {
-                            line: identifier.line,
-                            col: identifier.col,
-                        }),
-                    })
+            Expression::Ref(expr) => {
+                // `ref(place)` produces a `ref T` typed value (view).
+                // The place expression must be an addressable location.
+                let ty = self.generate_expression(*expr.clone())?;
+                
+                // Check that we're not creating a ref of ref
+                if matches!(ty, Type::Reference(_)) {
+                    return Err(SemanticError::Other(format!(
+                        "Cannot take ref of ref"
+                    )));
                 }
+                
+                Ok(Type::Reference(Box::new(ty)))
             }
             Expression::Binary {
                 left,

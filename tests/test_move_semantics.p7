@@ -70,7 +70,7 @@ fn test_enum_move() -> int {
 @test(expected_type = "int", expected_value = "20")
 fn test_ref_copy() -> int {
   let x = 10;
-  let r = ref x;
+  let r = ref(x);
   let s = r;  // Copy (ref is copy-treated)
   return *r + *s;  // 10 + 10 = 20
 }
