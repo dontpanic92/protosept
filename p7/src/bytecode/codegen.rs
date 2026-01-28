@@ -1316,6 +1316,7 @@ impl Generator {
 
                 let object_ty = match object_ty {
                     Type::Reference(inner) => *inner,
+                    Type::BoxType(inner) => *inner,  // Auto-deref boxes for field access
                     other => other,
                 };
 
