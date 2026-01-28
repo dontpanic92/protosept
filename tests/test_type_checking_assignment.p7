@@ -1,0 +1,9 @@
+// compile_fail: Type mismatch in field assignment
+
+struct Point(x: int, y: int);
+
+fn test_wrong_field_assignment() -> int {
+    let p = box(Point(1, 2));
+    p.x = "string";  // ERROR: cannot assign string to int field
+    p.x
+}

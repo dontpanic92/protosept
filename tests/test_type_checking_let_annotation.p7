@@ -1,0 +1,6 @@
+// compile_fail: Type annotation mismatch in let statement
+
+fn test_wrong_annotation() -> int {
+    let x: int = "string";  // ERROR: annotated int but assigned string
+    x
+}
