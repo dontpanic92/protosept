@@ -16,7 +16,7 @@ fn test_ref_box_non_copy_struct() -> int {
 }
 
 // Test 2: ref(*b) passed to function expecting ref<Struct>
-fn get_x(p: ref Point) -> int {
+fn get_x(p: ref<Point>) -> int {
     p.x
 }
 

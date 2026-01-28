@@ -3,8 +3,8 @@ import test.test;
 
 // Test proto declaration
 proto Printable {
-  fn print(self: ref Printable) -> unit;
-  fn display(self: ref Printable) -> string;
+  fn print(self: ref<Printable>) -> unit;
+  fn display(self: ref<Printable>) -> string;
 }
 
 struct Vec2(

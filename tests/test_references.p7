@@ -1,10 +1,10 @@
-// Comprehensive tests for reference types (ref T)
+// Comprehensive tests for reference types (ref<T>)
 // Includes local refs, deref operations, and ref parameters
 import test.test;
 
 // ===== Helper Functions =====
 
-fn id(x: ref float) -> float {
+fn id(x: ref<float>) -> float {
     *x
 }
 
@@ -15,7 +15,7 @@ struct Counter(
         self.value
     }
 
-    fn get2(self: ref Self) -> int {
+    fn get2(self: ref<Self>) -> int {
         self.value
     }
 }

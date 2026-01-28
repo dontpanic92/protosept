@@ -29,7 +29,7 @@ impl Type {
         match self {
             Type::Identifier(identifier) => identifier.name.clone(),
             Type::Reference(r) => {
-                format!("ref {}", r.get_name())
+                format!("ref<{}>", r.get_name())
             }
             Type::Array(a) => {
                 format!("{}[]", a.get_name())

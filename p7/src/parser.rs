@@ -11,7 +11,7 @@ const UNARY_OPERATIONS: &[TokenType] = &[
     TokenType::Not,
     TokenType::Plus,
     TokenType::Minus,
-    TokenType::Multiply, // unary `*` for deref of `ref T`
+    TokenType::Multiply, // unary `*` for deref of `ref<T>`
 ];
 
 type ParseResult<T> = Result<T, ParseError>;
@@ -1204,7 +1204,10 @@ impl Parser {
             match &token.token_type {
                 TokenType::Ref => {
                     self.consume();
+                    // ref<Type> syntax - must have angle brackets
+                    self.consume_match(TokenType::LessThan)?;
                     let ty = self.parse_type()?;
+                    self.consume_match(TokenType::GreaterThan)?;
                     Ok(Type::Reference(Box::new(ty)))
                 }
                 TokenType::OpenBracket => {

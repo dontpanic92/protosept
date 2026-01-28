@@ -3,14 +3,14 @@ import test.test;
 
 // Define a protocol
 proto Printable {
-  fn print(self: ref Printable) -> int;
+  fn print(self: ref<Printable>) -> int;
 }
 
 // Simple struct implementing the protocol
 struct[Printable] Dog(
   x: int,
 ) {
-  pub fn print(self: ref Dog) -> int {
+  pub fn print(self: ref<Dog>) -> int {
     42
   }
 }

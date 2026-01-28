@@ -102,7 +102,7 @@ pub fn run(
     let mut context = interpreter::context::Context::new();
     context.load_module(module);
     context.push_function(entrypoint, Vec::new());
-    context.resume().unwrap();
+    context.resume().map_err(|e| Proto7Error::RuntimeError(e))?;
 
     let result = context.stack[0].stack.pop();
     match result {

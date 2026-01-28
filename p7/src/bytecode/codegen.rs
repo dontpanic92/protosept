@@ -820,7 +820,7 @@ impl Generator {
                         Ok(ty)
                     }
                     TokenType::Multiply => {
-                        // `*r` where `r: ref T` yields a `T`. No runtime op yet.
+                        // `*r` where `r: ref<T>` yields a `T`. No runtime op yet.
                         // `*b` where `b: box<T>` yields a `T` (only for primitive T).
                         if let Type::Reference(inner) = ty {
                             Ok(*inner)
@@ -854,7 +854,7 @@ impl Generator {
                 }
             }
             Expression::Ref(expr) => {
-                // `ref(place)` produces a `ref T` typed value (view).
+                // `ref(place)` produces a `ref<T>` typed value (view).
                 // The place expression must be an addressable location.
                 
                 // Special case: ref(*b) where b is a box
@@ -3428,7 +3428,7 @@ impl Generator {
                 // Special handling for first parameter (self) which should be ref to the type/proto type
                 for (i, (expected_type, actual_type)) in param_types.iter().zip(method_params.iter()).enumerate() {
                     // For the first parameter (self), check if both are reference types
-                    // The proto has `self: ref Proto` and the type has `self: ref Type`
+                    // The proto has `self: ref<Proto>` and the type has `self: ref<Type>`
                     // These should be considered compatible for conformance checking
                     if i == 0 {
                         let proto_is_ref_to_proto = matches!(expected_type, Type::Reference(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id));
