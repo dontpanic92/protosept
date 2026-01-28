@@ -15,6 +15,7 @@ pub enum SymbolKind {
     Enum(TypeId),
     Struct(TypeId),
     Proto(TypeId),
+    TypeDecl(TypeId),
     Module,
 }
 
@@ -40,6 +41,10 @@ impl SymbolKind {
 
     pub fn discriminant_of_proto() -> std::mem::Discriminant<SymbolKind> {
         std::mem::discriminant(&SymbolKind::Proto(0))
+    }
+
+    pub fn discriminant_of_typedecl() -> std::mem::Discriminant<SymbolKind> {
+        std::mem::discriminant(&SymbolKind::TypeDecl(0))
     }
 }
 
@@ -76,6 +81,7 @@ impl Symbol {
             SymbolKind::Enum(type_id) => Some(*type_id),
             SymbolKind::Struct(type_id) => Some(*type_id),
             SymbolKind::Proto(type_id) => Some(*type_id),
+            SymbolKind::TypeDecl(type_id) => Some(*type_id),
             _ => None,
         }
     }
@@ -140,6 +146,21 @@ pub struct Proto {
     pub qualified_name: String,
     pub methods: Vec<(String, Vec<Type>, Option<Type>)>, // (name, params, return_type)
     pub attributes: Vec<crate::ast::Attribute>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeDecl {
+    pub qualified_name: String,
+    pub representation: Option<Type>, // The underlying type in type Name(ReprType)
+    pub attributes: Vec<crate::ast::Attribute>,
+    // For generic types: stores the original type parameter names
+    pub type_parameters: Vec<String>,
+    // For generic types: stores the original parsed representation type (before substitution)
+    pub generic_representation: Option<crate::ast::Type>,
+    // For monomorphized types: stores the base generic type's TypeId and concrete type arguments
+    pub monomorphization: Option<(TypeId, Vec<Type>)>,
+    // Protocol conformances
+    pub conforming_to: Vec<TypeId>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -286,6 +307,7 @@ pub enum UserDefinedType {
     Enum(Enum),
     Struct(Struct),
     Proto(Proto),
+    TypeDecl(TypeDecl),
 }
 
 pub struct SymbolTable {
