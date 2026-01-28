@@ -2921,10 +2921,10 @@ impl Generator {
             _ => {}
         }
         
-        // Allow implicit int <-> float promotion (spec allows this for compatibility)
+        // Allow implicit int -> float promotion (spec §15.1.2)
+        // Note: float -> int requires explicit conversion, not allowed implicitly
         match (actual, expected) {
-            (Type::Primitive(PrimitiveType::Int), Type::Primitive(PrimitiveType::Float))
-            | (Type::Primitive(PrimitiveType::Float), Type::Primitive(PrimitiveType::Int)) => {
+            (Type::Primitive(PrimitiveType::Int), Type::Primitive(PrimitiveType::Float)) => {
                 return true;
             }
             _ => {}
