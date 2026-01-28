@@ -1030,9 +1030,9 @@ impl Parser {
     }
 
     fn parse_type_declaration(&mut self, attributes: Vec<Attribute>, is_pub: bool) -> ParseResult<Statement> {
-        self.consume_match(TokenType::Type)?;
+        self.consume_match(TokenType::Newtype)?;
         
-        // Parse optional conformance list: type[Proto1, Proto2]
+        // Parse optional conformance list: newtype[Proto1, Proto2]
         let conformance = if self.peek_match(TokenType::OpenBracket) {
             self.consume();
             let mut protos = vec![];
@@ -1454,7 +1454,7 @@ impl Parser {
             Some(TokenType::Enum) => self.parse_enum_declaration(attributes, is_pub),
             Some(TokenType::Struct) => self.parse_struct_declaration(attributes, is_pub),
             Some(TokenType::Proto) => self.parse_proto_declaration(attributes, is_pub),
-            Some(TokenType::Type) => self.parse_type_declaration(attributes, is_pub),
+            Some(TokenType::Newtype) => self.parse_type_declaration(attributes, is_pub),
             // Some(TokenType::If) => self.parse_if_expression().map(Statement::Expression),
             Some(TokenType::Return) => {
                 if is_pub {

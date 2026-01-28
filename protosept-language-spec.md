@@ -63,7 +63,7 @@ A program is a sequence of top-level items:
 - Function declarations: `fn ...`
 - Struct declarations: `struct ...`
 - Enum declarations: `enum ...`
-- Type declarations: `type ...` (§12.5)
+- Newtype declarations: `newtype ...` (§12.5)
 - Proto declarations: `proto ...`
 
 Top-level executable statements are not allowed in v1. Execution begins when the host invokes an entrypoint function via embedding (e.g., `run_p7_code(contents, "main")`).
@@ -185,7 +185,7 @@ helpers.private_helper();  // ERROR
 Identifiers start with `_` or a letter and continue with letters, digits, or `_`.
 
 ### 2.2 Keywords (reserved)
-`fn`, `struct`, `enum`, `type`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`, `import`, `as`, `box`
+`fn`, `struct`, `enum`, `newtype`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`, `import`, `as`, `box`
 
 `true` and `false` are **keywords** (boolean literals).  
 `null` is a keyword (null literal).
@@ -206,7 +206,7 @@ Types in v1:
 - Nullability: `?T`
 - Borrowed view: `ref<T>`
 - Owned heap handle: `box<T>`
-- User-defined: `struct Name(...)`, `enum Name(...)`, `type[...] Name(...) { ... }`, `proto Name { ... }`
+- User-defined: `struct Name(...)`, `enum Name(...)`, `newtype[...] Name(...) { ... }`, `proto Name { ... }`
 - Compile-time generics: `T`, `array<T>`, `box<T>`, etc. (§20)
 
 ---
@@ -1244,61 +1244,61 @@ enum Option<T>(
 
 ---
 
-## 12.5 Type declarations
+## 12.5 Newtype declarations
 
-A `type` declaration defines a new nominal type with an optional underlying representation.
+A `newtype` declaration defines a new nominal type with an optional underlying representation.
 
 ### 12.5.1 Syntax
 
 Basic syntax:
 ```p7
-type Name {
+newtype Name {
   // methods
 }
 ```
 
 Generic syntax:
 ```p7
-type Name<T, U, ...> {
+newtype Name<T, U, ...> {
   // methods
 }
 ```
 
 Newtype form (with representation):
 ```p7
-type Name(ReprType) {
+newtype Name(ReprType) {
   // methods
 }
 ```
 
 With conformance list:
 ```p7
-type[Proto1, Proto2, ...] Name(ReprType) {
+newtype[Proto1, Proto2, ...] Name(ReprType) {
   // methods
 }
 ```
 
 ### 12.5.2 Representation list rule
 
-If a parenthesized representation list is present (e.g., `type Name(ReprType)`), it MUST contain exactly one type. Otherwise, ERROR.
+If a parenthesized representation list is present (e.g., `newtype Name(ReprType)`), it MUST contain exactly one type. Otherwise, ERROR.
 
 ### 12.5.3 No value constructor
 
-Unlike structs, `Name(...)` where `Name` is a `type` is ERROR. Types do not have public value constructors. Construction is performed via methods or internal constructors within the type body.
+Unlike structs, `Name(...)` where `Name` is a `newtype` is ERROR. Newtypes do not have public value constructors. Construction is performed via methods or internal constructors within the newtype body.
 
 ### 12.5.4 Transparent newtype semantics
 
-When a `type` is declared with a representation (e.g., `type Name(ReprType)`):
+When a `newtype` is declared with a representation (e.g., `newtype Name(ReprType)`):
 
 - **Runtime representation**: The type has the exact runtime representation of `ReprType` (size, alignment, calling convention).
-- **Access restriction**: The representation is not directly accessible outside the type body.
-- **Inside the type body**:
-  - `Self(expr)` is allowed as a type-local constructor from `expr: ReprType`.
+- **Access restriction**: The representation is not directly accessible outside the newtype body.
+- **Inside the newtype body**:
+  - `Self(expr)` is allowed as a newtype-local constructor from `expr: ReprType`.
   - `self.0` is allowed to access the underlying representation (at least for `ref self`). [[TODO]] decide `self.0` behavior for by-value `self` regarding move interaction (§23).
 
 Example:
 ```p7
-type UserId(int) {
+newtype UserId(int) {
   pub fn new(id: int) -> UserId {
     return Self(id);
   }
@@ -1310,7 +1310,7 @@ type UserId(int) {
 
 ### 12.5.5 Methods
 
-A `type` may include:
+A `newtype` may include:
 - Method bodies (full implementations).
 - Signature-only method declarations.
 
@@ -1324,7 +1324,7 @@ Otherwise, a signature-only method is ERROR.
 
 Example:
 ```p7
-type Handle(ptr) {
+newtype Handle(ptr) {
   @ffi(lib = "mylib", name = "handle_close")
   pub fn close(self) -> unit;
   
@@ -1335,20 +1335,20 @@ type Handle(ptr) {
 
 ### 12.5.6 Conformance list semantics
 
-The conformance list on a `type` works the same as for structs and enums (§18.6):
-- Each name in `type[...]` MUST be the name of a proto.
+The conformance list on a `newtype` works the same as for structs and enums (§18.6):
+- Each name in `newtype[...]` MUST be the name of a proto.
 - The compiler MUST check structural satisfaction.
 - Listing a proto MAY enable implicit behaviors (§18.6).
 
-### 12.5.7 Copy-treated policy for `type`
+### 12.5.7 Copy-treated policy for `newtype`
 
-A new `type` is **NOT** Copy-treated by default. A `type` becomes Copy-treated only by declaring `type[Copy] ...`.
+A new `newtype` is **NOT** Copy-treated by default. A `newtype` becomes Copy-treated only by declaring `newtype[Copy] ...`.
 
-Copy-eligibility for `type Name(ReprType)` follows the underlying representation: if `ReprType` is Copy-eligible, then `Name` is Copy-eligible.
+Copy-eligibility for `newtype Name(ReprType)` follows the underlying representation: if `ReprType` is Copy-eligible, then `Name` is Copy-eligible.
 
 Example:
 ```p7
-type[Copy] UserId(int) {
+newtype[Copy] UserId(int) {
   pub fn new(id: int) -> UserId {
     return Self(id);
   }
@@ -1649,9 +1649,9 @@ let p: ref<Printable> = r as ref<Printable>;
 [[TODO]] finalize cast syntax and coercion sites.
 
 
-### 18.6 Declaring proto conformances on structs, enums, and types
+### 18.6 Declaring proto conformances on structs, enums, and newtypes
 
-A struct, enum, or type may declare conformances in a bracket list:
+A struct, enum, or newtype may declare conformances in a bracket list:
 
 ```p7
 struct[Printable, Copy] Vec2(
@@ -1669,13 +1669,13 @@ enum[Printable, Copy] Status(
   pub fn print(self: ref<Self>) -> unit { ... }
 }
 
-type[Printable, Copy] UserId(int) {
+newtype[Printable, Copy] UserId(int) {
   pub fn print(self: ref<Self>) -> unit { ... }
 }
 ```
 
 Rules:
-- Each name in `struct[...]`, `enum[...]`, or `type[...]` MUST be the name of a proto.
+- Each name in `struct[...]`, `enum[...]`, or `newtype[...]` MUST be the name of a proto.
 - The compiler MUST check structural satisfaction.
 - Listing a proto MAY enable implicit behaviors described by this spec:
   - `Copy` and `Send` opt-in behavior (§6.3, §6.5).
