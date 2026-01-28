@@ -1,13 +1,16 @@
-// Tests for while loop control flow
+// Tests for while loop syntax with false conditions and break
+// Note: These tests only verify while loop syntax with conditions that
+// prevent iteration or immediate breaks. They do NOT test actual iteration.
+// Testing iteration would require mutable state to update the loop variable.
 import test.test;
 
-// ===== Basic While Loop Tests =====
+// ===== While Loop Non-Entry Tests =====
 
 @test(expected_type = "int", expected_value = "0")
 fn test_while_false_condition() -> int {
     let x = 10;
     while x < 5 {
-        return 999;  // Should never execute
+        return 999;  // Should never execute - condition is false
     }
     0
 }
@@ -16,7 +19,7 @@ fn test_while_false_condition() -> int {
 fn test_while_break_immediately() -> int {
     let x = 0;
     while x < 100 {
-        break;
+        break;  // Breaks immediately, no actual iteration
     }
     42
 }

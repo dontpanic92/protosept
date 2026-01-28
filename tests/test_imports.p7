@@ -1,27 +1,8 @@
-// Comprehensive tests for import statements
-// Includes basic imports, aliases, multiple imports, and relative imports
+// Tests for import statement syntax parsing
 import test.test;
 
-// Note: This file tests that import syntax is accepted by the parser.
-// The actual module loading would require the modules to exist.
-// For now, we just test that the syntax parses correctly and the tests run.
-
 @test(expected_type = "int", expected_value = "42")
-fn test_import_basic() -> int {
+fn test_import_syntax_parses() -> int {
+    // This test verifies the import statement above was accepted by the parser
     return 42;
-}
-
-@test(expected_type = "int", expected_value = "100")
-fn test_import_alias() -> int {
-    return 100;
-}
-
-@test(expected_type = "int", expected_value = "200")
-fn test_multiple_imports() -> int {
-    return 200;
-}
-
-@test(expected_type = "int", expected_value = "50")
-fn test_relative_import() -> int {
-    return 50;
 }

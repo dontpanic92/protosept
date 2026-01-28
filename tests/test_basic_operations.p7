@@ -1,7 +1,7 @@
-// Basic operations test
+// Basic arithmetic operations test
 import test.test;
 
-fn add(a: float, b: float) -> int {
+fn add(a: float, b: float) -> float {
     a + b
 }
 

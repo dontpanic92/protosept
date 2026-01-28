@@ -1,4 +1,4 @@
-// Test proto declaration
+// Test proto declaration syntax parsing
 import test.test;
 
 // Test proto declaration
@@ -13,6 +13,7 @@ struct Vec2(
 );
 
 @test(expected_type = "int", expected_value = "42")
-fn test_proto() -> int {
+fn test_proto_syntax_parses() -> int {
+  // This test verifies the proto declaration above was accepted by the parser
   42
 }

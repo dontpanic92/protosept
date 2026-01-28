@@ -1,4 +1,4 @@
-// Test pub visibility modifier
+// Test pub visibility modifier syntax parsing
 import test.test;
 
 pub fn public_helper() -> int {
@@ -20,6 +20,8 @@ pub enum MyEnum(
 );
 
 @test(expected_type = "int", expected_value = "52")
-fn test_pub_declarations() -> int {
+fn test_pub_syntax_parses() -> int {
+    // Both functions are accessible within the same module
+    // This only tests that pub syntax is accepted, not visibility enforcement
     public_helper() + private_helper()
 }
