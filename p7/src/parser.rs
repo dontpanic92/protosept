@@ -1055,7 +1055,7 @@ impl Parser {
         let name = self.parse_identifier()?;
         let type_parameters = self.parse_type_parameters()?;
 
-        // Parse optional representation: type Name(ReprType)
+        // Parse optional representation: newtype Name(ReprType)
         let representation = if self.peek_match(TokenType::OpenParen) {
             self.consume();
             let repr_type = self.parse_type()?;

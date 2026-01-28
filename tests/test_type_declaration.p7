@@ -25,7 +25,7 @@ newtype Wrapper<T>(T) {
 }
 
 @test(expected_type = "int", expected_value = "42")
-fn test_type_parses() -> int {
+fn test_newtype_parses() -> int {
     // Just test that the newtype declarations above parse correctly
     return 42;
 }
