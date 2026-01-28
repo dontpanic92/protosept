@@ -12,6 +12,17 @@ impl fmt::Display for SourcePos {
     }
 }
 
+// Helper macro to reduce boilerplate in error Display implementations
+// Formats error messages with optional position information
+macro_rules! format_error_with_pos {
+    ($msg:expr, $pos:expr) => {
+        match $pos {
+            Some(p) => format!("{} at {}", $msg, p),
+            None => $msg.to_string(),
+        }
+    };
+}
+
 #[derive(Debug)]
 pub enum Proto7Error {
     ParseError(ParseError),
@@ -69,24 +80,20 @@ impl std::error::Error for ParseError {}
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ParseError::UnexpectedToken { found, pos } => match pos {
-                Some(p) => write!(f, "Unexpected token: {} at {}", found, p),
-                None => write!(f, "Unexpected token: {}", found),
-            },
+        let msg = match self {
+            ParseError::UnexpectedToken { found, pos } => {
+                format_error_with_pos!(&format!("Unexpected token: {}", found), pos)
+            }
             ParseError::ExpectedToken {
                 expected,
                 found,
                 pos,
-            } => match pos {
-                Some(p) => write!(f, "Expected token: {}, found: {} at {}", expected, found, p),
-                None => write!(f, "Expected token: {}, found: {}", expected, found),
-            },
-            ParseError::UnexpectedEof { pos } => match pos {
-                Some(p) => write!(f, "Unexpected end of file at {}", p),
-                None => write!(f, "Unexpected end of file"),
-            },
-        }
+            } => format_error_with_pos!(&format!("Expected token: {}, found: {}", expected, found), pos),
+            ParseError::UnexpectedEof { pos } => {
+                format_error_with_pos!("Unexpected end of file", pos)
+            }
+        };
+        write!(f, "{}", msg)
     }
 }
 
@@ -132,52 +139,40 @@ impl std::error::Error for SemanticError {}
 
 impl fmt::Display for SemanticError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SemanticError::TypeNotFound { name, pos } => match pos {
-                Some(p) => write!(f, "Type not found: {} at {}", name, p),
-                None => write!(f, "Type not found: {}", name),
-            },
-            SemanticError::FunctionNotFound { name, pos } => match pos {
-                Some(p) => write!(f, "Function not found: {} at {}", name, p),
-                None => write!(f, "Function not found: {}", name),
-            },
-            SemanticError::VariableNotFound { name, pos } => match pos {
-                Some(p) => write!(f, "Variable not found: {} at {}", name, p),
-                None => write!(f, "Variable not found: {}", name),
-            },
-            SemanticError::TypeMismatch { lhs, rhs, pos } => match pos {
-                Some(p) => write!(f, "Type mismatch: {} != {} at {}", lhs, rhs, p),
-                None => write!(f, "Type mismatch: {} != {}", lhs, rhs),
-            },
-            SemanticError::MixedNamedAndPositional { name, pos } => match pos {
-                Some(p) => write!(
-                    f,
-                    "Mixed positional and named arguments in call: {} at {}",
-                    name, p
-                ),
-                None => write!(f, "Mixed positional and named arguments in call: {}", name),
-            },
-            SemanticError::VariableOutsideFunction { name, pos } => match pos {
-                Some(p) => write!(
-                    f,
-                    "Variable cannot be defined outside functions: {} at {}",
-                    name, p
-                ),
-                None => write!(f, "Variable cannot be defined outside functions: {}", name),
-            },
-            SemanticError::ImportError { module_path, pos } => {
-                write!(f, "Cannot import module: {} at {}", module_path, pos)
+        let msg = match self {
+            SemanticError::TypeNotFound { name, pos } => {
+                format_error_with_pos!(&format!("Type not found: {}", name), pos)
             }
-            SemanticError::UseAfterMove { name, pos } => match pos {
-                Some(p) => write!(
-                    f,
-                    "Use of moved value: {} at {}",
-                    name, p
-                ),
-                None => write!(f, "Use of moved value: {}", name),
-            },
-            SemanticError::Other(msg) => write!(f, "Semantic error: {}", msg),
-        }
+            SemanticError::FunctionNotFound { name, pos } => {
+                format_error_with_pos!(&format!("Function not found: {}", name), pos)
+            }
+            SemanticError::VariableNotFound { name, pos } => {
+                format_error_with_pos!(&format!("Variable not found: {}", name), pos)
+            }
+            SemanticError::TypeMismatch { lhs, rhs, pos } => {
+                format_error_with_pos!(&format!("Type mismatch: {} != {}", lhs, rhs), pos)
+            }
+            SemanticError::MixedNamedAndPositional { name, pos } => {
+                format_error_with_pos!(
+                    &format!("Mixed positional and named arguments in call: {}", name),
+                    pos
+                )
+            }
+            SemanticError::VariableOutsideFunction { name, pos } => {
+                format_error_with_pos!(
+                    &format!("Variable cannot be defined outside functions: {}", name),
+                    pos
+                )
+            }
+            SemanticError::ImportError { module_path, pos } => {
+                format!("Cannot import module: {} at {}", module_path, pos)
+            }
+            SemanticError::UseAfterMove { name, pos } => {
+                format_error_with_pos!(&format!("Use of moved value: {}", name), pos)
+            }
+            SemanticError::Other(msg) => format!("Semantic error: {}", msg),
+        };
+        write!(f, "{}", msg)
     }
 }
 

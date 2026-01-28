@@ -1178,7 +1178,7 @@ impl Generator {
                 let (object_ty, is_static_access) = if let Expression::GenericInstantiation { base, type_args } = object.as_ref() {
                     // This is a generic type access like Option<int>.Some
                     // Try to find the base type
-                    if let Some(base_ty) = self.symbol_table.find_type_in_scope(&base.name) {
+                    if let Some(_base_ty) = self.symbol_table.find_type_in_scope(&base.name) {
                         // Resolve the generic type to its monomorphized version
                         let parsed_type = crate::ast::Type::Generic {
                             base: base.clone(),
@@ -1930,7 +1930,7 @@ impl Generator {
                     
                     return Ok(ret_type);
                 }
-                SymbolKind::Struct(type_id) => {
+                SymbolKind::Struct(_type_id) => {
                     // This is a struct instantiation like Container<int>(value)
                     // Resolve the generic type with explicit type arguments
                     let parsed_type = crate::ast::Type::Generic {
@@ -1960,7 +1960,7 @@ impl Generator {
                         });
                     }
                 }
-                SymbolKind::Enum(type_id) => {
+                SymbolKind::Enum(_type_id) => {
                     // This is an enum variant construction like Option<int>.Some(42)
                     // Resolve the generic type with explicit type arguments
                     let parsed_type = crate::ast::Type::Generic {
@@ -2035,7 +2035,7 @@ impl Generator {
             // Case 2: Static method call like `Type.method(...)` (object is identifier referring to a type)
             if let Expression::Identifier(ident) = object.as_ref() {
                 if let Some(ty) = self.symbol_table.find_type_in_scope(&ident.name) {
-                    if let Type::Struct(type_id) = ty {
+                    if let Type::Struct(_type_id) = ty {
                         // Find the struct symbol and then the method as its child
                         let struct_symbol_id = self
                             .symbol_table
@@ -2061,7 +2061,7 @@ impl Generator {
                             )?;
 
                         let method_symbol = self.symbol_table.get_symbol(method_symbol_id).unwrap();
-                        let (addr, type_id) = match method_symbol.kind {
+                        let (_addr, type_id) = match method_symbol.kind {
                             SymbolKind::Function { address, type_id } => (address, type_id),
                             _ => {
                                 return Err(SemanticError::FunctionNotFound {
