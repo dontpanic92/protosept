@@ -59,6 +59,7 @@ A program is a sequence of top-level items:
 - Function declarations: `fn ...`
 - Struct declarations: `struct ...`
 - Enum declarations: `enum ...`
+- Type declarations: `type ...` (§12.5)
 - Proto declarations: `proto ...`
 
 Top-level executable statements are not allowed in v1. Execution begins when the host invokes an entrypoint function via embedding (e.g., `run_p7_code(contents, "main")`).
@@ -180,7 +181,7 @@ helpers.private_helper();  // ERROR
 Identifiers start with `_` or a letter and continue with letters, digits, or `_`.
 
 ### 2.2 Keywords (reserved)
-`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`, `import`, `as`, `box`
+`fn`, `struct`, `enum`, `type`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`, `import`, `as`, `box`
 
 `true` and `false` are **keywords** (boolean literals).  
 `null` is a keyword (null literal).
@@ -196,13 +197,13 @@ Identifiers start with `_` or a letter and continue with letters, digits, or `_`
 ## 3. Types (overview)
 
 Types in v1:
-- Primitive: `int`, `float`, `bool`, `char`, `unit`
+- Primitive: `int`, `float`, `bool`, `char`, `unit`, `ptr`
 - Built-in value types: `string`, `array<T>`, tuples `(T1, T2, ...)`
 - Nullability: `?T`
 - Borrowed view: `ref<T>`
 - Owned heap handle: `box<T>`
-- User-defined: `struct Name(...)`, `enum Name(...)`, `proto Name { ... }`
-- Compile-time generics: `T`, `array<T>`, `box<T>`, etc. (§19)
+- User-defined: `struct Name(...)`, `enum Name(...)`, `type[...] Name(...) { ... }`, `proto Name { ... }`
+- Compile-time generics: `T`, `array<T>`, `box<T>`, etc. (§20)
 
 ---
 
@@ -228,6 +229,14 @@ Types in v1:
 
 - `unit`  
   The unit type with a single value written `()`.
+
+- `ptr`  
+  A raw, pointer-sized machine address.  
+  Properties:
+  - Non-null by default; nullable version is `?ptr`.
+  - Copy-eligible and Copy-treated.
+  - Allowed operations (v1): `==` and `!=`.
+  - Other operations (arithmetic, dereferencing) are TODO and expected only under FFI/unsafe extension.
 
 ---
 
@@ -603,7 +612,9 @@ A `box<T>` is an identity-bearing heap cell containing a `T`.
 
 Operations (surface syntax v1):
 
-- Construction: `box(expr)` allocates a new boxed cell containing `expr`.
+- Construction: `box(expr)`  
+  Allocates a new boxed cell containing `expr`.  
+  **Desugaring**: `box(expr)` desugars to `box<T>.new(expr)` where `T` is the type of `expr`. `box<T>.new` is an intrinsic method declared in the prelude. [[TODO]] specify prelude location/definition of `box<T>.new` (§23).
 
 - Read / deref: `*b`
   - `*b` is an **addressable location** (place expression) referring to the boxed contents.
@@ -1016,7 +1027,7 @@ This sugar reduces ceremony at method call sites while maintaining explicit borr
 
 ### 11.4 Method receivers (v1)
 
-Methods on structs, enums, and protos may declare a receiver parameter. The receiver is the first parameter and uses special syntax.
+Methods on structs, enums, types (§12.5), and protos may declare a receiver parameter. The receiver is the first parameter and uses special syntax.
 
 **Receiver forms:**
 
@@ -1225,6 +1236,121 @@ enum Option<T>(
 ) {
   pub fn is_some(ref self) -> bool { ... }
 }
+```
+
+---
+
+## 12.5 Type declarations
+
+A `type` declaration defines a new nominal type with an optional underlying representation.
+
+### 12.5.1 Syntax
+
+Basic syntax:
+```p7
+type Name {
+  // methods
+}
+```
+
+Generic syntax:
+```p7
+type Name<T, U, ...> {
+  // methods
+}
+```
+
+Newtype form (with representation):
+```p7
+type Name(ReprType) {
+  // methods
+}
+```
+
+With conformance list:
+```p7
+type[Proto1, Proto2, ...] Name(ReprType) {
+  // methods
+}
+```
+
+### 12.5.2 Representation list rule
+
+If a parenthesized representation list is present (e.g., `type Name(ReprType)`), it MUST contain exactly one type. Otherwise, ERROR.
+
+### 12.5.3 No value constructor
+
+Unlike structs, `Name(...)` where `Name` is a `type` is ERROR. Types do not have public value constructors. Construction is performed via methods or internal constructors within the type body.
+
+### 12.5.4 Transparent newtype semantics
+
+When a `type` is declared with a representation (e.g., `type Name(ReprType)`):
+
+- **Runtime representation**: The type has the exact runtime representation of `ReprType` (size, alignment, calling convention).
+- **Access restriction**: The representation is not directly accessible outside the type body.
+- **Inside the type body**:
+  - `Self(expr)` is allowed as a type-local constructor from `expr: ReprType`.
+  - `self.0` is allowed to access the underlying representation (at least for `ref self`). [[TODO]] decide `self.0` behavior for by-value `self` regarding move interaction (§23).
+
+Example:
+```p7
+type UserId(int) {
+  pub fn new(id: int) -> UserId {
+    return Self(id);
+  }
+  pub fn value(ref self) -> int {
+    return self.0;
+  }
+}
+```
+
+### 12.5.5 Methods
+
+A `type` may include:
+- Method bodies (full implementations).
+- Signature-only method declarations.
+
+**Signature-only methods** MUST be annotated with exactly one of:
+- `@intrinsic()` – indicates the method is implemented by the compiler/runtime.
+- `@ffi(...)` – indicates the method is provided by a foreign function interface.
+
+Otherwise, a signature-only method is ERROR.
+
+[[TODO]] specify `@intrinsic()` and `@ffi(...)` schemas (§23).
+
+Example:
+```p7
+type Handle(ptr) {
+  @ffi(lib = "mylib", name = "handle_close")
+  pub fn close(self) -> unit;
+  
+  @intrinsic()
+  pub fn as_ptr(self) -> ptr;
+}
+```
+
+### 12.5.6 Conformance list semantics
+
+The conformance list on a `type` works the same as for structs and enums (§18.6):
+- Each name in `type[...]` MUST be the name of a proto.
+- The compiler MUST check structural satisfaction.
+- Listing a proto MAY enable implicit behaviors (§18.6).
+
+### 12.5.7 Copy-treated policy for `type`
+
+A new `type` is **NOT** Copy-treated by default. A `type` becomes Copy-treated only by declaring `type[Copy] ...`.
+
+Copy-eligibility for `type Name(ReprType)` follows the underlying representation: if `ReprType` is Copy-eligible, then `Name` is Copy-eligible.
+
+Example:
+```p7
+type[Copy] UserId(int) {
+  pub fn new(id: int) -> UserId {
+    return Self(id);
+  }
+}
+// UserId is Copy-treated because it declares [Copy].
+// UserId is Copy-eligible because int is Copy-eligible.
 ```
 
 ---
@@ -1519,9 +1645,9 @@ let p: ref<Printable> = r as ref<Printable>;
 [[TODO]] finalize cast syntax and coercion sites.
 
 
-### 18.6 Declaring proto conformances on structs and enums
+### 18.6 Declaring proto conformances on structs, enums, and types
 
-A struct or enum may declare conformances in a bracket list:
+A struct, enum, or type may declare conformances in a bracket list:
 
 ```p7
 struct[Printable, Copy] Vec2(
@@ -1538,10 +1664,14 @@ enum[Printable, Copy] Status(
 ) {
   pub fn print(self: ref<Self>) -> unit { ... }
 }
+
+type[Printable, Copy] UserId(int) {
+  pub fn print(self: ref<Self>) -> unit { ... }
+}
 ```
 
 Rules:
-- Each name in `struct[...]` or `enum[...]` MUST be the name of a proto.
+- Each name in `struct[...]`, `enum[...]`, or `type[...]` MUST be the name of a proto.
 - The compiler MUST check structural satisfaction.
 - Listing a proto MAY enable implicit behaviors described by this spec:
   - `Copy` and `Send` opt-in behavior (§6.3, §6.5).
@@ -1599,12 +1729,12 @@ Attributes are typed metadata values attached to declarations.
 Properties:
 - typed (schema is a `struct`)
 - compile-time only
-- inert (do not affect evaluation/typing except as explicitly specified)
+- inert by default; semantics only when explicitly specified by this spec or an extension
 - preserved in compiled artifact in a host-visible form
 
 ### 19.1 Attachment sites (v1)
 An attribute list may appear immediately before a top-level:
-- `fn`, `struct`, `enum`
+- `fn`, `struct`, `enum`, `type`
 
 [[TODO]] attributes for `proto`, fields, variants, params, locals.
 
@@ -1970,6 +2100,10 @@ If both extensions enabled:
 3) Coercion sites and cast spelling for `box<T> -> box<P>` (§18.5)
 4) Enablement mechanisms for extensions (§21, §22)
 5) Host ABI: concrete API surfaces for calling, fibers, threads (§17, §21.4, §22)
+6) Specify `@intrinsic()` and `@ffi(...)` attribute schemas for signature-only methods (§12.5.5)
+7) Decide `self.0` behavior for by-value `self` in `type` declarations regarding move interaction (§12.5.4)
+8) Specify prelude location/definition of `box<T>.new` intrinsic method (§7.4)
+9) Specify FFI surface and how it interacts with `ptr` primitive and `type Name(ptr)` wrappers (§3.1, §12.5)
 
 ---
 End.
