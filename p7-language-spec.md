@@ -634,7 +634,7 @@ p7 uses a uniform convention for type constructors and their corresponding expre
 
 - **Type constructors** use angle brackets: `box<T>`, `ref<T>`, `array<T>`, `?T` (nullable is a special case prefix syntax).
 - **Expression constructors** use parentheses: `box(value)`, `ref(place)`, `array(elements...)`.
-- Type arguments may optionally be made explicit in expression constructors when needed for disambiguation or clarity (e.g., `box::<MyType>(value)`), though this is rarely necessary in practice due to type inference.
+- Type arguments may optionally be made explicit in expression constructors when needed for disambiguation or clarity (e.g., `box<MyType>(value)`), though this is rarely necessary in practice due to type inference.
 
 This convention provides visual consistency: types are spelled with `<...>` and constructor expressions are spelled with `Ctor(...)`.
 
@@ -1010,13 +1010,14 @@ For method calls only, p7 provides auto-borrow sugar when the method has a `ref 
 
 - `recv.method(args...)` where `method` has a `ref self` receiver desugars as follows:
   - If `recv` has type `Self` and is an addressable location: desugars to `Type.method(ref(recv), args...)`.
-  - If `recv` has type `box<Self>`: desugars to `Type.method(ref(*recv), args...)`.
+  - If `recv` has type `box<Self>`: desugars to `Type.method(ref(*recv), args...)`. The receiver `recv` may be any value (including temporaries), as the borrow is taken of the dereferenced contents `*recv`.
+  - If `recv` already has type `ref<Self>`: it is passed directly to the `ref self` parameter without desugaring.
   - The receiver is evaluated exactly once.
 
 **Restrictions:**
 
 - Applies only to methods with `ref self` receivers; does NOT apply to free functions with `ref<T>` parameters.
-- The receiver operand MUST be an addressable location; borrowing of temporaries is not permitted.
+- When the receiver has type `Self`, it MUST be an addressable location; borrowing of temporaries is not permitted.
 
 **Rationale:**
 
