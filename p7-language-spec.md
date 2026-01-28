@@ -623,6 +623,7 @@ Operations (surface syntax v1):
   - Produces a `ref<T>` view of the boxed contents.
   - Permitted for **any** `T`, including non-Copy-treated types.
   - The resulting `ref<T>` follows all `ref<...>` rules (§7.1, §7.3).
+  - When `T` is an object proto `P`, `ref(*b)` yields `ref<P>` and is dynamically dispatched per §18.
 
 - Member auto-deref:
   - `b.field`, `b.method(...)` act as if on the inner `T`.
@@ -1426,7 +1427,7 @@ A type `T` satisfies a proto `P` if `T` provides methods matching every required
 ### 18.2 Proto categories
 
 - **Constraint protos**: compile-time only, no runtime dispatch (`Copy`, `Send`).
-- **Object protos**: compile-time conformance + runtime dynamic dispatch via `box<P>`.
+- **Object protos**: compile-time conformance + runtime dynamic dispatch via `box<P>` and `ref<P>`.
 
 User-declared `proto` are object protos in v1.
 
@@ -1452,11 +1453,35 @@ v1 restrictions:
 - Proto methods MUST NOT mention `Self` in parameter or return types beyond the receiver. [[TODO]] future extension.
 - Overloads in protos: ERROR in v1 (recommended).
 
-### 18.4 Proto values (boxed only)
+### 18.4 Proto handles
 
-The only runtime value of proto type `P` is `box<P>` (object protos only). There is no plain `P`.
+There is no plain runtime value of proto type `P`.
 
-Constraint protos MUST NOT appear as `box<P>`.
+Runtime proto handles are:
+- `box<P>` – owned proto handle (§18.5)
+- `ref<P>` – borrowed proto handle (§18.4.1)
+
+Constraint protos MUST NOT appear as `box<P>` or `ref<P>`.
+
+#### 18.4.1 Borrowed proto handles: `ref<P>`
+
+**Well-formedness:**
+- `ref<P>` is well-formed only when `P` is an object proto.
+- Using `ref<P>` where `P` is a constraint proto is ERROR.
+
+**Meaning:**
+- A value of type `ref<P>` is a borrowed view of some dynamic type `T` satisfying proto `P`.
+
+**Non-escapable rule:**
+- `ref<P>` follows the non-escapable rule from §7.3.
+
+**Dereferencing:**
+- `*r` where `r: ref<P>` is ERROR in v1.
+
+**Method-call restriction:**
+- `ref<P>` can call only proto methods whose receiver is `ref self`.
+- Calling a proto method with a `box self` receiver on `ref<P>` is ERROR (see §18.7).
+
 
 ### 18.5 Converting `box<T>` to `box<P>`
 
@@ -1475,6 +1500,24 @@ let p: box<Printable> = v;
 Conversion does not allocate a new `T`. It reinterprets the existing handle with a dispatch table for `P`.
 
 [[TODO]] finalize cast syntax and coercion sites.
+
+#### 18.5.1 Converting `ref<T>` to `ref<P>` (borrowed upcast)
+
+A `ref<T>` can be converted to `ref<P>` when `T` satisfies `P`.
+
+**Explicit cast:**
+```p7
+let r: ref<SomeStruct> = ref(v);
+let p: ref<Printable> = r as ref<Printable>;
+```
+
+**Implicit coercion:**
+- Recommended to allow implicit `ref<T> -> ref<P>` coercions at the same sites as `box<T> -> box<P>` coercions (assignment, argument passing, return).
+- Only when `T` declares `[P]` conformance via `struct[...]` or `enum[...]` (see §18.6).
+- Such coercions are subject to the restriction that only `ref self` methods can be called on `ref<P>` (§18.4.1).
+
+[[TODO]] finalize cast syntax and coercion sites.
+
 
 ### 18.6 Declaring proto conformances on structs and enums
 
@@ -1503,6 +1546,7 @@ Rules:
 - Listing a proto MAY enable implicit behaviors described by this spec:
   - `Copy` and `Send` opt-in behavior (§6.3, §6.5).
   - Implicit `box<T> -> box<P>` coercions for object protos (§18.5).
+  - Implicit `ref<T> -> ref<P>` coercions for object protos (§18.5.1).
 
 The conformance list does not inject members; it only checks and enables implicit behaviors.
 
@@ -1510,13 +1554,18 @@ The conformance list does not inject members; it only checks and enables implici
 
 ### 18.7 Dynamic dispatch
 
-Calling a proto method on `box<P>` performs dynamic dispatch:
-- The call dispatches to the implementation for the dynamic type stored in the box.
+Calling a proto method on `box<P>` or `ref<P>` performs dynamic dispatch:
+- The call dispatches to the implementation for the dynamic type of the underlying object.
 
 **Receiver semantics:**
 
+For `box<P>`:
 - For methods with `ref self` receivers: the proto box handle is passed and dereferenced to obtain a `ref<T>` view of the boxed contents.
 - For methods with `box self` receivers: the proto box handle itself is passed (as `box<P>`), aliasing the original box. The method receives a boxed handle, which is Copy-treated; multiple calls do not move the box.
+
+For `ref<P>`:
+- For methods with `ref self` receivers: the borrowed proto handle is passed directly as a `ref<T>` view to the underlying object.
+- For methods with `box self` receivers: calling such methods on `ref<P>` is ERROR (see §18.4.1).
 
 Example:
 ```p7
