@@ -856,7 +856,23 @@ impl Generator {
             Expression::Ref(expr) => {
                 // `ref(place)` produces a `ref T` typed value (view).
                 // The place expression must be an addressable location.
-                let ty = self.generate_expression(*expr.clone())?;
+                
+                // Special case: ref(*b) where b is a box
+                // According to spec, ref(*b) is allowed for ANY T, including non-Copy types
+                if let Expression::Unary { operator, right } = expr.as_ref() {
+                    if operator.token_type == TokenType::Multiply {
+                        // This is ref(*expr), check if expr is a box
+                        let inner_ty = self.generate_expression((**right).clone())?;
+                        if let Type::BoxType(boxed_inner) = inner_ty {
+                            // ref(*b) where b: box<T> produces ref<T>
+                            // We keep the box on the stack, and the type system tracks it as ref<T>
+                            return Ok(Type::Reference(boxed_inner));
+                        }
+                    }
+                }
+                
+                // Default case: evaluate the expression and wrap in Reference
+                let ty = self.generate_expression((*expr).clone())?;
                 
                 // Check that we're not creating a ref of ref
                 if matches!(ty, Type::Reference(_)) {
