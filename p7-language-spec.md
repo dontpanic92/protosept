@@ -1,6 +1,10 @@
-# p7 Language Specification (Draft)
+# Protosept Language Specification (Draft)
 
 Status: Draft (v1 target)
+
+> **Protosept** is the public name of the language.
+> The short name **p7** may still appear in tooling, file extensions (e.g. `.p7`),
+> and internal identifiers. Unless otherwise stated, "Protosept" and "p7" refer to the same language.
 
 Design goals (north star):
 - **Statically typed scripting**: concise, readable, low ceremony.
@@ -62,7 +66,7 @@ A program is a sequence of top-level items:
 - Type declarations: `type ...` (§12.5)
 - Proto declarations: `proto ...`
 
-Top-level executable statements are not allowed in v1. Execution begins when the host invokes an entrypoint function via embedding (e.g., `run_p7_code(contents, "main")`).
+Top-level executable statements are not allowed in v1. Execution begins when the host invokes an entrypoint function via embedding (e.g., `run_protosept_code(contents, "main")`).
 
 ---
 
@@ -644,7 +648,7 @@ Operations (surface syntax v1):
 
 ## 8. Runtime failures: traps vs throws
 
-p7 has two failure channels:
+Protosept has two failure channels:
 
 1) **TRAPs (panics)**: unrecoverable runtime failures representing bugs/contract violations.
    - Examples: integer overflow, out-of-bounds `a[i]`, force unwrap of `null` (`x!`).
@@ -655,7 +659,7 @@ p7 has two failure channels:
    - THROWN values can be handled or propagated using `try` (§14).
    - The type system tracks which functions may throw (`throws` / `throws<E>`).
 
-Host-visible outcomes of calling a p7 function are:
+Host-visible outcomes of calling a Protosept function are:
 - Returned(value)
 - Threw(enum_value)
 - Trapped(panic)
@@ -1499,7 +1503,7 @@ Rule: `default_expr` MUST have type `T`.
 
 ## 16. Memory/runtime model (informative)
 
-p7 uses a GC runtime. Semantics are defined in terms of:
+Protosept uses a GC runtime. Semantics are defined in terms of:
 - moves/copies
 - non-escapable borrowed views
 - boxed identity containers
@@ -1510,9 +1514,9 @@ Implementation may represent values on stack or heap; this is not semantically o
 
 ## 17. Host interop (v1 requirements)
 
-### 17.1 Calling into p7
+### 17.1 Calling into Protosept
 
-Host calls a named p7 function with arguments and receives one of:
+Host calls a named Protosept function with arguments and receives one of:
 - Returned(value)
 - Threw(enum_value) if a `throw` escapes
 - Trapped(panic) if a TRAP occurs
