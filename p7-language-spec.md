@@ -125,8 +125,6 @@ A relative module path begins with `.` and is permitted **only** in `import`.
 - `.foo` refers to a sibling module `foo`.
 - `.sub.bar` refers to module `bar` in subdirectory `sub`.
 
-In v1, only sibling and subdirectory forms are supported. Parent-relative forms (e.g. `..`) are reserved.
-
 Example:
 ```p7
 // In module `myapp.services.auth`
@@ -134,7 +132,25 @@ import .helpers;          // `myapp.services.helpers`
 import .sub.utilities;    // `myapp.services.sub.utilities`
 ```
 
-### 1.1.6 Visibility
+### 1.1.6 Package-root relative imports (import-only)
+
+A **package-root relative** import path begins with `_` followed by `.`, and is permitted **only** in `import`.
+
+- `_.foo.bar` resolves to `<current-package-name>.foo.bar`.
+- This form allows importing modules from the package root regardless of the importing module's depth.
+
+Rules:
+- `import _;` is ERROR (bare `_` is not a valid module path).
+- `_.…` may **only** be used in `import` statements; it is not permitted in qualified names for types or expressions.
+
+Example:
+```p7
+// In module `mypackage.services.auth.handlers`
+import _.util.logging;      // resolves to `mypackage.util.logging`
+import _.config;            // resolves to `mypackage.config`
+```
+
+### 1.1.7 Visibility
 
 By default, declarations are module-private.
 
@@ -164,7 +180,7 @@ helpers.private_helper();  // ERROR
 Identifiers start with `_` or a letter and continue with letters, digits, or `_`.
 
 ### 2.2 Keywords (reserved)
-`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`, `import`, `as`
+`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`, `import`, `as`, `box`
 
 `true` and `false` are **keywords** (boolean literals).  
 `null` is a keyword (null literal).
@@ -544,6 +560,12 @@ A value of type `ref T` is a read-only view of an addressable location holding a
   - if `T` is Copy-treated, `*r` yields a copy;
   - otherwise, `*r` causes an ERROR.
 
+**Operations on `ref T` values:**
+
+- Member access (`r.field`) and method calls (`r.method(...)`) are permitted without copying `T`:
+  - These operations access the referent location directly.
+  - Only explicit dereference (`*r`) is restricted by the Copy-treated requirement.
+
 ### 7.2 Taking views
 
 `ref x` produces a `ref T` when `x` is an addressable location of type `T`.
@@ -568,6 +590,13 @@ Consequences:
 - User-defined types MUST NOT contain `ref ...` fields.
 - `array<ref T>` is ERROR.
 
+**Example (ref cannot be stored in heap):**
+```p7
+let x = 42;
+let r = ref x;
+let b = box(r);  // ERROR: cannot store ref T in box<...>
+```
+
 ### 7.4 Meaning and operations of `box<T>`
 
 A `box<T>` is an identity-bearing heap cell containing a `T`.
@@ -577,8 +606,9 @@ Operations (surface syntax v1):
 - Construction: `box(expr)` allocates a new boxed cell containing `expr`.
 
 - Read / deref: `*b`
-  - If `T` is Copy-eligible, `*b` yields a value copy of type `T`.
-  - If `T` is not Copy-eligible, `*b` is ERROR in v1.
+  - `*b` is an **addressable location** (place expression) referring to the boxed contents.
+  - If `T` is Copy-eligible, `*b` as a value expression yields a copy of type `T`.
+  - If `T` is not Copy-eligible, using `*b` as a value expression (moving out) is ERROR in v1.
   - Rationale: boxes are aliasable; moving out implicitly would require moved-out states or uniqueness.
 
 - Write: `*b = expr`
@@ -589,11 +619,14 @@ Operations (surface syntax v1):
   - Writes `new_value` into the box and returns the previous value.
   - This is the way to extract non-Copy values from a box without leaving it uninitialized.
 
+- **Borrowing boxed contents**: `ref *b`
+  - Produces a `ref T` view of the boxed contents.
+  - Permitted for **any** `T`, including non-Copy-treated types.
+  - The resulting `ref T` follows all `ref` rules (§7.1, §7.3).
+
 - Member auto-deref:
   - `b.field`, `b.method(...)` act as if on the inner `T`.
   - Field assignment is allowed for boxed structs: `b.field = expr` updates the inner field in place (requires `b: box<S>`).
-
-[[TODO]] specify whether `ref *b` is permitted and what it means.
 
 ---
 
@@ -960,6 +993,51 @@ For `ref T` parameters:
 
 Mutation requires `box<T>` parameters.
 
+### 11.4 Method receivers (v1)
+
+Methods on structs, enums, and protos may declare a receiver parameter. The receiver is the first parameter and uses special syntax.
+
+**Receiver forms:**
+
+1. `self` – by-value receiver:
+   - Type: `Self` (the declaring type).
+   - Passes ownership; subject to value-flow rules (§6.1).
+
+2. `self: ref Self` or shorthand `ref self` – borrowed receiver:
+   - Type: `ref Self`.
+   - Caller passes a read-only view of an addressable location.
+
+3. `self: box<Self>` or shorthand `box self` – boxed receiver:
+   - Type: `box<Self>`.
+   - Caller passes a boxed handle to the instance.
+   - The boxed handle is Copy-treated (§6.2); passing does not move the box itself.
+   - The box's contents remain aliased; multiple calls to methods on the same box see shared state.
+
+**Rules:**
+
+- The receiver is the first parameter; it is written before other parameters without a trailing comma.
+- No implicit boxing or borrowing occurs to satisfy a receiver:
+  - A method with `self: box<Self>` requires the caller to have `box<Self>`, not just `Self`.
+  - A method with `self: ref Self` requires the caller to pass `ref x`.
+- Boxed receivers (`self: box<Self>`) pass the box handle, which is Copy-treated. This allows multiple method calls on the same box without moving the box itself.
+
+**Example:**
+```p7
+struct Counter(count: int) {
+  pub fn increment(box self) {
+    self.count = self.count + 1;
+  }
+  pub fn get(ref self) -> int {
+    return self.count;
+  }
+}
+
+let c = box(Counter(0));
+c.increment();   // ok: box handle is Copy-treated, box is not moved
+c.increment();   // ok: can call again
+let n = c.get(); // ok: passes ref c implicitly (auto-ref at method call sites)
+```
+
 ---
 
 ## 12. Structs
@@ -992,15 +1070,15 @@ struct Vec2(
   pub x: float = 0,
   pub y: float = 0,
 ) {
-  pub fn length(self: ref Self) -> float { ... }
+  pub fn length(ref self) -> float { ... }
+  pub fn scale(box self, factor: float) {
+    self.x = self.x * factor;
+    self.y = self.y * factor;
+  }
 }
 ```
 
-Receivers in v1:
-- `self` (by value)
-- `self: ref Self` (borrowed read-only view)
-
-In-place mutation APIs should use `box<Self>` parameters (or free functions).
+Method receivers are defined in §11.4. Structs may use `self`, `ref self`, or `box self` receivers.
 
 ### 12.3 Construction
 
@@ -1113,9 +1191,7 @@ These may be added in future versions.
 
 An enum may include a method block, using the same method syntax as structs.
 
-Receivers:
-- `self` (by value)
-- `self: ref Self` (borrowed read-only view)
+Method receivers are defined in §11.4. Enums may use `self`, `ref self`, or `box self` receivers.
 
 This enables enums to satisfy object protos structurally (§18).
 
@@ -1125,7 +1201,7 @@ enum Option<T>(
   None,
   Some: T,
 ) {
-  pub fn is_some(self: ref Self) -> bool { ... }
+  pub fn is_some(ref self) -> bool { ... }
 }
 ```
 
@@ -1293,12 +1369,21 @@ User-declared `proto` are object protos in v1.
 
 ```p7
 proto Printable {
-  fn print(self: ref Self) -> unit;
+  fn print(ref self) -> unit;
+}
+
+proto Mutator {
+  fn mutate(box self);
 }
 ```
 
+**Receiver requirements:**
+
+Proto methods may declare receivers as defined in §11.4:
+- `self: ref Self` (or shorthand `ref self`) – borrowed receiver
+- `self: box<Self>` (or shorthand `box self`) – boxed receiver
+
 v1 restrictions:
-- Receiver MUST be `self: ref Self`.
 - Proto methods MUST NOT mention `Self` in parameter or return types beyond the receiver. [[TODO]] future extension.
 - Overloads in protos: ERROR in v1 (recommended).
 
@@ -1361,7 +1446,29 @@ The conformance list does not inject members; it only checks and enables implici
 ### 18.7 Dynamic dispatch
 
 Calling a proto method on `box<P>` performs dynamic dispatch:
-- `p.print()` calls the implementation for the dynamic type stored in `p`.
+- The call dispatches to the implementation for the dynamic type stored in the box.
+
+**Receiver semantics:**
+
+- For methods with `ref self` receivers: the proto box handle is passed and dereferenced to obtain a `ref T` view of the boxed contents.
+- For methods with `box self` receivers: the proto box handle itself is passed (as `box<P>`), aliasing the original box. The method receives a boxed handle, which is Copy-treated; multiple calls do not move the box.
+
+Example:
+```p7
+proto Mutator {
+  fn mutate(box self);
+}
+
+struct Counter(count: int) {
+  pub fn mutate(box self) {
+    self.count = self.count + 1;
+  }
+}
+
+let b: box<Mutator> = box(Counter(0)) as box<Mutator>;
+b.mutate();  // dispatches to Counter.mutate; box handle is Copy-treated
+b.mutate();  // ok: can call again
+```
 
 ### 18.8 Downcasting / type tests
 [[TODO]] runtime type tests and downcasts for proto boxes.
