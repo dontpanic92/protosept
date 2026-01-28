@@ -881,8 +881,8 @@ impl Generator {
                 } else {
                     None
                 }
-            } else if let Type::Struct(id) = object_ty {
-                Some(id)
+            } else if let Type::Struct(id) = &object_ty {
+                Some(*id)
             } else {
                 None
             };
@@ -893,8 +893,8 @@ impl Generator {
                 } else {
                     None
                 }
-            } else if let Type::TypeDecl(id) = object_ty {
-                Some(id)
+            } else if let Type::TypeDecl(id) = &object_ty {
+                Some(*id)
             } else {
                 None
             };
