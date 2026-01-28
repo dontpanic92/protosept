@@ -628,16 +628,6 @@ Operations (surface syntax v1):
   - `b.field`, `b.method(...)` act as if on the inner `T`.
   - Field assignment is allowed for boxed structs: `b.field = expr` updates the inner field in place (requires `b: box<S>`).
 
-### 7.5 Uniform type and expression constructor syntax
-
-p7 uses a uniform convention for type constructors and their corresponding expression constructors:
-
-- **Type constructors** use angle brackets: `box<T>`, `ref<T>`, `array<T>`, `?T` (nullable is a special case prefix syntax).
-- **Expression constructors** use parentheses: `box(value)`, `ref(place)`, `array(elements...)`.
-- Type arguments may optionally be made explicit in expression constructors when needed for disambiguation or clarity (e.g., `box<MyType>(value)`), though this is rarely necessary in practice due to type inference.
-
-This convention provides visual consistency: types are spelled with `<...>` and constructor expressions are spelled with `Ctor(...)`.
-
 ---
 
 ## 8. Runtime failures: traps vs throws
