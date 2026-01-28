@@ -228,6 +228,7 @@ pub enum Statement {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
+        conformance: Vec<Identifier>, // Protocol conformances: enum[Proto1, Proto2]
         type_parameters: Vec<TypeParameter>,
         values: Vec<EnumVariant>,
         methods: Vec<StructMethod>,
