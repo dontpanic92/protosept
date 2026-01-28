@@ -248,6 +248,15 @@ pub enum Statement {
         attributes: Vec<Attribute>,
         methods: Vec<ProtoMethod>,
     },
+    TypeDeclaration {
+        is_pub: bool,
+        name: Identifier,
+        attributes: Vec<Attribute>,
+        conformance: Vec<Identifier>, // Protocol conformances: type[Proto1, Proto2]
+        type_parameters: Vec<TypeParameter>,
+        representation: Option<Type>, // The underlying type in type Name(ReprType)
+        methods: Vec<StructMethod>,
+    },
     Return(Box<Expression>),
     Import {
         module_path: String,

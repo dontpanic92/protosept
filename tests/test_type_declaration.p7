@@ -1,0 +1,31 @@
+// Test type declarations
+import test.test;
+
+// Basic type declaration without representation
+type Handle {
+}
+
+// Type with methods (but we won't call them yet)
+type Counter {
+    pub fn initial() -> int {
+        return 0;
+    }
+}
+
+// Type with representation
+type UserId(int) {
+}
+
+// Generic type without representation
+type Container<T> {
+}
+
+// Generic type with representation
+type Wrapper<T>(T) {
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_type_parses() -> int {
+    // Just test that the type declarations above parse correctly
+    return 42;
+}
