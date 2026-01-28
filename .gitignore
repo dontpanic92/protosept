@@ -2,4 +2,4 @@
 .idx
 .vscode
 *.md
-!p7-language-spec.md
+!protosept-language-spec.md

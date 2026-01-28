@@ -3,7 +3,7 @@
 Status: Draft (v1 target)
 
 > **Protosept** is the public name of the language.
-> The short name **p7** may still appear in tooling, file extensions (e.g. `.p7`),
+> The short name **p7** may still appear in tooling, file extensions,
 > and internal identifiers. Unless otherwise stated, "Protosept" and "p7" refer to the same language.
 
 Design goals (north star):
@@ -66,7 +66,7 @@ A program is a sequence of top-level items:
 - Type declarations: `type ...` (§12.5)
 - Proto declarations: `proto ...`
 
-Top-level executable statements are not allowed in v1. Execution begins when the host invokes an entrypoint function via embedding (e.g., `run_protosept_code(contents, "main")`).
+Top-level executable statements are not allowed in v1. Execution begins when the host invokes an entrypoint function via embedding (e.g., `run_p7_code(contents, "main")`).
 
 ---
 
