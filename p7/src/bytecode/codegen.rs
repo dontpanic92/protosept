@@ -1388,12 +1388,12 @@ impl Generator {
                 Ok(ty)
             }
             Expression::Cast { expression, target_type } => {
-                // Handle cast expressions: expr as box<Proto>
+                // Handle cast expressions: expr as box<Proto> or expr as ref<Proto>
                 let (line, col) = expression.get_pos();
                 let expr_ty = self.generate_expression(*expression)?;
                 let target_ty = self.get_semantic_type(&target_type)?;
                 
-                // For now, we only support box<T> -> box<P> casts
+                // Support both box<T> -> box<P> and ref<T> -> ref<P> casts
                 match (&expr_ty, &target_ty) {
                     (Type::BoxType(inner_ty), Type::BoxType(target_inner_ty)) => {
                         // Check if casting box<Struct/Enum> to box<Proto>
@@ -1452,6 +1452,68 @@ impl Generator {
                                 return Err(SemanticError::TypeMismatch {
                                     lhs: format!("box<{}>", self.type_to_string(&**inner_ty)),
                                     rhs: format!("box<{}>", self.type_to_string(&**target_inner_ty)),
+                                    pos: Some(SourcePos { line, col }),
+                                });
+                            }
+                        }
+                    }
+                    (Type::Reference(inner_ty), Type::Reference(target_inner_ty)) => {
+                        // Check if casting ref<Struct/Enum> to ref<Proto>
+                        match (inner_ty.as_ref(), target_inner_ty.as_ref()) {
+                            (Type::Struct(struct_id), Type::Proto(proto_id)) => {
+                                // Verify that the struct satisfies the proto
+                                let struct_def = match &self.symbol_table.types[*struct_id as usize] {
+                                    UserDefinedType::Struct(s) => s,
+                                    _ => return Err(SemanticError::Other("Expected struct type".to_string())),
+                                };
+                                
+                                // Check if struct conforms to proto (either declared or structural)
+                                let conforms = struct_def.conforming_to.contains(proto_id);
+                                
+                                if !conforms {
+                                    // Check structural conformance
+                                    self.check_struct_conformance(
+                                        *struct_id,
+                                        &[*proto_id],
+                                        line,
+                                        col,
+                                    )?;
+                                }
+                                
+                                // Generate RefToProto instruction
+                                self.builder.add_instruction(Instruction::RefToProto(*struct_id, *proto_id));
+                                
+                                return Ok(target_ty);
+                            }
+                            (Type::Enum(enum_id), Type::Proto(proto_id)) => {
+                                // Verify that the enum satisfies the proto
+                                let enum_def = match &self.symbol_table.types[*enum_id as usize] {
+                                    UserDefinedType::Enum(e) => e,
+                                    _ => return Err(SemanticError::Other("Expected enum type".to_string())),
+                                };
+                                
+                                // Check if enum conforms to proto (either declared or structural)
+                                let conforms = enum_def.conforming_to.contains(proto_id);
+                                
+                                if !conforms {
+                                    // Check structural conformance
+                                    self.check_struct_conformance(
+                                        *enum_id,
+                                        &[*proto_id],
+                                        line,
+                                        col,
+                                    )?;
+                                }
+                                
+                                // Generate RefToProto instruction
+                                self.builder.add_instruction(Instruction::RefToProto(*enum_id, *proto_id));
+                                
+                                return Ok(target_ty);
+                            }
+                            _ => {
+                                return Err(SemanticError::TypeMismatch {
+                                    lhs: format!("ref<{}>", self.type_to_string(&**inner_ty)),
+                                    rhs: format!("ref<{}>", self.type_to_string(&**target_inner_ty)),
                                     pos: Some(SourcePos { line, col }),
                                 });
                             }
@@ -2070,6 +2132,56 @@ impl Generator {
                 if let Type::Proto(proto_id) = inner.as_ref() {
                     // This is a call to a method on box<Proto> - use dynamic dispatch
                     // The receiver (ProtoBoxRef) is already on the stack
+                    
+                    // Get the proto definition to find method signature
+                    let proto = match &self.symbol_table.types[*proto_id as usize] {
+                        UserDefinedType::Proto(p) => p,
+                        _ => return Err(SemanticError::Other("Expected proto type".to_string())),
+                    };
+                    
+                    // Find the method in the proto
+                    let (method_params, method_return) = proto.methods.iter()
+                        .find(|(name, _, _)| name == &field.name)
+                        .map(|(_, params, ret)| (params.clone(), ret.clone()))
+                        .ok_or_else(|| SemanticError::FunctionNotFound {
+                            name: format!("proto method {}", field.name),
+                            pos: Some(SourcePos {
+                                line: field.line,
+                                col: field.col,
+                            }),
+                        })?;
+                    
+                    // Process arguments (skip first param which is self)
+                    let param_count = method_params.len();
+                    if param_count > 0 {
+                        // Skip self parameter for argument processing
+                        // For now, assume proto methods don't have named params or defaults
+                        // Just push the provided arguments in order
+                        for arg in arguments {
+                            let (_, expr) = arg;
+                            self.generate_expression(expr)?;
+                        }
+                    }
+                    
+                    // Hash the method name
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = DefaultHasher::new();
+                    field.name.hash(&mut hasher);
+                    let method_hash = hasher.finish() as u32;
+                    
+                    // Emit CallProtoMethod instruction
+                    self.builder.add_instruction(Instruction::CallProtoMethod(*proto_id, method_hash));
+                    
+                    return Ok(method_return.unwrap_or(Type::Primitive(PrimitiveType::Unit)));
+                }
+            }
+            
+            // Check if this is a proto ref method call
+            if let Type::Reference(inner) = &object_ty {
+                if let Type::Proto(proto_id) = inner.as_ref() {
+                    // This is a call to a method on ref<Proto> - use dynamic dispatch
+                    // The receiver (ProtoRefRef) is already on the stack
                     
                     // Get the proto definition to find method signature
                     let proto = match &self.symbol_table.types[*proto_id as usize] {

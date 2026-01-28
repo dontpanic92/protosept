@@ -1,0 +1,68 @@
+// Test dynamic dispatch via ref<P>
+import test.test;
+
+// Define a protocol
+proto Printable {
+  fn print(self: ref<Printable>) -> int;
+}
+
+// Two structs implementing the protocol
+struct[Printable] Dog(
+  name: string,
+) {
+  pub fn print(self: ref<Dog>) -> int {
+    42
+  }
+}
+
+struct[Printable] Cat(
+  name: string,
+) {
+  pub fn print(self: ref<Cat>) -> int {
+    99
+  }
+}
+
+// Test 1: Cast ref<Dog> to ref<Printable>
+@test(expected_type = "int", expected_value = "42")
+fn test_ref_cast_to_proto() -> int {
+  let dog = Dog(name = "Rex");
+  let r = ref(dog);
+  let p = r as ref<Printable>;
+  p.print()
+}
+
+// Test 2: Cast ref<Cat> to ref<Printable> 
+@test(expected_type = "int", expected_value = "99")
+fn test_ref_cast_different_struct() -> int {
+  let cat = Cat(name = "Whiskers");
+  let r = ref(cat);
+  let p = r as ref<Printable>;
+  p.print()
+}
+
+// Test 3: Dynamic dispatch with different types
+@test(expected_type = "int", expected_value = "42")
+fn test_ref_dynamic_dispatch_dog() -> int {
+  let dog = Dog(name = "Buddy");
+  let r = ref(dog);
+  let p = r as ref<Printable>;
+  // This should call Dog's print method via dynamic dispatch
+  p.print()
+}
+
+@test(expected_type = "int", expected_value = "99")
+fn test_ref_dynamic_dispatch_cat() -> int {
+  let cat = Cat(name = "Mittens");
+  let r = ref(cat);
+  let p = r as ref<Printable>;
+  // This should call Cat's print method via dynamic dispatch
+  p.print()
+}
+
+// Test 4: Cast and use immediately
+@test(expected_type = "int", expected_value = "42")
+fn test_ref_cast_inline() -> int {
+  let dog = Dog(name = "Spot");
+  (ref(dog) as ref<Printable>).print()
+}
