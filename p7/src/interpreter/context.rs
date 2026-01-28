@@ -21,6 +21,8 @@ pub enum Data {
     BoxRef(u32),
     /// Proto box reference: stores box index and concrete struct type_id for dynamic dispatch
     ProtoBoxRef { box_idx: u32, concrete_type_id: u32 },
+    /// Proto ref reference: stores ref index and concrete struct type_id for dynamic dispatch
+    ProtoRefRef { ref_idx: u32, concrete_type_id: u32 },
     /// Exception value (enum variant ID) - used for try-catch as special return value
     Exception(i32),
 }
@@ -69,9 +71,10 @@ macro_rules! arithmetic_op {
                 return Err(RuntimeError::UnexpectedStructRef);
             }
             (Data::BoxRef(_), _) | (_, Data::BoxRef(_)) 
-            | (Data::ProtoBoxRef { .. }, _) | (_, Data::ProtoBoxRef { .. }) => {
-                // Arithmetic on box references is invalid.
-                return Err(RuntimeError::Other("Arithmetic on box reference".to_string()));
+            | (Data::ProtoBoxRef { .. }, _) | (_, Data::ProtoBoxRef { .. })
+            | (Data::ProtoRefRef { .. }, _) | (_, Data::ProtoRefRef { .. }) => {
+                // Arithmetic on box/proto references is invalid.
+                return Err(RuntimeError::Other("Arithmetic on box/proto reference".to_string()));
             }
             (Data::Exception(_), _) | (_, Data::Exception(_)) => {
                 // Arithmetic on exceptions is invalid.
@@ -107,9 +110,10 @@ macro_rules! comparison_op {
                 return Err(RuntimeError::UnexpectedStructRef);
             }
             (Data::BoxRef(_), _) | (_, Data::BoxRef(_))
-            | (Data::ProtoBoxRef { .. }, _) | (_, Data::ProtoBoxRef { .. }) => {
-                // Comparison with box refs not supported
-                return Err(RuntimeError::Other("Comparison on box reference".to_string()));
+            | (Data::ProtoBoxRef { .. }, _) | (_, Data::ProtoBoxRef { .. })
+            | (Data::ProtoRefRef { .. }, _) | (_, Data::ProtoRefRef { .. }) => {
+                // Comparison with box/proto refs not supported
+                return Err(RuntimeError::Other("Comparison on box/proto reference".to_string()));
             }
             (Data::Exception(_), _) | (_, Data::Exception(_)) => {
                 // Comparison with exceptions not supported
@@ -325,9 +329,9 @@ impl Context {
                             Data::StructRef(_) => {
                                 return Err(RuntimeError::VariableNotFound);
                             }
-                            Data::BoxRef(_) | Data::ProtoBoxRef { .. } => {
+                            Data::BoxRef(_) | Data::ProtoBoxRef { .. } | Data::ProtoRefRef { .. } => {
                                 return Err(RuntimeError::Other(
-                                    "Cannot negate box reference".to_string(),
+                                    "Cannot negate box/proto reference".to_string(),
                                 ));
                             }
                             Data::Exception(_) => {
@@ -359,9 +363,9 @@ impl Context {
                             Data::StructRef(_) => {
                                 return Err(RuntimeError::VariableNotFound);
                             }
-                            Data::BoxRef(_) | Data::ProtoBoxRef { .. } => {
+                            Data::BoxRef(_) | Data::ProtoBoxRef { .. } | Data::ProtoRefRef { .. } => {
                                 return Err(RuntimeError::Other(
-                                    "Cannot apply logical NOT to box reference".to_string(),
+                                    "Cannot apply logical NOT to box/proto reference".to_string(),
                                 ));
                             }
                             Data::Exception(_) => {
@@ -439,9 +443,9 @@ impl Context {
                     self.stack.push(new_frame);
                 }
                 Instruction::Ldfield(field_idx) => {
-                    // Expect a StructRef or BoxRef on the stack; pop it and push the requested field value.
+                    // Expect a StructRef, BoxRef, or ProtoRefRef on the stack; pop it and push the requested field value.
                     if let Some(data) = self.stack_frame_mut()?.stack.pop() {
-                        // Resolve BoxRef to the underlying value (for ref(*box) support)
+                        // Resolve BoxRef/ProtoBoxRef/ProtoRefRef to the underlying value
                         let resolved_data = match &data {
                             Data::BoxRef(idx) | Data::ProtoBoxRef { box_idx: idx, .. } => {
                                 self.box_heap.get(*idx as usize)
@@ -449,6 +453,10 @@ impl Context {
                                     .ok_or_else(|| RuntimeError::Other(
                                         format!("Invalid box reference: {}", idx)
                                     ))?
+                            }
+                            Data::ProtoRefRef { ref_idx, .. } => {
+                                // ProtoRefRef points to heap location like StructRef
+                                Data::StructRef(*ref_idx)
                             }
                             other => other.clone(),
                         };
@@ -640,6 +648,24 @@ impl Context {
                         ));
                     }
                 }
+                Instruction::RefToProto(struct_type_id, proto_type_id) => {
+                    // Convert ref<T> to ref<P> for dynamic dispatch
+                    // Pop StructRef, push ProtoRefRef with type info
+                    let struct_ref = self.stack_frame_mut()?.stack.pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    
+                    if let Data::StructRef(ref_idx) = struct_ref {
+                        // Create a ProtoRefRef with the concrete type information
+                        self.stack_frame_mut()?.stack.push(Data::ProtoRefRef {
+                            ref_idx,
+                            concrete_type_id: struct_type_id,
+                        });
+                    } else {
+                        return Err(RuntimeError::Other(
+                            format!("Expected StructRef on stack for RefToProto, found {:?}", struct_ref)
+                        ));
+                    }
+                }
                 Instruction::CallProtoMethod(proto_id, method_hash) => {
                     // Dynamic dispatch: look up method in vtable based on concrete type
                     // The receiver should be a ProtoBoxRef on the stack with arguments after it
@@ -674,12 +700,14 @@ impl Context {
                     let receiver = self.stack_frame()?.stack.get(receiver_idx)
                         .ok_or(RuntimeError::StackUnderflow)?;
                     
-                    let concrete_type_id = if let Data::ProtoBoxRef { concrete_type_id, .. } = receiver {
-                        *concrete_type_id
-                    } else {
-                        return Err(RuntimeError::Other(
-                            format!("Expected ProtoBoxRef as receiver for proto method call, found {:?}", receiver)
-                        ));
+                    let concrete_type_id = match receiver {
+                        Data::ProtoBoxRef { concrete_type_id, .. } => *concrete_type_id,
+                        Data::ProtoRefRef { concrete_type_id, .. } => *concrete_type_id,
+                        _ => {
+                            return Err(RuntimeError::Other(
+                                format!("Expected ProtoBoxRef or ProtoRefRef as receiver for proto method call, found {:?}", receiver)
+                            ));
+                        }
                     };
                     
                     // Look up the method in the vtable

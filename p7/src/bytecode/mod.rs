@@ -135,15 +135,21 @@ pub enum Instruction {
     BoxToProto(u32, u32),
     
     // Call a proto method with dynamic dispatch.
-    // Expects: [..., ProtoBoxRef, args] -> performs dynamic method lookup and calls impl
+    // Expects: [..., ProtoBoxRef/ProtoRefRef, args] -> performs dynamic method lookup and calls impl
     // Parameters: (proto_id, method_name_hash)
     #[brw(magic = 35u8)]
     CallProtoMethod(u32, u32),
     
+    // Convert a ref<T> to a proto ref ref<P> for dynamic dispatch.
+    // Expects: [..., StructRef] -> pops StructRef, pushes ProtoRefRef with type_id
+    // Parameters: (struct_type_id, proto_type_id)
+    #[brw(magic = 36u8)]
+    RefToProto(u32, u32),
+    
     // Load a string constant from the string table.
     // Expects: [...] -> pushes string value
     // Parameters: string_index (index into Module.string_constants)
-    #[brw(magic = 36u8)]
+    #[brw(magic = 37u8)]
     Lds(u32),
 }
 

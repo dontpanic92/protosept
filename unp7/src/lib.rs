@@ -250,6 +250,7 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
         Instruction::BoxDeref => format!("{}  box_deref", offset_hex),
         Instruction::BoxToProto(struct_id, proto_id) => format!("{}  box_to_proto {} {}", offset_hex, struct_id, proto_id),
         Instruction::CallProtoMethod(proto_id, method_hash) => format!("{}  call_proto_method {} {:#x}", offset_hex, proto_id, method_hash),
+        Instruction::RefToProto(struct_id, proto_id) => format!("{}  ref_to_proto {} {}", offset_hex, struct_id, proto_id),
         Instruction::Lds(string_index) => format!("{}  lds {}", offset_hex, string_index),
     }
 }
