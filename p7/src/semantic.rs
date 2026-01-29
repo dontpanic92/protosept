@@ -519,10 +519,6 @@ impl LocalSymbolScope {
         self.locals[var_id as usize].is_mutable
     }
 
-    pub fn is_param_mutable(&self, param_id: u32) -> bool {
-        self.params[param_id as usize].is_mutable
-    }
-
     pub fn push_scope(&mut self) {
         let scope = LexicalScope {
             symbols: Vec::new(),
