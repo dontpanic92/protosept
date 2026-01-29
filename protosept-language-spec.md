@@ -30,8 +30,8 @@ Normative keywords:
 - `T, U, V` are types.
 - `x, y, z` are identifiers.
 - `null` denotes the null value (only inhabits nullable types).
-- **Slot**: a storage location introduced by `let` or a parameter.
-- **Addressable location** (v1): a slot, or a field/sub-location of an addressable base where the language provides addressability (see §7.1, §7.2, §11.4).
+- **Slot**: a storage location introduced by `let`, `var`, or a parameter.
+- **Addressable location** (v1): a `let`-introduced slot, a parameter slot, or a field/sub-location of an addressable base where the language provides addressability (see §7.1, §7.2, §11.4). Note: `var` slots are NOT addressable locations in v1.
 - **Copy-treated**: implicit copy occurs at value-flow sites (§6.1). (Distinct from “Copy-eligible”.)
 
 
@@ -186,7 +186,7 @@ helpers.private_helper();  // ERROR
 Identifiers start with `_` or a letter and continue with letters, digits, or `_`.
 
 ### 2.2 Keywords (reserved)
-`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`, `import`, `as`, `box`, `robox`
+`fn`, `struct`, `enum`, `proto`, `let`, `var`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`, `import`, `as`, `box`, `robox`
 
 `true` and `false` are **keywords** (boolean literals).  
 `null` is a keyword (null literal).
@@ -498,19 +498,23 @@ fn maybe_int() -> ?int {
 
 ## 5. Bindings, shadowing, and mutation
 
-### 5.1 `let` bindings (slots)
+### 5.1 `let` and `var` bindings (slots)
 
 `let x = expr;` introduces an immutable slot.
 
-- Slots are single-assignment.
-- Assigning to a slot (e.g., `x = expr`) is ERROR.
-- Assignment is permitted only to addressable locations that are mutable by definition (boxed contents), see §10.2.
+- `let` slots are single-assignment.
+- Assigning to a `let` slot (e.g., `x = expr`) is ERROR.
+
+`var x = expr;` introduces a mutable slot (v1).
+
+- `var` slots can be reassigned: `x = new_expr;` where `new_expr` has the same type as the slot.
+- `var` slots are mutable but NOT addressable (see §0); borrowing via `ref(x)` where `x` is a `var` slot is ERROR.
 
 ### 5.2 Shadowing
 
-A `let` may introduce a new binding with the same name as an outer binding.
+A `let` or `var` may introduce a new binding with the same name as an outer binding.
 
-Rule: if `x` shadows `x`, the new binding MUST have the **same type** as the shadowed binding.
+Rule: if `x` shadows `x`, the new binding MUST have the **same type** as the shadowed binding. The mutability may differ (i.e., a `let` binding may shadow a `var` binding and vice versa).
 
 Example:
 ```p7
@@ -522,15 +526,51 @@ let a = 1;
 a
 ```
 
+Example with `var`:
+```p7
+let x = 10;
+{
+  var x = 20;  // ok: same type int, but now mutable
+  x = 30;      // ok: x is var
+}
+x  // still 10; outer x is immutable
+```
+
 ### 5.3 Mutation and identity
 
-In-place mutation is supported only through `box<T>`.
+Protosept supports two forms of mutation:
 
-- Assigning to a field is allowed only through a box:
-  - `p.x = 1` is valid only if `p: box<Point>`.
-- Value structs and value arrays are immutable.
+1. **Local-only slot reassignment** (v1): `var` slots can be reassigned (§5.1). This is purely local mutation; `var` slots cannot be borrowed via `ref(...)`.
+
+2. **Shared identity mutation**: In-place mutation through `box<T>`.
+   - Assigning to a field is allowed only through a box:
+     - `p.x = 1` is valid only if `p: box<Point>`.
+   - Value structs and value arrays are immutable.
+
+The distinction ensures that shared/observable mutation is always expressed via `box<T>`, while `var` provides convenient local reassignment for loop counters, accumulators, and similar use cases.
 
 [[TODO]] finalize exact `*b = ...` syntax and boxed-array mutation APIs (see §7.4, §3.3.3).
+
+#### Example: `var` in a loop accumulator
+
+```p7
+fn sum(arr: array<int>) -> int {
+  var total = 0;
+  for x in arr {
+    total = total + x;  // ok: total is var
+  }
+  total
+}
+```
+
+#### Example: `var` slots cannot be borrowed
+
+```p7
+var count = 0;
+let r = ref(count);  // ERROR
+```
+
+This is ERROR because `var` slots are not addressable locations.
 
 ---
 
@@ -637,6 +677,9 @@ A value of type `ref<T>` is a read-only view of an addressable location holding 
 ### 7.2 Taking views
 
 `ref(place)` produces a `ref<T>` when `place` is an addressable location of type `T`.
+
+Requirements:
+- `place` MUST be an addressable location (see §0). Note that `var` slots are not addressable.
 
 In v1, borrowing is always explicit:
 - There is no implicit borrowing at call sites (except for method-call auto-borrow sugar; see §11.3.1).
@@ -1009,6 +1052,7 @@ fn classify(x: int) -> int {
 
 Statement forms:
 - `let` binding: `let x = expr;`
+- `var` binding: `var x = expr;`
 - expression statement: `expr;`
 - `if` statement (§9.2): `if condition { then_block }`
 - `while` statement (§9.5): `while condition { body }`
@@ -1035,13 +1079,16 @@ place = expr;
 ```
 
 Rules:
-- `place` MUST be an addressable location that is mutable by definition:
-  - boxed deref: `*b = expr` where `b: box<T>`
-  - boxed field: `b.field = expr` where `b: box<S>`
+- `place` may be:
+  1. A `var` slot: `x = expr` where `x` was introduced by `var`.
+     - `expr` MUST have the same type as the slot.
+  2. An addressable location that is mutable by definition:
+     - boxed deref: `*b = expr` where `b: box<T>`
+     - boxed field: `b.field = expr` where `b: box<S>`
 - Assignment to read-only boxes is ERROR:
   - `*rb = expr` where `rb: robox<T>` is ERROR.
   - `rb.field = expr` where `rb: robox<S>` is ERROR.
-- Assigning to a slot (`x = expr`) is ERROR.
+- Assigning to a `let` slot (`x = expr` where `x` was introduced by `let`) is ERROR.
 - Assignment does not produce a value.
 
 ### 10.3 `for` statement (v1)
