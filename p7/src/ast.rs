@@ -53,6 +53,15 @@ pub struct Attribute {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub enum Effect {
+    Simple(Identifier),              // e.g., throws, suspend
+    Parameterized {
+        name: Identifier,            // e.g., throws
+        type_param: Type,            // e.g., <ErrorType>
+    },
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct Parameter {
     pub name: Identifier,
     pub arg_type: Type,
@@ -70,7 +79,7 @@ pub struct FunctionDeclaration {
     pub is_pub: bool,
     pub name: Identifier,
     pub attributes: Vec<Attribute>,
-    pub effects: Vec<Identifier>,
+    pub effects: Vec<Effect>,
     pub type_parameters: Vec<TypeParameter>,
     pub parameters: Vec<Parameter>,
     pub return_type: Option<Type>,

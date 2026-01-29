@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
 use crate::ast::{
-    Attribute, EnumVariant, Expression, FunctionCall, FunctionDeclaration, Identifier, NamedPattern,
+    Attribute, Effect, EnumVariant, Expression, FunctionCall, FunctionDeclaration, Identifier, NamedPattern,
     Parameter, Pattern, ProtoMethod, Statement, StructField, StructMethod, Type, TypeParameter,
 };
 use crate::errors::{ParseError, SourcePos};
@@ -1135,6 +1135,41 @@ impl Parser {
     ) -> ParseResult<FunctionDeclaration> {
         self.consume_match(TokenType::Fn)?;
 
+        // Parse effect qualifiers in square brackets after fn: fn[effect1, effect2, ...]
+        let effects = if self.peek_match(TokenType::OpenBracket) {
+            self.consume(); // consume '['
+            let mut effects = vec![];
+            
+            while !self.peek_match(TokenType::CloseBracket) && !self.peek_match(TokenType::EOF) {
+                // Parse effect identifier (e.g., "throws", "suspend")
+                let effect_name = self.parse_identifier()?;
+                
+                // Check for parameterized effect: throws<ErrorType>
+                if self.peek_match(TokenType::LessThan) {
+                    self.consume(); // consume '<'
+                    let type_param = self.parse_type()?;
+                    self.consume_match(TokenType::GreaterThan)?;
+                    
+                    effects.push(Effect::Parameterized {
+                        name: effect_name,
+                        type_param,
+                    });
+                } else {
+                    effects.push(Effect::Simple(effect_name));
+                }
+                
+                // Consume comma if present (for multiple effects)
+                if self.peek_match(TokenType::Comma) {
+                    self.consume();
+                }
+            }
+            
+            self.consume_match(TokenType::CloseBracket)?;
+            effects
+        } else {
+            vec![]
+        };
+
         let name = self.parse_identifier()?;
         let type_parameters = self.parse_type_parameters()?;
         let parameters = self.parse_argument_list()?;
@@ -1143,18 +1178,6 @@ impl Parser {
         } else {
             None
         };
-
-        // Parse effect qualifiers (throws) after return type or parameters
-        let mut effects = vec![];
-        if self.peek_match(TokenType::Throws) {
-            if let Some(token) = self.consume() {
-                effects.push(Identifier {
-                    name: "throws".to_string(),
-                    line: token.line,
-                    col: token.col,
-                });
-            }
-        }
 
         let body = self.parse_block()?;
 
