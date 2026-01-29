@@ -1,4 +1,4 @@
-# Protosept Language Specification (Draft)
+# Protosept Language Specification (Draft 1.1)
 
 Status: Draft (v1 target)
 
@@ -6,12 +6,14 @@ Status: Draft (v1 target)
 > The short name **p7** may still appear in tooling, file extensions,
 > and internal identifiers. Unless otherwise stated, "Protosept" and "p7" refer to the same language.
 
-Design goals (north star):
-- **Statically typed scripting**: concise, readable, low ceremony.
-- **Limited syntax/grammar**: features must pay rent in simplicity and interop.
-- **Readability first**: prefer clarity and obvious semantics over brevity.
-- **Correctness by default**: explicit nullability, explicit borrowing, explicit identity/mutation.
-- **Host interop**: easy to embed; predictable runtime values and errors.
+Design Goals (North Star)
+
+*   **Statically Typed, Scripting Feel**: Concise abstractions and high-level ergonomics, backed by the rigor of a compiled, type-safe system.
+*   **Auditability First (Human-Centric Review)**: Code is read far more often than it is written, increasingly by humans reviewing AI-generated output. Syntax prioritizes clarity of *intent*, *data flow*, and *cost* over brevity. The "canonical" form of the code must be unambiguous.
+*   **Explicit Data Semantics**: The type system MUST transparently communicate ownership and cost. A reader must be able to distinguish a Value (`T`), a Borrowed View (`ref<T>`), and an Owned Heap Handle (`box<T>`) from the signature alone.
+*   **Seamless Host Interop**: Designed for embedding. The explicit memory model (values vs. handles) maps predictably to host systems, allowing safe, zero-cost sharing of host objects (via `ref`) and clear ownership boundaries (via `box`).
+*   **Ergonomics via Tooling**: While the stored code is explicit, the authoring experience is low-friction. The compiler supports syntactic shorthands (sigils) for rapid entry, which tooling can canonize to explicit forms for review.
+*   **Correctness by Default**: Explicit nullability, explicit borrowing, and explicit identity prevent entire classes of runtime errors.
 
 This document defines the intended *language semantics*. Where details are not finalized, sections use `[[TODO]]`.
 
@@ -195,6 +197,31 @@ Identifiers start with `_` or a letter and continue with letters, digits, or `_`
 - Line comments: `// ...`
 - Block comments: `/* ... */`
 
+### 2.4 Syntactic Shorthands (Sigils)
+
+To facilitate rapid authoring without sacrificing the auditability of the final code, the compiler accepts specific symbols (sigils) as synonyms for core keywords.
+
+**Canonicalization Rule:**
+While the compiler accepts these sigils, standard formatters and linters are encouraged to replace them with their keyword equivalents (`ref`, `box`) in stored source files to maximize readability for reviewers.
+
+| Sigil | Keyword Equivalent | Meaning | Usage (Type) | Usage (Expr) |
+| :--- | :--- | :--- | :--- | :--- |
+| **`&`** | `ref` | Borrowed View | `x: &T` $\to$ `x: ref<T>` | `&x` $\to$ `ref(x)` |
+| **`^`** | `box` | Owned Handle | `x: ^T` $\to$ `x: box<T>` | `^x` $\to$ `box(x)` |
+| **`?`** | `?` | Nullable | `x: ?T` $\to$ `x: ?T` | N/A |
+
+**Sigil Usage Rules:**
+1.  **Type Position:** Sigils may replace the generic type wrapper.
+    *   `&^int` is equivalent to `ref<box<int>>`.
+    *   `?^string` is equivalent to `?box<string>`.
+2.  **Expression Position:** Sigils act as prefix operators.
+    *   `let r = &x;` is equivalent to `let r = ref(x);`.
+    *   `let b = ^10;` is equivalent to `let b = box(10);`.
+    *   `let b = ^(10);` is equivalent to `let b = box(10);`.
+
+**Rationale for `^` (Caret):**
+The `^` symbol visually suggests a "pointer" or "handle" (pointing up to the heap). The `@` symbol is reserved for Attributes (§19).
+
 ---
 
 ## 3. Types (overview)
@@ -203,8 +230,8 @@ Types in v1:
 - Primitive: `int`, `float`, `bool`, `char`, `unit`, `ptr`
 - Built-in value types: `string`, `array<T>`, tuples `(T1, T2, ...)`
 - Nullability: `?T`
-- Borrowed view: `ref<T>`
-- Owned heap handle: `box<T>`
+- Borrowed view: `ref<T>` (Input: `&T`)
+- Owned heap handle: `box<T>` (Input: `^T`)
 - User-defined: `struct Name(...)`, `enum Name(...)`, `proto Name { ... }`
 - Compile-time generics: `T`, `array<T>`, `box<T>`, etc. (§20)
 
@@ -563,7 +590,7 @@ Not Send-eligible:
 
 ## 7. Borrowed views (`ref<T>`) and boxes (`box<T>`)
 
-### 7.1 Meaning of `ref<T>`
+### 7.1 Meaning of ref<T> (Input: &T)
 
 A value of type `ref<T>` is a read-only view of an addressable location holding a `T`.
 
@@ -609,15 +636,16 @@ let r = ref(x);
 let b = box(r);  // ERROR: cannot store ref<T> in box<...>
 ```
 
-### 7.4 Meaning and operations of `box<T>`
+### 7.4 Meaning of box<T> (Input: ^T)
 
 A `box<T>` is an identity-bearing heap cell containing a `T`.
 
 Operations (surface syntax v1):
 
-- Construction: `box(expr)`  
-  Allocates a new boxed cell containing `expr`.  
-  **Desugaring**: `box(expr)` desugars to `box<T>.new(expr)` where `T` is the type of `expr`. `box<T>.new` is an intrinsic method declared in the prelude. [[TODO]] specify prelude location/definition of `box<T>.new` (§23).
+- **Construction (Explicit Allocation):** Allocation is always explicit.
+  - Canonical: `box(expr)` allocates a new boxed cell containing `expr`.
+  - Shorthand: `^expr`
+  - **Desugaring**: `box(expr)` desugars to `box<T>.new(expr)` where `T` is the type of `expr`. `box<T>.new` is an intrinsic method declared in the prelude. [[TODO]] specify prelude location/definition of `box<T>.new` (§23).
 
 - Read / deref: `*b`
   - `*b` is an **addressable location** (place expression) referring to the boxed contents.
@@ -1772,6 +1800,8 @@ Multiple attributes are written by repetition:
 @export(name = "main")
 fn main() -> unit { ... }
 ```
+
+*   Note: The `@` symbol is exclusively for attributes. Heap boxing uses the `box` keyword or the `^` sigil to avoid ambiguity.
 
 ### 19.3 Values are typed struct constructors
 Attribute arguments follow struct construction rules (required fields provided, defaults allowed, names must match).
