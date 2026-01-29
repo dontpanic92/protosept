@@ -213,7 +213,7 @@ While the compiler accepts these sigils, standard formatters and linters are enc
 **Sigil Usage Rules:**
 1.  **Type Position:** Sigils may replace the generic type wrapper.
     *   `&^int` is equivalent to `ref<box<int>>`.
-    *   `?^String` is equivalent to `?box<String>`.
+    *   `?^string` is equivalent to `?box<string>`.
 2.  **Expression Position:** Sigils act as prefix operators.
     *   `let r = &x;` is equivalent to `let r = ref(x);`.
     *   `let b = ^10;` is equivalent to `let b = box(10);`.
@@ -230,8 +230,8 @@ Types in v1:
 - Primitive: `int`, `float`, `bool`, `char`, `unit`, `ptr`
 - Built-in value types: `string`, `array<T>`, tuples `(T1, T2, ...)`
 - Nullability: `?T`
-- Borrowed view: `ref<T>` (Shorthand input: `&T`)
-- Owned heap handle: `box<T>` (Shorthand input: `^T`)
+- Borrowed view: `ref<T>` (Input: `&T`)
+- Owned heap handle: `box<T>` (Input: `^T`)
 - User-defined: `struct Name(...)`, `enum Name(...)`, `proto Name { ... }`
 - Compile-time generics: `T`, `array<T>`, `box<T>`, etc. (§20)
 
@@ -642,13 +642,10 @@ A `box<T>` is an identity-bearing heap cell containing a `T`.
 
 Operations (surface syntax v1):
 
-- **Explicit Allocation:** Allocation is always explicit.
-  - Canonical: `box(expr)`
+- **Construction (Explicit Allocation):** Allocation is always explicit.
+  - Canonical: `box(expr)` allocates a new boxed cell containing `expr`.
   - Shorthand: `^expr`
-
-- Construction: `box(expr)`  
-  Allocates a new boxed cell containing `expr`.  
-  **Desugaring**: `box(expr)` desugars to `box<T>.new(expr)` where `T` is the type of `expr`. `box<T>.new` is an intrinsic method declared in the prelude. [[TODO]] specify prelude location/definition of `box<T>.new` (§23).
+  - **Desugaring**: `box(expr)` desugars to `box<T>.new(expr)` where `T` is the type of `expr`. `box<T>.new` is an intrinsic method declared in the prelude. [[TODO]] specify prelude location/definition of `box<T>.new` (§23).
 
 - Read / deref: `*b`
   - `*b` is an **addressable location** (place expression) referring to the boxed contents.
