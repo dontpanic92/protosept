@@ -13,6 +13,20 @@ impl Generator {
     pub(super) fn generate_expression(&mut self, expression: Expression) -> SaResult<Type> {
         match expression {
             Expression::Identifier(identifier) => {
+                // Handle `Self` keyword for type references in methods
+                if identifier.name == "Self" {
+                    if let Some(self_type) = &self.current_self_type {
+                        // Self is a type reference, not a value
+                        // This is used in contexts like Self(expr) for construction
+                        // Return the type but don't generate any bytecode
+                        return Ok(self_type.clone());
+                    } else {
+                        return Err(SemanticError::Other(
+                            "Self can only be used inside methods".to_string()
+                        ));
+                    }
+                }
+                
                 if let Some(var_id) = self
                     .local_scope
                     .as_mut()
@@ -602,11 +616,83 @@ impl Generator {
                             unimplemented!("Internal error: Type ID resolved to non-Struct UDT");
                         }
                     }
+                    Type::TypeDecl(type_id) => {
+                        let udt = self.symbol_table.get_udt(type_id);
+                        if let UserDefinedType::TypeDecl(type_decl) = udt {
+                            if is_static_access {
+                                // Static field access on types not supported
+                                return Err(SemanticError::TypeMismatch {
+                                    lhs: format!("Type '{}'", type_decl.qualified_name),
+                                    rhs: format!(
+                                        "Static field access on type '{}' (not supported)",
+                                        field.name
+                                    ),
+                                    pos: Some(SourcePos {
+                                        line: field.line,
+                                        col: field.col,
+                                    }),
+                                });
+                            } else {
+                                // Instance field access: only `self.0` is allowed to access representation
+                                // AND only from inside the type definition
+                                if field.name == "0" {
+                                    // Check if we're currently inside this type's definition
+                                    let inside_type_def = if let Some(ref current_type) = self.current_self_type {
+                                        if let Type::TypeDecl(current_id) = current_type {
+                                            *current_id == type_id
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    };
+                                    
+                                    if !inside_type_def {
+                                        return Err(SemanticError::TypeMismatch {
+                                            lhs: format!("Type instance '{}'", type_decl.qualified_name),
+                                            rhs: "Field .0 can only be accessed from inside the type definition".to_string(),
+                                            pos: Some(SourcePos {
+                                                line: field.line,
+                                                col: field.col,
+                                            }),
+                                        });
+                                    }
+                                    
+                                    // Access the underlying representation value
+                                    if let Some(repr_type) = &type_decl.representation {
+                                        // The value is already on the stack (transparent wrapper)
+                                        // No bytecode needed - the type is transparent at runtime
+                                        return Ok(repr_type.clone());
+                                    } else {
+                                        return Err(SemanticError::TypeMismatch {
+                                            lhs: format!("Type '{}'", type_decl.qualified_name),
+                                            rhs: "Type has no representation to access".to_string(),
+                                            pos: Some(SourcePos {
+                                                line: field.line,
+                                                col: field.col,
+                                            }),
+                                        });
+                                    }
+                                } else {
+                                    return Err(SemanticError::TypeMismatch {
+                                        lhs: format!("Type instance '{}'", type_decl.qualified_name),
+                                        rhs: format!("Unknown field '.{}' (only .0 is supported for types)", field.name),
+                                        pos: Some(SourcePos {
+                                            line: field.line,
+                                            col: field.col,
+                                        }),
+                                    });
+                                }
+                            }
+                        } else {
+                            unimplemented!("Internal error: Type ID resolved to non-TypeDecl UDT");
+                        }
+                    }
                     _ => {
                         // Primitives, Arrays, References cannot be field accessed via '.' syntax
                         return Err(SemanticError::TypeMismatch {
                             lhs: object_ty.to_string(),
-                            rhs: "Struct or Enum type/instance".to_string(),
+                            rhs: "Struct or Enum or Type type/instance".to_string(),
                             pos: Some(SourcePos {
                                 line: field.line,
                                 col: field.col,

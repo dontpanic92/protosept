@@ -1,0 +1,20 @@
+// Test Self constructor in struct methods
+import test.test;
+
+struct Point(x: int, y: int) {
+    fn origin() -> Point {
+        return Self(0, 0);  // Self constructor in struct
+    }
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_struct_self_constructor() -> int {
+    let p = Point.origin();
+    p.x
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_struct_external_construct() -> int {
+    let p = Point(42, 100);  // Struct can be constructed externally
+    p.x
+}

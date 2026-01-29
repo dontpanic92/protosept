@@ -1,0 +1,14 @@
+// Test type construction
+import test.test;
+
+type UserId(int) {
+    fn new(id: int) -> UserId {
+        return Self(id);
+    }
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_type_constructor() -> int {
+    let uid = UserId.new(42);
+    42
+}

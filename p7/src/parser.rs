@@ -178,7 +178,23 @@ impl Parser {
 
     fn parse_field_access(&mut self, object: Expression) -> ParseResult<Expression> {
         self.consume_match(TokenType::Dot)?;
-        let field = self.parse_identifier()?;
+        
+        // Parse field name - can be either an identifier or an integer (for tuple-like access)
+        let field = match self.peek() {
+            Some(Token {
+                token_type: TokenType::Integer(n),
+                line,
+                col,
+                ..
+            }) => {
+                let name = n.to_string();
+                let line = *line;
+                let col = *col;
+                self.consume(); // consume the integer token
+                Identifier { name, line, col }
+            }
+            _ => self.parse_identifier()?,
+        };
 
         Ok(Expression::FieldAccess {
             object: Box::new(object),
