@@ -16,7 +16,7 @@ enum SimpleError(
 
 // ===== Helper Functions =====
 
-fn thrower(value: int) -> int throws {
+fn[throws] thrower(value: int) -> int {
     if value == 1 {
         throw ErrorType.ErrorA;
     }
@@ -29,11 +29,11 @@ fn thrower(value: int) -> int throws {
     value
 }
 
-fn simple_thrower() -> int throws {
+fn[throws] simple_thrower() -> int {
     throw SimpleError.NotFound;
 }
 
-fn maybe_throw(should_throw: int) -> int throws {
+fn[throws] maybe_throw(should_throw: int) -> int {
     if should_throw == 1 {
         throw SimpleError.NotFound;
     }
