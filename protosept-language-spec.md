@@ -185,11 +185,23 @@ helpers.private_helper();  // ERROR
 ### 2.1 Identifiers
 Identifiers start with `_` or a letter and continue with letters, digits, or `_`.
 
-### 2.2 Keywords (reserved)
-`fn`, `struct`, `enum`, `proto`, `let`, `var`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`, `import`, `as`, `box`, `robox`
+### 2.2 Keywords and identifiers
+
+**Reserved keywords** (minimal set):  
+`fn`, `struct`, `enum`, `proto`, `let`, `var`, `pub`, `return`, `if`, `else`, `loop`, `break`, `continue`, `for`, `in`, `ref`, `import`, `as`, `box`, `robox`
 
 `true` and `false` are **keywords** (boolean literals).  
 `null` is a keyword (null literal).
+
+**Contextual keywords** (not reserved; allowed as identifiers in most contexts):  
+`throw`, `try`, `yield`
+
+These keywords have special meaning only in specific syntactic positions (e.g., `throw` in statement position within a function with the `throws` effect; `try` in expression position; `yield` in statement position within a function with the `suspend` effect). Elsewhere, they may be used as ordinary identifiers.
+
+**Effect identifiers** (used in function effect sets):  
+`throws`, `suspend`
+
+These identifiers are recognized in the effect syntax `fn[effect1, effect2, ...]` to declare function effects. They are not reserved as keywords and may be used as ordinary identifiers in other contexts.
 
 [[TODO]] confirm final keyword set; keep minimal.
 
@@ -798,7 +810,7 @@ Protosept has two failure channels:
 
 2) **THROWs (typed errors)**: recoverable failures represented by enum values.
    - THROWN values can be handled or propagated using `try` (§14).
-   - The type system tracks which functions may throw (`throws` / `throws<E>`).
+   - The type system tracks which functions may throw via the `throws` or `throws<E>` effect (§11.2).
 
 Host-visible outcomes of calling a Protosept function are:
 - Returned(value)
@@ -1058,7 +1070,7 @@ Statement forms:
 - `while` statement (§9.5): `while condition { body }`
 - `for` statement (§10.3)
 - `return;` or `return expr;`
-- `throw expr;` (only in `throws` functions; §14)
+- `throw expr;` (only in functions with `throws` or `throws<E>` effect; §14)
 - `break;` / `break expr;`
 - `continue;`
 - assignment statement (§10.2)
@@ -1123,27 +1135,44 @@ fn name(p1: T1, p2: T2, ...) -> R { ... }
 
 - If `-> R` is omitted, return type is `unit`.
 
-### 11.2 Execution qualifiers and effect qualifiers
+### 11.2 Function effects (unified syntax)
 
-Execution qualifier (before `fn`):
-- `suspend` (Fiber extension; §21)
-
-Effect qualifier (after return type or after parameter list if return type omitted):
+**Canonical form** (v1):
 ```p7
-fn name(...) -> R throws { ... }
-fn name(...) -> R throws<E> { ... }
-fn name(...) throws { ... }       // return defaults to unit
-fn name(...) throws<E> { ... }
+fn[effect1, effect2, ...] name(p1: T1, p2: T2, ...) -> R { ... }
 ```
 
-`throws` means may throw any enum value.  
-`throws<E>` means may throw only values of enum type `E`.
+The effect set is specified in square brackets immediately after `fn`. Effects are a **set**:
+- **Duplicates are ERROR**: `fn[throws, throws]` is invalid.
+- **Order is not semantically significant**: `fn[throws, suspend]` and `fn[suspend, throws]` are equivalent.
+
+**v1 effect identifiers** (closed set):
+- `throws`: may throw any enum value
+- `throws<E>`: may throw only values of enum type `E` (parameterized effect)
+- `suspend`: may suspend via `yield` (Fiber extension; §21)
+
+Examples:
+```p7
+fn[throws] read_file(path: string) -> string { ... }
+fn[throws<FileError>] safe_read(path: string) -> string { ... }
+fn[suspend] fiber_task() { ... }
+fn[throws, suspend] async_read(path: string) -> string { ... }
+```
+
+**Legacy qualifier forms** (non-normative):
+
+For compatibility with earlier drafts, implementations MAY accept the following as shorthands during parsing, but the canonical stored spelling is `fn[...]`:
+- `suspend fn name(...)` → `fn[suspend] name(...)`
+- `fn name(...) throws` → `fn[throws] name(...)`
+- `fn name(...) throws<E>` → `fn[throws<E>] name(...)`
+
+Formatters and code review tools SHOULD replace legacy forms with the unified `fn[...]` syntax.
 
 Grammar sketch:
 ```
-function_decl := [execution_qualifier] 'fn' name '(' params ')' ['->' type] [effect_qualifier] block
-execution_qualifier := 'suspend'
-effect_qualifier := 'throws' | 'throws' '<' enum_type '>'
+function_decl := 'fn' ['[' effect_list ']'] name '(' params ')' ['->' type] block
+effect_list := effect (',' effect)*
+effect := 'throws' ['<' enum_type '>'] | 'suspend'
 ```
 
 ### 11.3 Parameter passing
@@ -1549,10 +1578,13 @@ enum Option<T>(
 
 Rules:
 - `expr` MUST have an `enum` type.
-- `throw` is permitted only in functions declared `throws` or `throws<E>`.
-- In `throws<E>`, the thrown enum type MUST be exactly `E`.
+- `throw` is a **contextual keyword**: it is permitted only in functions with `throws` or `throws<E>` in their effect set (§11.2).
+- In functions with `throws<E>`, the thrown enum type MUST be exactly `E`.
+- Outside a function with a `throws` effect, `throw` has no special meaning and may be used as an ordinary identifier.
 
 ### 14.2 `try` (propagate and handle)
+
+`try` is a **contextual keyword**: in expression position, it introduces a try-expression. Elsewhere, it may be used as an ordinary identifier.
 
 `try` is an expression with two forms:
 
@@ -1590,7 +1622,7 @@ enum FileError(
   PermissionDenied,
 );
 
-fn read_file(path: string) -> string throws<FileError> { ... }
+fn[throws<FileError>] read_file(path: string) -> string { ... }
 
 fn safe_read(path: string) -> string {
   try read_file(path) else {
@@ -1618,15 +1650,15 @@ Exhaustiveness:
 - The pattern-matching handler form MUST be exhaustive (same as `match`, §9.6.4).
 - Include a wildcard arm `_ => ...` to handle all error variants.
 
-### 14.3 Calling `throws` functions (explicitness rule)
+### 14.3 Calling functions with `throws` effect (explicitness rule)
 
-If a call may throw, the call MUST appear inside a `try` form. Bare calls are ERROR, even within `throws` functions.
+If a call may throw (i.e., the callee has `throws` or `throws<E>` in its effect set), the call MUST appear inside a `try` form. Bare calls are ERROR, even within functions that themselves have a `throws` effect.
 
-In a non-`throws` function:
+In a function without a `throws` effect:
 - only the handle form is allowed: `try call else ...`
 - the propagate form is ERROR.
 
-In a `throws` / `throws<E>` function:
+In a function with a `throws` or `throws<E>` effect:
 - either propagate or handle form is allowed.
 
 [[TODO]] finalize propagation compatibility rules for `throws<E>` (exact-match vs subtyping). Recommended for v1: exact match.
@@ -2198,25 +2230,41 @@ fn duplicate<T: Copy>(x: T) -> Pair<T, T> {
 Status: optional extension.
 
 ### 21.1 Availability
-When disabled, `suspend fn` and `yield` are ERROR.
+When disabled, functions with the `suspend` effect and `yield` are ERROR.
 
 [[TODO]] define how to enable (flag/import/host config).
 
-### 21.2 `suspend fn`
+### 21.2 Functions with `suspend` effect
 
-A `suspend fn` may suspend via `yield;`.
+A function with the `suspend` effect (declared as `fn[suspend]` or `fn[suspend, ...]`) may suspend via `yield;`.
+
+Example:
+```p7
+fn[suspend] fiber_task() {
+  yield;
+  // ... continues after resume
+}
+
+fn[throws, suspend] async_operation() -> int {
+  yield;
+  if error_condition { throw SomeError.Failed; }
+  return 42;
+}
+```
 
 Borrow restriction (v1):
-- In a `suspend fn`, use of `ref<...>` is forbidden:
+- In a function with the `suspend` effect, use of `ref<...>` is forbidden:
   - parameters of type `ref<T>` are ERROR
   - locals of type `ref<T>` are ERROR
   - `ref(x)` expression is ERROR
 Rationale: avoids views living across suspension points without lifetime tracking.
 
 Direct calling restriction (recommended):
-- `suspend fn` may be called directly only from within another `suspend fn`. [[TODO]] finalize.
+- Functions with the `suspend` effect may be called directly only from within other functions with the `suspend` effect. [[TODO]] finalize.
 
 ### 21.3 `yield;`
+
+`yield;` is a **contextual keyword**: in statement position within a function with the `suspend` effect, it suspends the current fiber. Elsewhere, it may be used as an ordinary identifier.
 
 - `yield;` suspends the current fiber.
 - On resume, execution continues after the `yield;`.
@@ -2224,7 +2272,7 @@ Direct calling restriction (recommended):
 ### 21.4 Host interop (fibers)
 
 Host must support:
-- starting a fiber from a `suspend fn`
+- starting a fiber from a function with the `suspend` effect
 - resuming a fiber until it yields/returns/throws
 
 Outcome per resume:
@@ -2240,7 +2288,7 @@ spawn f(args...);
 ```
 
 Rules:
-- `f` MUST refer to a `suspend fn`.
+- `f` MUST refer to a function with the `suspend` effect.
 - `spawn` is a statement returning `unit` in v1.
 
 Semantics:
