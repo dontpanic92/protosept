@@ -1,0 +1,18 @@
+// compile_fail: struct method has wrong return type
+// Test struct protocol conformance - wrong return type
+import test.test;
+
+// Define a protocol
+proto Formatter {
+  fn format(self: ref<Formatter>) -> int;
+}
+
+// Struct with wrong return type (returns float instead of int)
+struct[Formatter] BadFormatter(
+  value: int,
+) {
+  pub fn format(self: ref<BadFormatter>) -> float {
+    1.0
+  }
+}
+
