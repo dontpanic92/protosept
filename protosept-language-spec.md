@@ -186,7 +186,7 @@ helpers.private_helper();  // ERROR
 Identifiers start with `_` or a letter and continue with letters, digits, or `_`.
 
 ### 2.2 Keywords (reserved)
-`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`, `import`, `as`, `box`
+`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`, `import`, `as`, `box`, `robox`
 
 `true` and `false` are **keywords** (boolean literals).  
 `null` is a keyword (null literal).
@@ -232,8 +232,9 @@ Types in v1:
 - Nullability: `?T`
 - Borrowed view: `ref<T>` (Input: `&T`)
 - Owned heap handle: `box<T>` (Input: `^T`)
+- Read-only heap handle: `robox<T>`
 - User-defined: `struct Name(...)`, `enum Name(...)`, `proto Name { ... }`
-- Compile-time generics: `T`, `array<T>`, `box<T>`, etc. (§20)
+- Compile-time generics: `T`, `array<T>`, `box<T>`, `robox<T>`, etc. (§20)
 
 ---
 
@@ -421,6 +422,32 @@ let y = p.1;  // y has type string, value "test"
 
 ---
 
+## 3.8 Read-only heap handle types: `robox<T>`
+
+`robox<T>` is a **read-only heap-allocated identity container** holding a `T`.
+
+- `robox<T>` values can escape (stored, returned, captured, interop).
+- `robox<T>` is **Copy-treated**: copying a robox copies the handle; all copies alias the same boxed cell.
+- `robox<T>` **forbids mutation** through the handle:
+  - `*rb = ...` is ERROR when `rb: robox<T>`.
+  - `rb.field = ...` is ERROR when `rb: robox<S>`.
+- `robox<T>` supports borrowing boxed contents with `ref(*rb)`.
+- Dereferencing `*rb` as a value is allowed only when `T` is Copy-eligible; otherwise ERROR (mirroring the `box<T>` rule).
+- Method-call behavior:
+  - Calling methods with `ref self` receivers on `robox<Self>` is allowed via auto-borrow to `ref(*rb)` (§11.3.1).
+  - Calling `box self` methods on `robox<Self>` is ERROR.
+
+**Relationship to `box<T>`:**
+
+- `box<T>` may implicitly coerce to `robox<T>` (capability-weakening) in checking/expected-type contexts:
+  - Assignment to an annotated `robox<T>` type.
+  - Argument passing to a `robox<T>` parameter.
+  - Function return when the return type is `robox<T>`.
+  - Contextual branch/join with expected type `robox<T>`.
+- The reverse coercion `robox<T> -> box<T>` is **not** allowed (ERROR). There is no v1 mechanism for downcast.
+
+---
+
 ## 4. Values and literals
 
 ### 4.1 Integer literals
@@ -550,6 +577,7 @@ Copy-treated by default in v1:
 - Primitives
 - `string`
 - `box<T>`
+- `robox<T>`
 - `ref<T>`
 - `?T` iff `T` is Copy-treated (by composition)
 - User-defined `struct` types are Copy-treated **only if** they opt in via `struct[Copy] ...`.
@@ -581,14 +609,15 @@ Send-eligible in v1:
 
 Not Send-eligible:
 - `box<T>`
+- `robox<T>`
 - `ref<T>`
-- Any type transitively containing `box<...>` or `ref<...>`
+- Any type transitively containing `box<...>`, `robox<...>`, or `ref<...>`
 
 `Send` is primarily used by the Threading extension (§22), but is always available in the core language.
 
 ---
 
-## 7. Borrowed views (`ref<T>`) and boxes (`box<T>`)
+## 7. Borrowed views (`ref<T>`), boxes (`box<T>`), and read-only boxes (`robox<T>`)
 
 ### 7.1 Meaning of ref<T> (Input: &T)
 
@@ -670,6 +699,48 @@ Operations (surface syntax v1):
 - Member auto-deref:
   - `b.field`, `b.method(...)` act as if on the inner `T`.
   - Field assignment is allowed for boxed structs: `b.field = expr` updates the inner field in place (requires `b: box<S>`).
+
+### 7.5 Meaning of robox<T>
+
+A `robox<T>` is a **read-only** identity-bearing heap cell containing a `T`.
+
+Operations (surface syntax v1):
+
+- **Construction:** `robox<T>` values are typically obtained via coercion from `box<T>` (see below). There is no direct `robox(expr)` syntax; construction requires first creating a `box<T>` and coercing it.
+
+- Read / deref: `*rb` (where `rb: robox<T>`)
+  - `*rb` is **not** a mutable place; it cannot appear on the left side of assignment.
+  - If `T` is Copy-eligible, `*rb` as a value expression yields a copy of type `T`.
+  - If `T` is not Copy-eligible, using `*rb` as a value expression is ERROR (mirroring the `box<T>` rule).
+
+- Write: `*rb = expr` is **ERROR** when `rb: robox<T>`.
+
+- **Borrowing boxed contents**: `ref(*rb)`
+  - Produces a `ref<T>` view of the boxed contents.
+  - Permitted for **any** `T`, including non-Copy-treated types.
+  - The resulting `ref<T>` follows all `ref<...>` rules (§7.1, §7.3).
+  - When `T` is an object proto `P`, `ref(*rb)` yields `ref<P>` and is dynamically dispatched per §18.
+
+- Member auto-deref:
+  - `rb.field` reads the field (no assignment allowed).
+  - `rb.field = expr` is **ERROR** when `rb: robox<S>`.
+  - `rb.method(...)` is allowed when the method has a `ref self` receiver (desugars to `Type.method(ref(*rb), ...)` per §11.3.1).
+  - Calling methods with `box self` receivers on `robox<Self>` is ERROR.
+
+**Coercion from `box<T>` to `robox<T>`:**
+
+In **checking/expected-type contexts**, a `box<T>` value may implicitly coerce to `robox<T>` (capability-weakening):
+
+- Assignment: `let rb: robox<T> = b;` where `b: box<T>`.
+- Parameter passing: `f(b)` where `f` expects `robox<T>` and `b: box<T>`.
+- Return: `return b;` where the function return type is `robox<T>` and `b: box<T>`.
+- Branch/join: if/else branches with expected type `robox<T>` may return `box<T>` expressions.
+
+The reverse coercion `robox<T> -> box<T>` is **not** allowed (ERROR).
+
+**Rationale:**
+
+`robox<T>` provides a type-safe mechanism to share heap-allocated values without permitting mutation, enabling safer API boundaries and immutable views of mutable data.
 
 ---
 
@@ -967,6 +1038,9 @@ Rules:
 - `place` MUST be an addressable location that is mutable by definition:
   - boxed deref: `*b = expr` where `b: box<T>`
   - boxed field: `b.field = expr` where `b: box<S>`
+- Assignment to read-only boxes is ERROR:
+  - `*rb = expr` where `rb: robox<T>` is ERROR.
+  - `rb.field = expr` where `rb: robox<S>` is ERROR.
 - Assigning to a slot (`x = expr`) is ERROR.
 - Assignment does not produce a value.
 
@@ -1035,6 +1109,9 @@ For `ref<T>` parameters:
 
 Mutation requires `box<T>` parameters.
 
+For `robox<T>` parameters:
+- A `box<T>` argument may be passed and will implicitly coerce to `robox<T>` (§7.5).
+
 #### 11.3.1 Method-call auto-borrow sugar for `ref self` receivers
 
 For method calls only, p7 provides auto-borrow sugar when the method has a `ref self` receiver:
@@ -1044,6 +1121,7 @@ For method calls only, p7 provides auto-borrow sugar when the method has a `ref 
 - `recv.method(args...)` where `method` has a `ref self` receiver desugars as follows:
   - If `recv` has type `Self` and is an addressable location: desugars to `Type.method(ref(recv), args...)`.
   - If `recv` has type `box<Self>`: desugars to `Type.method(ref(*recv), args...)`. The receiver `recv` may be any value (including temporaries), as the borrow is taken of the dereferenced contents `*recv`.
+  - If `recv` has type `robox<Self>`: desugars to `Type.method(ref(*recv), args...)`. The receiver `recv` may be any value (including temporaries), as the borrow is taken of the dereferenced contents `*recv`.
   - If `recv` already has type `ref<Self>`: it is passed directly to the `ref self` parameter without desugaring.
   - The receiver is evaluated exactly once.
 
@@ -1082,8 +1160,9 @@ Methods on structs, enums, and protos may declare a receiver parameter. The rece
 - The receiver is the first parameter; it is written before other parameters without a trailing comma.
 - No implicit boxing occurs to satisfy a receiver:
   - A method with `self: box<Self>` requires the caller to have `box<Self>`, not just `Self`.
-- For methods with `ref self` receivers, the auto-borrow sugar (§11.3.1) applies at method call sites.
+- For methods with `ref self` receivers, the auto-borrow sugar (§11.3.1) applies at method call sites for `box<Self>` and `robox<Self>` receivers.
 - Boxed receivers (`self: box<Self>`) pass the box handle, which is Copy-treated. This allows multiple method calls on the same box without moving the box itself.
+- Calling a method with a `box self` receiver on a `robox<Self>` value is ERROR (capability mismatch).
 
 **Example:**
 ```p7
@@ -1100,6 +1179,10 @@ let c = box(Counter(0));
 c.increment();   // ok: box handle is Copy-treated, box is not moved
 c.increment();   // ok: can call again
 let n = c.get(); // ok: desugars to Counter.get(ref(*c)) per §11.3.1
+
+let rc: robox<Counter> = c;
+// rc.increment(); // ERROR: increment requires box self, but rc is robox<Counter>
+let m = rc.get();  // ok: get only requires ref self, desugars to Counter.get(ref(*rc))
 ```
 
 ---
@@ -1550,6 +1633,23 @@ Rule: `default_expr` MUST have type `T`.
 - Requires `x: ?T`.
 - If `x` is non-null, yields `T`.
 - If `x` is `null`, evaluation TRAPs.
+
+### 15.3 Heap handle coercions
+
+#### 15.3.1 `box<T>` to `robox<T>` capability-weakening
+
+In **checking/expected-type contexts**, a `box<T>` value may implicitly coerce to `robox<T>`:
+
+- Assignment to an annotated `robox<T>` type: `let rb: robox<T> = b;` where `b: box<T>`.
+- Parameter passing: `f(b)` where `f` expects `robox<T>` and `b: box<T>`.
+- Return: `return b;` where the function return type is `robox<T>` and `b: box<T>`.
+- Branch/join: if/else branches with expected type `robox<T>` may return `box<T>` expressions.
+
+The reverse coercion `robox<T> -> box<T>` is **not** allowed (ERROR).
+
+**Rationale:**
+
+This coercion is safe because it removes capabilities (mutation) without adding any. It enables flexible API design where functions can accept read-only handles while callers with mutable handles can pass them without explicit conversion.
 
 ---
 
