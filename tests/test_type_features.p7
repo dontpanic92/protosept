@@ -1,4 +1,4 @@
-// Test type construction and field access
+// Test type construction
 import test.test;
 
 type UserId(int) {
@@ -11,10 +11,4 @@ type UserId(int) {
 fn test_type_constructor() -> int {
     let uid = UserId.new(42);
     42
-}
-
-@test(expected_type = "int", expected_value = "100")
-fn test_type_field() -> int {
-    let uid = UserId.new(100);
-    uid.0
 }

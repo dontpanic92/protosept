@@ -1052,26 +1052,50 @@ impl Generator {
             }
             
             // First try type-name constructor (e.g., Point(...))
-            // Handle Self(...) for type construction inside methods
+            // Handle Self(...) for type and struct construction inside methods
             if call_name == "Self" {
                 if let Some(self_type) = &self.current_self_type {
-                    if let Type::TypeDecl(type_id) = self_type {
-                        return self.generate_type_from_call(
-                            crate::ast::FunctionCall {
-                                callee: Box::new(Expression::Identifier(crate::ast::Identifier {
-                                    name: "Self".to_string(),
-                                    line: call_line,
-                                    col: call_col,
-                                })),
-                                arguments,
-                            },
-                            *type_id,
-                        );
-                    } else {
-                        return Err(SemanticError::Other(format!(
-                            "Self(...) constructor is only valid for type declarations at line {} column {}",
-                            call_line, call_col
-                        )));
+                    match self_type {
+                        Type::TypeDecl(type_id) => {
+                            return self.generate_type_from_call(
+                                crate::ast::FunctionCall {
+                                    callee: Box::new(Expression::Identifier(crate::ast::Identifier {
+                                        name: "Self".to_string(),
+                                        line: call_line,
+                                        col: call_col,
+                                    })),
+                                    arguments,
+                                },
+                                *type_id,
+                            );
+                        }
+                        Type::Struct(type_id) => {
+                            return self.generate_struct_from_call(
+                                crate::ast::FunctionCall {
+                                    callee: Box::new(Expression::Identifier(crate::ast::Identifier {
+                                        name: "Self".to_string(),
+                                        line: call_line,
+                                        col: call_col,
+                                    })),
+                                    arguments,
+                                },
+                                *type_id,
+                            );
+                        }
+                        Type::Enum(type_id) => {
+                            // For enums, Self can't be called directly as a constructor
+                            // Enums use Self.VariantName(...) syntax
+                            return Err(SemanticError::Other(format!(
+                                "Self(...) constructor is not valid for enums. Use Self.VariantName(...) at line {} column {}",
+                                call_line, call_col
+                            )));
+                        }
+                        _ => {
+                            return Err(SemanticError::Other(format!(
+                                "Self(...) constructor is only valid for struct and type declarations at line {} column {}",
+                                call_line, call_col
+                            )));
+                        }
                     }
                 } else {
                     return Err(SemanticError::Other(format!(
@@ -1097,21 +1121,14 @@ impl Generator {
                 );
             }
             
-            // Also check for type declarations
+            // Check for type declarations - types cannot be constructed externally
             if let Some(ty) = self.symbol_table.find_type_in_scope(&call_name)
-                && let Type::TypeDecl(type_id) = ty
+                && let Type::TypeDecl(_type_id) = ty
             {
-                return self.generate_type_from_call(
-                    crate::ast::FunctionCall {
-                        callee: Box::new(Expression::Identifier(crate::ast::Identifier {
-                            name: call_name.clone(),
-                            line: call_line,
-                            col: call_col,
-                        })),
-                        arguments,
-                    },
-                    type_id,
-                );
+                return Err(SemanticError::Other(format!(
+                    "Type '{}' cannot be constructed directly. Use a static method instead (e.g., {}.new(...)) at line {} column {}",
+                    call_name, call_name, call_line, call_col
+                )));
             }
 
             if let Some(symbol_id) = self.symbol_table.find_symbol_in_scope(&call_name) {

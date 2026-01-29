@@ -634,7 +634,30 @@ impl Generator {
                                 });
                             } else {
                                 // Instance field access: only `self.0` is allowed to access representation
+                                // AND only from inside the type definition
                                 if field.name == "0" {
+                                    // Check if we're currently inside this type's definition
+                                    let inside_type_def = if let Some(ref current_type) = self.current_self_type {
+                                        if let Type::TypeDecl(current_id) = current_type {
+                                            *current_id == type_id
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    };
+                                    
+                                    if !inside_type_def {
+                                        return Err(SemanticError::TypeMismatch {
+                                            lhs: format!("Type instance '{}'", type_decl.qualified_name),
+                                            rhs: "Field .0 can only be accessed from inside the type definition".to_string(),
+                                            pos: Some(SourcePos {
+                                                line: field.line,
+                                                col: field.col,
+                                            }),
+                                        });
+                                    }
+                                    
                                     // Access the underlying representation value
                                     if let Some(repr_type) = &type_decl.representation {
                                         // The value is already on the stack (transparent wrapper)
