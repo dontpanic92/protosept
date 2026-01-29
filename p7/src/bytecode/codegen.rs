@@ -87,7 +87,7 @@ impl Generator {
                     .map(|(name, ty)| Variable {
                         name: name.clone(),
                         ty: ty.clone(),
-                        is_mutable: true, // Parameters are mutable by default (per spec)
+                        is_mutable: false, // Parameters are immutable
                     })
                     .collect();
                 
@@ -264,7 +264,7 @@ impl Generator {
                     Ok(Variable {
                         name: arg.name.name.clone(),
                         ty: Type::Primitive(PrimitiveType::Unit), // Placeholder
-                        is_mutable: true, // Parameters are mutable by default (per spec)
+                        is_mutable: false, // Parameters are immutable
                     })
                 })
                 .collect::<SaResult<Vec<Variable>>>()?;
@@ -286,7 +286,7 @@ impl Generator {
                         Ok(Variable {
                             name: arg.name.name.clone(),
                             ty,
-                            is_mutable: true, // Parameters are mutable by default (per spec)
+                            is_mutable: false, // Parameters are immutable
                         })
                     })
                 })

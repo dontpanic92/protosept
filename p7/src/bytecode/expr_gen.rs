@@ -243,22 +243,11 @@ impl Generator {
                                     )));
                                 }
                                 
-                                // Check type compatibility
-                                if !self.types_compatible(&rhs_ty, &lhs_ty) {
-                                    return Err(SemanticError::TypeMismatch {
-                                        lhs: format!("parameter '{}' has type {}", identifier.name, lhs_ty.to_string()),
-                                        rhs: format!("assigned value has type {}", rhs_ty.to_string()),
-                                        pos: Some(SourcePos {
-                                            line: identifier.line,
-                                            col: identifier.col,
-                                        }),
-                                    });
-                                }
-
-                                // Store into parameter slot (no separate stpar instruction exists;
-                                // emit Stvar to simplify codegen — runtime layout may treat params differently)
-                                self.builder.stvar(param_id);
-                                return Ok(Type::Primitive(PrimitiveType::Unit));
+                                // Parameters are immutable
+                                return Err(SemanticError::Other(format!(
+                                    "Cannot assign to immutable parameter '{}' (parameters are always immutable)",
+                                    identifier.name
+                                )));
                             } else {
                                 return Err(SemanticError::VariableNotFound {
                                     name: identifier.name,
