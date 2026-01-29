@@ -509,13 +509,12 @@ fn maybe_int() -> ?int {
 
 - `var` slots can be reassigned: `x = new_expr;` where `new_expr` has the same type as the slot.
 - `var` slots are mutable but NOT addressable (see §0); borrowing via `ref(x)` where `x` is a `var` slot is ERROR.
-- Assignment is otherwise permitted only to addressable locations that are mutable by definition (boxed contents), see §10.2.
 
 ### 5.2 Shadowing
 
 A `let` or `var` may introduce a new binding with the same name as an outer binding.
 
-Rule: if `x` shadows `x`, the new binding MUST have the **same type** as the shadowed binding. The mutability (whether `let` or `var`) may differ.
+Rule: if `x` shadows `x`, the new binding MUST have the **same type** as the shadowed binding. The mutability may differ (i.e., a `let` binding may shadow a `var` binding and vice versa).
 
 Example:
 ```p7
@@ -568,8 +567,10 @@ fn sum(arr: array<int>) -> int {
 
 ```p7
 var count = 0;
-// let r = ref(count);  // ERROR: var slots are not addressable locations
+let r = ref(count);  // ERROR
 ```
+
+This is ERROR because `var` slots are not addressable locations.
 
 ---
 
@@ -678,8 +679,7 @@ A value of type `ref<T>` is a read-only view of an addressable location holding 
 `ref(place)` produces a `ref<T>` when `place` is an addressable location of type `T`.
 
 Requirements:
-- `place` MUST be an addressable location (see §0).
-- `var` slots are NOT addressable; `ref(x)` where `x` is a `var` slot is ERROR.
+- `place` MUST be an addressable location (see §0). Note that `var` slots are not addressable.
 
 In v1, borrowing is always explicit:
 - There is no implicit borrowing at call sites (except for method-call auto-borrow sugar; see §11.3.1).
