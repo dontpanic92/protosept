@@ -1079,55 +1079,6 @@ impl Parser {
         }
     }
 
-    fn parse_type_declaration(&mut self, attributes: Vec<Attribute>, is_pub: bool) -> ParseResult<Statement> {
-        self.consume_match(TokenType::Type)?;
-        
-        // Parse optional conformance list: type[Proto1, Proto2]
-        let conformance = if self.peek_match(TokenType::OpenBracket) {
-            self.consume();
-            let mut protos = vec![];
-            
-            // Parse first protocol
-            protos.push(self.parse_identifier()?);
-            
-            // Parse additional protocols separated by commas
-            while self.peek_match(TokenType::Comma) {
-                self.consume();
-                protos.push(self.parse_identifier()?);
-            }
-            
-            self.consume_match(TokenType::CloseBracket)?;
-            protos
-        } else {
-            vec![]
-        };
-        
-        let name = self.parse_identifier()?;
-        let type_parameters = self.parse_type_parameters()?;
-
-        // Parse optional representation: type Name(ReprType)
-        let representation = if self.peek_match(TokenType::OpenParen) {
-            self.consume();
-            let repr_type = self.parse_type()?;
-            self.consume_match(TokenType::CloseParen)?;
-            Some(repr_type)
-        } else {
-            None
-        };
-
-        match_token! {
-            self.peek(),
-            TokenType::Semicolon => {
-                self.consume();
-                return Ok(Statement::TypeDeclaration { is_pub, name, attributes, conformance, type_parameters, representation, methods: vec![] });
-            },
-            TokenType::OpenBrace => {
-                let methods = self.parse_struct_method_list()?;
-                return Ok(Statement::TypeDeclaration { is_pub, name, attributes, conformance, type_parameters, representation, methods });
-            },
-        }
-    }
-
     fn parse_proto_method(&mut self) -> ParseResult<ProtoMethod> {
         self.consume_match(TokenType::Fn)?;
         let name = self.parse_identifier()?;
@@ -1504,7 +1455,6 @@ impl Parser {
             Some(TokenType::Enum) => self.parse_enum_declaration(attributes, is_pub),
             Some(TokenType::Struct) => self.parse_struct_declaration(attributes, is_pub),
             Some(TokenType::Proto) => self.parse_proto_declaration(attributes, is_pub),
-            Some(TokenType::Type) => self.parse_type_declaration(attributes, is_pub),
             // Some(TokenType::If) => self.parse_if_expression().map(Statement::Expression),
             Some(TokenType::Return) => {
                 if is_pub {

@@ -366,7 +366,6 @@ impl Generator {
                     self.current_self_type = match &parent_symbol.kind {
                         SymbolKind::Struct(type_id) => Some(Type::Struct(*type_id)),
                         SymbolKind::Enum(type_id) => Some(Type::Enum(*type_id)),
-                        SymbolKind::TypeDecl(type_id) => Some(Type::TypeDecl(*type_id)),
                         _ => None,
                     };
                 }
@@ -681,84 +680,6 @@ impl Generator {
 
                         return Ok(ret_type);
                     }
-                    // Handle type declarations static method call: Type.method(args)
-                    if let Type::TypeDecl(_type_id) = ty {
-                        // Find the type symbol and then the method as its child
-                        let type_symbol_id = self
-                            .symbol_table
-                            .find_symbol_in_scope(&ident.name)
-                            .ok_or(SemanticError::FunctionNotFound {
-                                name: format!("{}.{}", ident.name, field.name),
-                                pos: Some(SourcePos {
-                                    line: field.line,
-                                    col: field.col,
-                                }),
-                            })?;
-
-                        let type_symbol = self.symbol_table.get_symbol(type_symbol_id).unwrap();
-                        let method_symbol_id =
-                            type_symbol.children.get(&field.name).cloned().ok_or(
-                                SemanticError::FunctionNotFound {
-                                    name: format!("{}.{}", ident.name, field.name),
-                                    pos: Some(SourcePos {
-                                        line: field.line,
-                                        col: field.col,
-                                    }),
-                                },
-                            )?;
-
-                        let method_symbol = self.symbol_table.get_symbol(method_symbol_id).unwrap();
-                        let (_addr, type_id) = match method_symbol.kind {
-                            SymbolKind::Function { address, type_id } => (address, type_id),
-                            _ => {
-                                return Err(SemanticError::FunctionNotFound {
-                                    name: format!("{}.{}", ident.name, field.name),
-                                    pos: Some(SourcePos {
-                                        line: field.line,
-                                        col: field.col,
-                                    }),
-                                });
-                            }
-                        };
-
-                        let function_udt = match self.symbol_table.get_udt(type_id) {
-                            UserDefinedType::Function(f) => f.clone(),
-                            _ => {
-                                return Err(SemanticError::FunctionNotFound {
-                                    name: format!("{}.{}", ident.name, field.name),
-                                    pos: Some(SourcePos {
-                                        line: field.line,
-                                        col: field.col,
-                                    }),
-                                });
-                            }
-                        };
-
-                        let param_names: Vec<String> = function_udt.param_names.clone();
-                        let param_defaults: Vec<Option<Expression>> =
-                            function_udt.param_defaults.clone();
-                        let ret_type = function_udt.return_type.clone();
-
-                        // Static method: process all args normally (no receiver pre-pushed)
-                        let ordered_exprs = self.process_arguments(
-                            &format!("{}.{}", ident.name, field.name),
-                            field.line,
-                            field.col,
-                            arguments,
-                            &param_names,
-                            &param_defaults,
-                        )?;
-
-                        self.push_typed_argument_list(
-                            ordered_exprs,
-                            &function_udt.params,
-                            field.line,
-                            field.col,
-                        )?;
-                        self.builder.call(method_symbol_id);
-
-                        return Ok(ret_type);
-                    }
                     // Handle enum variant construction: EnumName.Variant(args)
                     if let Type::Enum(type_id) = ty {
                         return self.generate_enum_variant_from_call(
@@ -886,23 +807,11 @@ impl Generator {
             } else {
                 None
             };
-            
-            let type_decl_type_id = if let Type::Reference(boxed) = &object_ty {
-                if let Type::TypeDecl(id) = **boxed {
-                    Some(id)
-                } else {
-                    None
-                }
-            } else if let Type::TypeDecl(id) = &object_ty {
-                Some(*id)
-            } else {
-                None
-            };
 
-            if struct_type_id.is_none() && type_decl_type_id.is_none() {
+            if struct_type_id.is_none() {
                 return Err(SemanticError::TypeMismatch {
                     lhs: object_ty.to_string(),
-                    rhs: "Struct or Type instance".to_string(),
+                    rhs: "Struct instance".to_string(),
                     pos: Some(SourcePos {
                         line: field.line,
                         col: field.col,
@@ -910,9 +819,9 @@ impl Generator {
                 });
             }
 
-            let type_id = struct_type_id.or(type_decl_type_id).unwrap();
+            let type_id = struct_type_id.unwrap();
 
-            // Find the struct/type symbol corresponding to the TypeId
+            // Find the struct symbol corresponding to the TypeId
             let symbol_id_opt = self
                 .symbol_table
                 .symbols
@@ -920,7 +829,6 @@ impl Generator {
                 .enumerate()
                 .find(|(_, s)| match s.kind {
                     SymbolKind::Struct(id) => id == type_id,
-                    SymbolKind::TypeDecl(id) => id == type_id,
                     _ => false,
                 })
                 .map(|(i, _)| i as u32);
@@ -1052,23 +960,10 @@ impl Generator {
             }
             
             // First try type-name constructor (e.g., Point(...))
-            // Handle Self(...) for type and struct construction inside methods
+            // Handle Self(...) for struct construction inside methods
             if call_name == "Self" {
                 if let Some(self_type) = &self.current_self_type {
                     match self_type {
-                        Type::TypeDecl(type_id) => {
-                            return self.generate_type_from_call(
-                                crate::ast::FunctionCall {
-                                    callee: Box::new(Expression::Identifier(crate::ast::Identifier {
-                                        name: "Self".to_string(),
-                                        line: call_line,
-                                        col: call_col,
-                                    })),
-                                    arguments,
-                                },
-                                *type_id,
-                            );
-                        }
                         Type::Struct(type_id) => {
                             return self.generate_struct_from_call(
                                 crate::ast::FunctionCall {
@@ -1092,7 +987,7 @@ impl Generator {
                         }
                         _ => {
                             return Err(SemanticError::Other(format!(
-                                "Self(...) constructor is only valid for struct and type declarations at line {} column {}",
+                                "Self(...) constructor is only valid for structs at line {} column {}",
                                 call_line, call_col
                             )));
                         }
@@ -1119,16 +1014,6 @@ impl Generator {
                     },
                     type_id,
                 );
-            }
-            
-            // Check for type declarations - types cannot be constructed externally
-            if let Some(ty) = self.symbol_table.find_type_in_scope(&call_name)
-                && let Type::TypeDecl(_type_id) = ty
-            {
-                return Err(SemanticError::Other(format!(
-                    "Type '{}' cannot be constructed directly. Use a static method instead (e.g., {}.new(...)) at line {} column {}",
-                    call_name, call_name, call_line, call_col
-                )));
             }
 
             if let Some(symbol_id) = self.symbol_table.find_symbol_in_scope(&call_name) {
@@ -1351,72 +1236,6 @@ impl Generator {
         self.builder.newstruct(struct_def.fields.len() as u32);
 
         Ok(Type::Struct(type_id))
-    }
-
-    fn generate_type_from_call(&mut self, call: FunctionCall, type_id: TypeId) -> SaResult<Type> {
-        // Get type declaration definition
-        let (call_name, (call_line, call_col)) = (call.callee.get_name(), call.callee.get_pos());
-
-        let type_decl = match self.symbol_table.get_udt(type_id) {
-            UserDefinedType::TypeDecl(t) => t.clone(),
-            _ => {
-                return Err(SemanticError::TypeMismatch {
-                    lhs: "Type declaration".to_string(),
-                    rhs: "Non-type declaration".to_string(),
-                    pos: Some(SourcePos {
-                        line: call_line,
-                        col: call_col,
-                    }),
-                });
-            }
-        };
-
-        // Type must have a representation to be constructible
-        let repr_type = type_decl.representation.ok_or_else(|| {
-            SemanticError::Other(format!(
-                "Type '{}' has no representation and cannot be constructed at line {} column {}",
-                type_decl.qualified_name, call_line, call_col
-            ))
-        })?;
-
-        // Type construction takes exactly one argument: the representation value
-        if call.arguments.len() != 1 {
-            return Err(SemanticError::TypeMismatch {
-                lhs: format!("Type '{}' constructor expects 1 argument", type_decl.qualified_name),
-                rhs: format!("{} provided", call.arguments.len()),
-                pos: Some(SourcePos {
-                    line: call_line,
-                    col: call_col,
-                }),
-            });
-        }
-
-        // Check if argument is named (not allowed for type construction)
-        let (name_opt, expr) = &call.arguments[0];
-        if name_opt.is_some() {
-            return Err(SemanticError::Other(format!(
-                "Type constructor does not accept named arguments at line {} column {}",
-                call_line, call_col
-            )));
-        }
-
-        // Generate code for the argument expression and check type compatibility
-        let arg_ty = self.generate_expression(expr.clone())?;
-        
-        if !self.types_compatible(&arg_ty, &repr_type) {
-            return Err(SemanticError::TypeMismatch {
-                lhs: format!("Type '{}' representation type {}", type_decl.qualified_name, repr_type.to_string()),
-                rhs: format!("argument type {}", arg_ty.to_string()),
-                pos: Some(SourcePos {
-                    line: call_line,
-                    col: call_col,
-                }),
-            });
-        }
-
-        // The value is already on the stack; type is transparent wrapper
-        // No bytecode needed - the value is the type at runtime
-        Ok(Type::TypeDecl(type_id))
     }
 
     fn generate_enum_variant_from_call(

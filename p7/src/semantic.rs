@@ -15,7 +15,6 @@ pub enum SymbolKind {
     Enum(TypeId),
     Struct(TypeId),
     Proto(TypeId),
-    TypeDecl(TypeId),
     Module,
 }
 
@@ -41,10 +40,6 @@ impl SymbolKind {
 
     pub fn discriminant_of_proto() -> std::mem::Discriminant<SymbolKind> {
         std::mem::discriminant(&SymbolKind::Proto(0))
-    }
-
-    pub fn discriminant_of_typedecl() -> std::mem::Discriminant<SymbolKind> {
-        std::mem::discriminant(&SymbolKind::TypeDecl(0))
     }
 }
 
@@ -81,7 +76,6 @@ impl Symbol {
             SymbolKind::Enum(type_id) => Some(*type_id),
             SymbolKind::Struct(type_id) => Some(*type_id),
             SymbolKind::Proto(type_id) => Some(*type_id),
-            SymbolKind::TypeDecl(type_id) => Some(*type_id),
             _ => None,
         }
     }
@@ -148,21 +142,6 @@ pub struct Proto {
     pub attributes: Vec<crate::ast::Attribute>,
 }
 
-#[derive(Debug, Clone)]
-pub struct TypeDecl {
-    pub qualified_name: String,
-    pub representation: Option<Type>, // The underlying type in type Name(ReprType)
-    pub attributes: Vec<crate::ast::Attribute>,
-    // For generic types: stores the original type parameter names
-    pub type_parameters: Vec<String>,
-    // For generic types: stores the original parsed representation type (before substitution)
-    pub generic_representation: Option<crate::ast::Type>,
-    // For monomorphized types: stores the base generic type's TypeId and concrete type arguments
-    pub monomorphization: Option<(TypeId, Vec<Type>)>,
-    // Protocol conformances
-    pub conforming_to: Vec<TypeId>,
-}
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum PrimitiveType {
     Int,
@@ -185,7 +164,6 @@ pub enum Type {
     Enum(TypeId),
     Struct(TypeId),
     Proto(TypeId),
-    TypeDecl(TypeId),
 }
 
 impl Type {
@@ -225,21 +203,6 @@ impl Type {
                 // TODO: When enum conformance is implemented, check for Copy proto
                 false
             }
-            // User-defined types: check for Copy proto conformance
-            Type::TypeDecl(type_id) => {
-                if let UserDefinedType::TypeDecl(t) = symbol_table.get_udt(*type_id) {
-                    // Check if type conforms to Copy proto
-                    t.conforming_to.iter().any(|proto_id| {
-                        if let Some(UserDefinedType::Proto(proto)) = symbol_table.types.get(*proto_id as usize) {
-                            proto.qualified_name.ends_with(".Copy") || proto.qualified_name == "Copy"
-                        } else {
-                            false
-                        }
-                    })
-                } else {
-                    false
-                }
-            }
             // Arrays, Functions, and Protos: not copy-treated by default in v1
             Type::Array(_) | Type::Function(_) | Type::Proto(_) => false,
         }
@@ -257,7 +220,6 @@ impl Clone for Type {
             Type::Enum(e) => Type::Enum(*e),
             Type::Struct(s) => Type::Struct(*s),
             Type::Proto(p) => Type::Proto(*p),
-            Type::TypeDecl(t) => Type::TypeDecl(*t),
         }
     }
 }
@@ -273,7 +235,6 @@ impl PartialEq for Type {
             (Type::Enum(a), Type::Enum(b)) => *a == *b,
             (Type::Struct(a), Type::Struct(b)) => *a == *b,
             (Type::Proto(a), Type::Proto(b)) => *a == *b,
-            (Type::TypeDecl(a), Type::TypeDecl(b)) => *a == *b,
             _ => false,
         }
     }
@@ -293,7 +254,6 @@ impl std::hash::Hash for Type {
             Type::Enum(e) => e.hash(state),
             Type::Struct(s) => s.hash(state),
             Type::Proto(p) => p.hash(state),
-            Type::TypeDecl(t) => t.hash(state),
         }
     }
 }
@@ -316,7 +276,6 @@ impl ToString for Type {
             Type::Enum(e) => format!("enum({})", e.to_string()),
             Type::Struct(s) => format!("struct({})", s.to_string()),
             Type::Proto(p) => format!("proto({})", p.to_string()),
-            Type::TypeDecl(t) => format!("type({})", t.to_string()),
         }
     }
 }
@@ -327,7 +286,6 @@ pub enum UserDefinedType {
     Enum(Enum),
     Struct(Struct),
     Proto(Proto),
-    TypeDecl(TypeDecl),
 }
 
 pub struct SymbolTable {
@@ -408,7 +366,7 @@ impl SymbolTable {
     }
 
     pub fn find_type_in_scope(&self, name: &str) -> Option<Type> {
-        // Special handling: inside a struct or type's scope, `Self` refers to the enclosing type.
+        // Special handling: inside a struct's scope, `Self` refers to the enclosing type.
         if name == "Self" {
             if let Some(enclose_struct) =
                 self.find_nearest_symbol_id_by_kind(SymbolKind::discriminant_of_struct())
@@ -416,15 +374,6 @@ impl SymbolTable {
                 let strukt = self.get_symbol(*enclose_struct).unwrap();
                 match strukt.kind {
                     SymbolKind::Struct(id) => return Some(Type::Struct(id)),
-                    _ => {}
-                }
-            }
-            if let Some(enclose_type) =
-                self.find_nearest_symbol_id_by_kind(SymbolKind::discriminant_of_typedecl())
-            {
-                let typedecl = self.get_symbol(*enclose_type).unwrap();
-                match typedecl.kind {
-                    SymbolKind::TypeDecl(id) => return Some(Type::TypeDecl(id)),
                     _ => {}
                 }
             }
@@ -441,7 +390,6 @@ impl SymbolTable {
             SymbolKind::Enum(id) => Some(Type::Enum(id)),
             SymbolKind::Struct(id) => Some(Type::Struct(id)),
             SymbolKind::Proto(id) => Some(Type::Proto(id)),
-            SymbolKind::TypeDecl(id) => Some(Type::TypeDecl(id)),
             SymbolKind::Function { type_id, .. } => Some(Type::Function(type_id)),
             _ => None,
         }
