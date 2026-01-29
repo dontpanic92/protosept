@@ -1,31 +1,27 @@
-// Test type declarations
+// Test struct declarations (formerly type declarations)
 import test.test;
 
-// Basic type declaration without representation
-type Handle {
-}
+// Basic struct declaration without fields
+struct Handle;
 
-// Type with methods (but we won't call them yet)
-type Counter {
+// Struct with methods (but we won't call them yet)
+struct Counter {
     pub fn initial() -> int {
         return 0;
     }
 }
 
-// Type with representation
-type UserId(int) {
-}
+// Tuple struct with single field (newtype pattern)
+struct UserId(int);
 
-// Generic type without representation
-type Container<T> {
-}
+// Generic struct without fields
+struct Container<T>;
 
-// Generic type with representation
-type Wrapper<T>(T) {
-}
+// Generic tuple struct with representation
+struct Wrapper<T>(T);
 
 @test(expected_type = "int", expected_value = "42")
 fn test_type_parses() -> int {
-    // Just test that the type declarations above parse correctly
+    // Just test that the struct declarations above parse correctly
     return 42;
 }

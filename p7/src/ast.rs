@@ -80,7 +80,7 @@ pub struct FunctionDeclaration {
 #[derive(Debug, PartialEq, Clone)]
 pub struct StructField {
     pub is_pub: bool,
-    pub name: Identifier,
+    pub name: Option<Identifier>, // None for tuple struct fields
     pub field_type: Type,
     pub default_value: Option<Expression>,
 }

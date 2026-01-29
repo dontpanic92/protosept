@@ -1,13 +1,13 @@
-// Test that .0 access is restricted to inside type definition
+// Test that .0 access is restricted to inside struct definition
 import test.test;
 
-type UserId(int) {
+struct UserId(int) {
     pub fn new(id: int) -> UserId {
         return Self(id);
     }
     
     pub fn internal_access(ref self) -> int {
-        return self.0;  // .0 allowed inside type definition
+        return self.0;  // .0 allowed inside struct definition
     }
 }
 

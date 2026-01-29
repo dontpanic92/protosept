@@ -1,7 +1,7 @@
-// Test type construction
+// Test struct construction
 import test.test;
 
-type UserId(int) {
+struct UserId(int) {
     fn new(id: int) -> UserId {
         return Self(id);
     }
