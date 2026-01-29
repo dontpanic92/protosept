@@ -1504,10 +1504,10 @@ impl Parser {
                 self.consume_match(TokenType::Semicolon)?;
                 Ok(Statement::Throw(expr))
             }
-            Some(TokenType::Let) => {
+            Some(TokenType::Let) | Some(TokenType::Var) => {
                 if is_pub {
                     return Err(ParseError::UnexpectedToken {
-                        found: "pub keyword on let statement".to_string(),
+                        found: "pub keyword on let/var statement".to_string(),
                         pos: self.peek().map(|t| SourcePos {
                             line: t.line,
                             col: t.col,
@@ -1516,13 +1516,15 @@ impl Parser {
                 }
                 if !attributes.is_empty() {
                     return Err(ParseError::UnexpectedToken {
-                        found: "attributes on let statement".to_string(),
+                        found: "attributes on let/var statement".to_string(),
                         pos: Some(SourcePos {
                             line: attributes[0].name.line,
                             col: attributes[0].name.col,
                         }),
                     });
                 }
+                
+                let is_mutable = matches!(self.peek().map(|t| &t.token_type), Some(TokenType::Var));
                 self.consume();
 
                 let identifier = self.parse_identifier()?;
@@ -1540,6 +1542,7 @@ impl Parser {
                 self.consume_match(TokenType::Semicolon)?;
 
                 Ok(Statement::Let {
+                    is_mutable,
                     identifier,
                     type_annotation,
                     expression,

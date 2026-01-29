@@ -1,0 +1,10 @@
+// compile_fail: Parameters are immutable and cannot be reassigned
+
+fn try_reassign_param(x: int) -> int {
+    x = 20;  // This should fail: cannot assign to immutable parameter
+    x
+}
+
+fn test() -> int {
+    try_reassign_param(10)
+}

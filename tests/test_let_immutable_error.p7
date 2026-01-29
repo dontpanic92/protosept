@@ -1,0 +1,8 @@
+// compile_fail: Cannot assign to immutable variable
+import test.test;
+
+fn test_let_immutable() -> int {
+    let x = 10;
+    x = 20;  // This should fail: cannot assign to immutable variable
+    x
+}

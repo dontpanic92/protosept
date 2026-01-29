@@ -87,6 +87,7 @@ impl Generator {
                     .map(|(name, ty)| Variable {
                         name: name.clone(),
                         ty: ty.clone(),
+                        is_mutable: false, // Parameters are immutable
                     })
                     .collect();
                 
@@ -146,7 +147,7 @@ impl Generator {
             self.local_scope
                 .as_mut()
                 .unwrap()
-                .add_variable(var.name, var.ty)
+                .add_variable(var.name, var.ty, var.is_mutable)
                 .unwrap();
         }
 
@@ -263,6 +264,7 @@ impl Generator {
                     Ok(Variable {
                         name: arg.name.name.clone(),
                         ty: Type::Primitive(PrimitiveType::Unit), // Placeholder
+                        is_mutable: false, // Parameters are immutable
                     })
                 })
                 .collect::<SaResult<Vec<Variable>>>()?;
@@ -284,6 +286,7 @@ impl Generator {
                         Ok(Variable {
                             name: arg.name.name.clone(),
                             ty,
+                            is_mutable: false, // Parameters are immutable
                         })
                     })
                 })

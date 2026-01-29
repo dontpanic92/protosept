@@ -33,7 +33,7 @@ impl Generator {
                 .local_scope
                 .as_mut()
                 .unwrap()
-                .add_variable(name.name.clone(), value_type)
+                .add_variable(name.name.clone(), value_type, false) // Pattern bindings are immutable
                 .map_err(|_| SemanticError::VariableOutsideFunction {
                     name: name.name.clone(),
                     pos: Some(SourcePos {

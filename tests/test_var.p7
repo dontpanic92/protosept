@@ -1,0 +1,55 @@
+// Test var (mutable variables) functionality
+import test.test;
+
+@test(expected_type = "int", expected_value = "30")
+fn test_var_reassignment() -> int {
+    var x = 10;
+    x = 20;
+    x = 30;
+    x
+}
+
+@test(expected_type = "int", expected_value = "15")
+fn test_var_in_loop() -> int {
+    var total = 0;
+    var i = 1;
+    loop {
+        if i > 5 {
+            break;
+        }
+        total = total + i;
+        i = i + 1;
+    }
+    total
+}
+
+@test(expected_type = "int", expected_value = "120")
+fn test_var_with_type_annotation() -> int {
+    var x: int = 100;
+    x = 120;
+    x
+}
+
+@test(expected_type = "int", expected_value = "30")
+fn test_var_shadowing() -> int {
+    let x = 10;
+    {
+        var x = 20;  // ok: same type int, but now mutable
+        x = 30;      // ok: x is var
+        x
+    }
+}
+
+@test(expected_type = "int", expected_value = "6")
+fn test_var_in_accumulator() -> int {
+    var sum = 0;
+    var i = 1;
+    loop {
+        if i > 3 {
+            break;
+        }
+        sum = sum + i;
+        i = i + 1;
+    }
+    sum
+}
