@@ -445,6 +445,7 @@ pub type LocalSymbolScopeResult<T> = Result<T, LocalSymbolScopeError>;
 pub struct Variable {
     pub name: String,
     pub ty: Type,
+    pub is_mutable: bool,
 }
 
 #[derive(Debug)]
@@ -473,12 +474,12 @@ impl LocalSymbolScope {
         self.params = params;
     }
 
-    pub fn add_variable(&mut self, name: String, var_type: Type) -> LocalSymbolScopeResult<u32> {
+    pub fn add_variable(&mut self, name: String, var_type: Type, is_mutable: bool) -> LocalSymbolScopeResult<u32> {
         if self.scopes.is_empty() {
             Err(LocalSymbolScopeError::NoScopePushed)
         } else {
             let var_id = self.locals.len() as u32;
-            self.locals.push(Variable { name, ty: var_type });
+            self.locals.push(Variable { name, ty: var_type, is_mutable });
             self.scopes.last_mut().unwrap().var_ids.push(var_id);
             Ok(var_id)
         }
@@ -512,6 +513,14 @@ impl LocalSymbolScope {
 
     pub fn get_param_type(&self, param_id: u32) -> Type {
         self.params[param_id as usize].ty.clone()
+    }
+
+    pub fn is_variable_mutable(&self, var_id: u32) -> bool {
+        self.locals[var_id as usize].is_mutable
+    }
+
+    pub fn is_param_mutable(&self, param_id: u32) -> bool {
+        self.params[param_id as usize].is_mutable
     }
 
     pub fn push_scope(&mut self) {

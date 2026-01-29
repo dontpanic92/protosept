@@ -217,6 +217,7 @@ pub struct NamedPattern {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Statement {
     Let {
+        is_mutable: bool, // true for var, false for let
         identifier: Identifier,
         type_annotation: Option<Type>,
         expression: Expression,

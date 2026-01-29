@@ -11,6 +11,7 @@ impl Generator {
     pub(super) fn generate_statement(&mut self, statement: Statement) -> SaResult<Type> {
         match statement {
             Statement::Let {
+                is_mutable,
                 identifier,
                 type_annotation,
                 expression,
@@ -71,7 +72,7 @@ impl Generator {
                     .local_scope
                     .as_mut()
                     .unwrap()
-                    .add_variable(identifier.name.clone(), final_ty)
+                    .add_variable(identifier.name.clone(), final_ty, is_mutable)
                     .map_err(|_| SemanticError::VariableOutsideFunction {
                         name: identifier.name.clone(),
                         pos: Some(SourcePos {

@@ -205,6 +205,14 @@ impl Generator {
                                     )));
                                 }
                                 
+                                // Check if variable is mutable (var vs let)
+                                if !self.local_scope.as_ref().unwrap().is_variable_mutable(var_id) {
+                                    return Err(SemanticError::Other(format!(
+                                        "Cannot assign to immutable variable '{}' (use 'var' instead of 'let')",
+                                        identifier.name
+                                    )));
+                                }
+                                
                                 // Check type compatibility
                                 if !self.types_compatible(&rhs_ty, &lhs_ty) {
                                     return Err(SemanticError::TypeMismatch {
