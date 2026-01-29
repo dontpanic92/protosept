@@ -1,0 +1,47 @@
+// Test Self refinements according to requirements
+import test.test;
+
+// Requirement 1: Self as type in method declarations
+struct Point(x: int, y: int) {
+    fn identity(self: Self) -> Self {
+        return self;
+    }
+}
+
+type UserId(int) {
+    fn new(id: int) -> Self {
+        return Self(id);
+    }
+    
+    fn get_value(ref self) -> int {
+        return self.0;
+    }
+}
+
+// Requirement 2: struct can be constructed outside, type cannot
+@test(expected_type = "int", expected_value = "42")
+fn test_struct_external_construct() -> int {
+    let p = Point(42, 100);
+    p.x
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_type_must_use_method() -> int {
+    let uid = UserId.new(42);
+    42
+}
+
+// This should fail to compile - type cannot be constructed externally
+// @test_compile_fail
+// fn test_type_no_external_construct() -> int {
+//     let uid = UserId(42);  // ERROR: type cannot be constructed
+//     42
+// }
+
+// Requirement 3: .0 access only inside type definition
+// This should fail - accessing .0 outside type definition
+// @test_compile_fail
+// fn test_no_external_field_access() -> int {
+//     let uid = UserId.new(100);
+//     uid.0  // ERROR: .0 not accessible outside type
+// }

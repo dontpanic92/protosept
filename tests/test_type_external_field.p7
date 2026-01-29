@@ -1,0 +1,14 @@
+// This should fail - .0 access from outside type definition
+import test.test;
+
+type UserId(int) {
+    fn new(id: int) -> UserId {
+        return Self(id);
+    }
+}
+
+@test(expected_type = "int", expected_value = "100")
+fn test_no_external_field_access() -> int {
+    let uid = UserId.new(100);
+    uid.0  // This should ERROR - .0 only accessible inside type
+}

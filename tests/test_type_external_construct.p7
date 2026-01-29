@@ -1,0 +1,14 @@
+// This should fail - type cannot be constructed externally
+import test.test;
+
+type UserId(int) {
+    fn new(id: int) -> UserId {
+        return Self(id);
+    }
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_type_no_external_construct() -> int {
+    let uid = UserId(42);  // This should ERROR
+    42
+}
