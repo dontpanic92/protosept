@@ -1,7 +1,7 @@
 use crate::errors::SourcePos;
 use crate::{
     ast::{Expression, Statement},
-    semantic::{Enum, PrimitiveType, Proto, Struct, Symbol, SymbolKind, Type, TypeDecl, UserDefinedType},
+    semantic::{Enum, PrimitiveType, Proto, Struct, Symbol, SymbolKind, Type, UserDefinedType},
 };
 use crate::errors::SemanticError;
 
@@ -312,77 +312,6 @@ impl Generator {
                 // TODO: Store is_pub for module visibility checking
                 let _ = is_pub;
 
-                Ok(Type::Primitive(PrimitiveType::Unit))
-            }
-            Statement::TypeDeclaration {
-                is_pub,
-                name,
-                attributes,
-                conformance,
-                type_parameters,
-                representation,
-                methods,
-            } => {
-                let qualified_name = self
-                    .symbol_table
-                    .get_new_symbol_qualified_name(name.name.clone());
-                
-                // Extract type parameter names
-                let type_param_names: Vec<String> = type_parameters
-                    .iter()
-                    .map(|tp| tp.name.name.clone())
-                    .collect();
-                
-                let is_generic = !type_param_names.is_empty();
-                
-                // For generic types, store parsed representation type; for non-generic, resolve it
-                let (resolved_representation, generic_representation) = if is_generic {
-                    // For generic types, store placeholder and keep parsed representation type
-                    let parsed_repr = representation.clone();
-                    // Use Unit as placeholder - will be properly typed during monomorphization
-                    let placeholder = representation.as_ref().map(|_| Type::Primitive(PrimitiveType::Unit));
-                    (placeholder, parsed_repr)
-                } else {
-                    // For non-generic types, resolve representation normally
-                    let resolved = match representation {
-                        Some(ref repr) => Some(self.get_semantic_type(repr)?),
-                        None => None,
-                    };
-                    (resolved, None)
-                };
-                
-                // Resolve protocol conformances
-                let mut conforming_to = Vec::new();
-                for proto_name in conformance {
-                    let proto_type_id = self.resolve_proto_identifier(&proto_name)?;
-                    conforming_to.push(proto_type_id);
-                }
-
-                let ty = TypeDecl {
-                    qualified_name: qualified_name.clone(),
-                    representation: resolved_representation,
-                    attributes: attributes.clone(),
-                    type_parameters: type_param_names,
-                    generic_representation,
-                    monomorphization: None,  // This is the generic definition, not a monomorphization
-                    conforming_to: conforming_to.clone(),
-                };
-                let type_id = self.symbol_table.add_udt(UserDefinedType::TypeDecl(ty));
-
-                let symbol = Symbol::new(name.name.clone(), qualified_name.clone(), SymbolKind::TypeDecl(type_id));
-                self.symbol_table.push_symbol(symbol);
-
-                for method in methods {
-                    self.process_function_declaration(method.function)?;
-                }
-                
-                // Check conformance after processing methods (similar to structs)
-                // TODO: Implement check_type_conformance similar to check_struct_conformance
-                
-                // TODO: Store is_pub for module visibility checking
-                let _ = is_pub;
-
-                self.symbol_table.pop_symbol();
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
             Statement::Return(expression) => {

@@ -318,13 +318,6 @@ impl Generator {
                     format!("function#{}", id)
                 }
             }
-            Type::TypeDecl(id) => {
-                if let UserDefinedType::TypeDecl(t) = &self.symbol_table.types[*id as usize] {
-                    t.qualified_name.clone()
-                } else {
-                    format!("type#{}", id)
-                }
-            }
         }
     }
 }
