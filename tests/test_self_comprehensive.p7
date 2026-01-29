@@ -20,8 +20,8 @@ fn test_struct_external_construction_allowed() -> int {
     rect.width + 36
 }
 
-// Test 2: Self in type declarations
-type UserId(int) {
+// Test 2: Self in tuple struct declarations
+struct UserId(int) {
     fn new(id: int) -> Self {  // Self as return type
         return Self(id);  // Self as constructor
     }
@@ -31,7 +31,7 @@ type UserId(int) {
     }
     
     fn get_internal(ref self) -> int {
-        return self.0;  // .0 access allowed inside type
+        return self.0;  // .0 access allowed inside struct
     }
 }
 

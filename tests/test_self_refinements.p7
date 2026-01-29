@@ -8,7 +8,7 @@ struct Point(x: int, y: int) {
     }
 }
 
-type UserId(int) {
+struct UserId(int) {
     fn new(id: int) -> Self {
         return Self(id);
     }
@@ -18,7 +18,7 @@ type UserId(int) {
     }
 }
 
-// Requirement 2: struct can be constructed outside, type cannot
+// Requirement 2: struct with pub fields can be constructed outside
 @test(expected_type = "int", expected_value = "42")
 fn test_struct_external_construct() -> int {
     let p = Point(42, 100);
@@ -31,17 +31,17 @@ fn test_type_must_use_method() -> int {
     42
 }
 
-// This should fail to compile - type cannot be constructed externally
+// Note: UserId has private field, so it cannot be constructed externally
 // @test_compile_fail
 // fn test_type_no_external_construct() -> int {
-//     let uid = UserId(42);  // ERROR: type cannot be constructed
+//     let uid = UserId(42);  // ERROR: private field, cannot be constructed
 //     42
 // }
 
-// Requirement 3: .0 access only inside type definition
-// This should fail - accessing .0 outside type definition
+// Requirement 3: .0 access only inside struct definition (private field)
+// This should fail - accessing .0 outside struct definition
 // @test_compile_fail
 // fn test_no_external_field_access() -> int {
 //     let uid = UserId.new(100);
-//     uid.0  // ERROR: .0 not accessible outside type
+//     uid.0  // ERROR: .0 not accessible outside (private field)
 // }

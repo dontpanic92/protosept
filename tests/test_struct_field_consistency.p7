@@ -1,0 +1,21 @@
+// Test that we can't mix named and unnamed fields (future work)
+import test.test;
+
+// This SHOULD be an error per spec 12.1.2, but may not be enforced yet
+// struct Bad(x: int, float);  // mixing named and unnamed
+
+// For now, test that we can have either all named or all unnamed
+struct AllNamed(x: int, y: int);
+struct AllUnnamed(int, int);
+
+@test(expected_type = "int", expected_value = "42")
+fn test_all_named() -> int {
+    let p = AllNamed(42, 100);
+    p.x
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_all_unnamed() -> int {
+    let p = AllUnnamed(42, 100);
+    p.0
+}

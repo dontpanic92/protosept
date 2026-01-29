@@ -203,16 +203,25 @@ impl Generator {
                     // Use Unit as placeholder - these will be properly typed during monomorphization
                     let placeholder_fields: Vec<(String, Type)> = fields
                         .iter()
-                        .map(|f| (f.name.name.clone(), Type::Primitive(PrimitiveType::Unit)))
+                        .enumerate()
+                        .map(|(idx, f)| {
+                            let field_name = f.name.as_ref()
+                                .map(|n| n.name.clone())
+                                .unwrap_or_else(|| idx.to_string());
+                            (field_name, Type::Primitive(PrimitiveType::Unit))
+                        })
                         .collect();
                     
                     (placeholder_fields, Some(parsed_field_types))
                 } else {
                     // For non-generic structs, resolve types normally
                     let mut resolved_fields = Vec::new();
-                    for f in &fields {
+                    for (idx, f) in fields.iter().enumerate() {
                         let field_type = self.get_semantic_type(&f.field_type)?;
-                        resolved_fields.push((f.name.name.clone(), field_type));
+                        let field_name = f.name.as_ref()
+                            .map(|n| n.name.clone())
+                            .unwrap_or_else(|| idx.to_string());
+                        resolved_fields.push((field_name, field_type));
                     }
                     (resolved_fields, None)
                 };

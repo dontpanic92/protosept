@@ -1,0 +1,43 @@
+// Test tuple struct declarations and field access
+import test.test;
+
+// Tuple struct with public fields
+struct Point(pub int, pub int);
+
+// Tuple struct with private field (newtype pattern)
+struct UserId(int) {
+    pub fn new(id: int) -> UserId {
+        return Self(id);
+    }
+    
+    pub fn value(ref self) -> int {
+        return self.0;  // .0 access allowed inside the struct
+    }
+}
+
+// Tuple struct with multiple fields
+struct Triple(pub int, pub int, pub int);
+
+@test(expected_type = "int", expected_value = "10")
+fn test_tuple_struct_pub_field() -> int {
+    let p = Point(10, 20);
+    p.0  // Can access public field .0
+}
+
+@test(expected_type = "int", expected_value = "20")
+fn test_tuple_struct_pub_field_1() -> int {
+    let p = Point(10, 20);
+    p.1  // Can access public field .1
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_tuple_struct_private_newtype() -> int {
+    let uid = UserId.new(42);
+    uid.value()  // Must use method for private field
+}
+
+@test(expected_type = "int", expected_value = "30")
+fn test_tuple_struct_triple() -> int {
+    let t = Triple(10, 20, 30);
+    t.2  // Access third field
+}

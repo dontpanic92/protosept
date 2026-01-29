@@ -51,6 +51,10 @@ impl Parser {
         self.tokens.get(self.position)
     }
 
+    fn peek_ahead(&self, offset: usize) -> Option<&Token> {
+        self.tokens.get(self.position + offset)
+    }
+
     fn peek_previous(&self) -> Option<&Token> {
         self.tokens.get(self.position.checked_sub(1)?)
     }
@@ -933,21 +937,51 @@ impl Parser {
     fn parse_struct_field(&mut self) -> ParseResult<StructField> {
         let is_pub = self.consume_match(TokenType::Pub).is_ok();
 
-        let field_name = self.parse_identifier()?;
-        self.consume_match(TokenType::Colon)?;
-        let field_type = self.parse_type()?;
-        let default_value = if self.consume_match(TokenType::Assignment).is_ok() {
-            Some(self.parse_expression()?)
+        // Try to parse as named field first (identifier followed by colon)
+        // We need to check if the next two tokens are identifier and colon
+        let is_named = if let Some(token) = self.peek() {
+            if matches!(token.token_type, TokenType::Identifier(_)) {
+                // Look ahead to see if there's a colon
+                if let Some(next_token) = self.peek_ahead(1) {
+                    next_token.token_type == TokenType::Colon
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
         } else {
-            None
+            false
         };
 
-        Ok(StructField {
-            is_pub,
-            name: field_name,
-            field_type,
-            default_value,
-        })
+        if is_named {
+            // Parse named field: name: type [= default]
+            let field_name = self.parse_identifier()?;
+            self.consume_match(TokenType::Colon)?;
+            let field_type = self.parse_type()?;
+            let default_value = if self.consume_match(TokenType::Assignment).is_ok() {
+                Some(self.parse_expression()?)
+            } else {
+                None
+            };
+
+            Ok(StructField {
+                is_pub,
+                name: Some(field_name),
+                field_type,
+                default_value,
+            })
+        } else {
+            // Parse unnamed field (tuple struct): type
+            let field_type = self.parse_type()?;
+            
+            Ok(StructField {
+                is_pub,
+                name: None,
+                field_type,
+                default_value: None,
+            })
+        }
     }
 
     fn parse_comma_separated_list<T, F>(&mut self, parse_item: F) -> ParseResult<Vec<T>>
