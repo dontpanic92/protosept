@@ -1135,7 +1135,7 @@ fn name(p1: T1, p2: T2, ...) -> R { ... }
 
 - If `-> R` is omitted, return type is `unit`.
 
-### 11.2 Function effects (unified syntax)
+### 11.2 Function effects
 
 **Canonical form** (v1):
 ```p7
@@ -1157,22 +1157,6 @@ fn[throws] read_file(path: string) -> string { ... }
 fn[throws<FileError>] safe_read(path: string) -> string { ... }
 fn[suspend] fiber_task() { ... }
 fn[throws, suspend] async_read(path: string) -> string { ... }
-```
-
-**Legacy qualifier forms** (non-normative):
-
-For compatibility with earlier drafts, implementations MAY accept the following as shorthands during parsing, but the canonical stored spelling is `fn[...]`:
-- `suspend fn name(...)` → `fn[suspend] name(...)`
-- `fn name(...) throws` → `fn[throws] name(...)`
-- `fn name(...) throws<E>` → `fn[throws<E>] name(...)`
-
-Formatters and code review tools SHOULD replace legacy forms with the unified `fn[...]` syntax.
-
-Grammar sketch:
-```
-function_decl := 'fn' ['[' effect_list ']'] name '(' params ')' ['->' type] block
-effect_list := effect (',' effect)*
-effect := 'throws' ['<' enum_type '>'] | 'suspend'
 ```
 
 ### 11.3 Parameter passing
