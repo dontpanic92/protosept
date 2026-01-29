@@ -1,7 +1,7 @@
 // Test tuple struct declarations and field access
 import test.test;
 
-// Tuple struct with public field
+// Tuple struct with public fields
 struct Point(pub int, pub int);
 
 // Tuple struct with private field (newtype pattern)
