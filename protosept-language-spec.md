@@ -63,7 +63,6 @@ A program is a sequence of top-level items:
 - Function declarations: `fn ...`
 - Struct declarations: `struct ...`
 - Enum declarations: `enum ...`
-- Type declarations: `type ...` (§12.5)
 - Proto declarations: `proto ...`
 
 Top-level executable statements are not allowed in v1. Execution begins when the host invokes an entrypoint function via embedding (e.g., `run_p7_code(contents, "main")`).
@@ -185,7 +184,7 @@ helpers.private_helper();  // ERROR
 Identifiers start with `_` or a letter and continue with letters, digits, or `_`.
 
 ### 2.2 Keywords (reserved)
-`fn`, `struct`, `enum`, `type`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`, `import`, `as`, `box`
+`fn`, `struct`, `enum`, `proto`, `let`, `pub`, `return`, `if`, `else`, `throw`, `throws`, `try`, `loop`, `break`, `continue`, `for`, `in`, `suspend`, `yield`, `ref`, `import`, `as`, `box`
 
 `true` and `false` are **keywords** (boolean literals).  
 `null` is a keyword (null literal).
@@ -206,7 +205,7 @@ Types in v1:
 - Nullability: `?T`
 - Borrowed view: `ref<T>`
 - Owned heap handle: `box<T>`
-- User-defined: `struct Name(...)`, `enum Name(...)`, `type[...] Name(...) { ... }`, `proto Name { ... }`
+- User-defined: `struct Name(...)`, `enum Name(...)`, `proto Name { ... }`
 - Compile-time generics: `T`, `array<T>`, `box<T>`, etc. (§20)
 
 ---
@@ -1031,7 +1030,7 @@ This sugar reduces ceremony at method call sites while maintaining explicit borr
 
 ### 11.4 Method receivers (v1)
 
-Methods on structs, enums, types (§12.5), and protos may declare a receiver parameter. The receiver is the first parameter and uses special syntax.
+Methods on structs, enums, and protos may declare a receiver parameter. The receiver is the first parameter and uses special syntax.
 
 **Receiver forms:**
 
@@ -1079,7 +1078,16 @@ let n = c.get(); // ok: desugars to Counter.get(ref(*c)) per §11.3.1
 
 ## 12. Structs
 
-### 12.1 Declaration
+A struct is a product type with zero or more fields. Structs support two forms:
+
+1. **Record structs** – fields have names (e.g., `x: int`).
+2. **Tuple structs** – fields are unnamed, accessed by position (e.g., `int`).
+
+A struct MUST declare its fields in a uniform manner: either all fields are named, or all fields are unnamed. Mixing named and unnamed fields in a single struct is ERROR.
+
+### 12.1 Record struct declaration
+
+Record structs use named fields:
 
 ```p7
 struct Point(
@@ -1096,9 +1104,130 @@ struct Vec2(
 );
 ```
 
-[[TODO]] field-level `pub` and its interaction with modules/visibility.
+Fields may be marked `pub` for public visibility (see §12.1.2).
 
-### 12.2 Methods
+#### 12.1.1 Field-level visibility
+
+By default, struct fields are private (visible only within the declaring module).
+
+A field may be marked `pub` to make it visible outside the module:
+
+```p7
+struct Vec2(
+  pub x: float,
+  pub y: float,
+);
+```
+
+Field visibility controls:
+- **Field access** (§12.4): `s.field` is ERROR if `field` is not visible at the access site.
+- **Construction** (§12.3): Construction `S(...)` is ERROR if any field is not visible at the construction site, even if defaults exist for non-visible fields.
+
+#### 12.1.2 Uniformity rule: all named or all unnamed
+
+A struct's fields MUST be either all named or all unnamed; mixing is ERROR:
+
+```p7
+// OK: all named
+struct Point(x: int, y: int);
+
+// OK: all unnamed (tuple struct, see §12.2)
+struct Pair(int, int);
+
+// ERROR: mixing named and unnamed
+struct Bad(x: int, float);  // not allowed
+```
+
+### 12.2 Tuple struct declaration
+
+Tuple structs use unnamed fields:
+
+```p7
+struct Pair(int, int);
+struct Triple(pub int, pub int, pub int);
+struct Newtype(pub int);
+```
+
+Fields may be marked `pub` for public visibility (§12.1.1). Field visibility rules apply the same as for record structs.
+
+Tuple structs are useful for:
+- Newtype patterns: wrapping a single value with a distinct nominal type.
+- Simple product types where field names add no clarity.
+
+#### 12.2.1 Tuple struct field access
+
+Tuple struct fields are accessed by position using `.0`, `.1`, `.2`, etc.:
+
+```p7
+let p = Pair(10, 20);
+let x = p.0;  // 10
+let y = p.1;  // 20
+```
+
+Field access is ERROR if the field is not visible at the access site (§12.1.1).
+
+### 12.3 Construction
+
+Construct a struct by calling the struct name:
+
+**Record struct:**
+- `Point(1, 2)` – positional arguments
+- `Point(y = 2, x = 1)` – named arguments
+
+**Tuple struct:**
+- `Pair(10, 20)` – positional arguments only
+
+[[TODO]] rule for mixing positional and named args (recommended: disallow in v1).
+
+#### 12.3.1 Construction visibility restriction
+
+Construction `S(...)` is allowed **only if all fields of `S` are visible** at the construction site.
+
+If any field is not visible, construction is ERROR, **even if defaults exist** for non-visible fields.
+
+**Rationale:** This enforces encapsulation. Types with private fields must provide public constructors (e.g., a `new` method) to control construction.
+
+**Example: newtype with private field**
+
+```p7
+struct UserId(int);  // field is private
+
+// ERROR: cannot construct UserId outside its module
+// let id = UserId(42);
+
+// Instead, provide a public constructor method:
+struct UserId(int) {
+  pub fn new(id: int) -> UserId {
+    return UserId(id);  // OK: construction inside the module
+  }
+  pub fn value(ref self) -> int {
+    return self.0;  // OK: field access inside the module
+  }
+}
+
+// Usage:
+let id = UserId.new(42);  // OK
+let val = id.value();     // OK
+// let x = id.0;          // ERROR: field not visible
+```
+
+### 12.4 Field access and assignment
+
+**Field reads:**
+- `s.x` (record struct) or `s.0` (tuple struct) is allowed when the field is visible at the access site.
+- Field access is ERROR if the field is not visible.
+
+**Field writes:**
+- `s.x = v` is ERROR unless `s: box<S>` (mutation requires boxing).
+- Field write is also ERROR if the field is not visible.
+
+Example:
+```p7
+let p = box(Point(1, 2));
+p.x = 10; // ok: p is boxed and x is visible
+```
+
+### 12.5 Methods
 
 A struct may include a method block:
 
@@ -1117,24 +1246,34 @@ struct Vec2(
 
 Method receivers are defined in §11.4. Structs may use `self`, `ref self`, or `box self` receivers.
 
-### 12.3 Construction
+### 12.6 Builtin structs: `@builtin()`
 
-Construct by calling the struct name:
-- `Point(1, 2)`
-- `Point(y = 2, x = 1)` (named args)
+A struct may be declared with the `@builtin()` attribute to indicate a compiler-defined, opaque nominal type:
 
-[[TODO]] rule for mixing positional and named args (recommended: disallow in v1).
-
-### 12.4 Field access and assignment
-
-- `s.x` is allowed when `s: S` (read-only).
-- `s.x = v` is ERROR unless `s: box<S>`.
-
-Example:
 ```p7
-let p = box(Point(1, 2));
-p.x = 10; // ok
+@builtin()
+struct Handle;
 ```
+
+**Rules for `@builtin()` structs (v1):**
+
+- The struct MUST NOT declare concrete fields in the source. Field declarations are not applicable to `@builtin()` structs.
+- The struct is a nominal type with compiler-defined representation.
+- Construction `Handle(...)` is ERROR unless provided by the compiler via intrinsics or FFI.
+- Field access `h.field` is not applicable (no fields are accessible).
+- Methods may be declared with signature-only declarations using `@intrinsic()` or `@ffi(...)` (§19).
+
+**Example:**
+
+```p7
+@builtin()
+struct FileHandle {
+  @intrinsic()
+  pub fn close(self) -> unit;
+}
+```
+
+**Rationale:** `@builtin()` structs allow the compiler to define opaque types for FFI, runtime handles, or platform-specific types without exposing internal representation.
 
 ---
 
@@ -1240,121 +1379,6 @@ enum Option<T>(
 ) {
   pub fn is_some(ref self) -> bool { ... }
 }
-```
-
----
-
-## 12.5 Type declarations
-
-A `type` declaration defines a new nominal type with an optional underlying representation.
-
-### 12.5.1 Syntax
-
-Basic syntax:
-```p7
-type Name {
-  // methods
-}
-```
-
-Generic syntax:
-```p7
-type Name<T, U, ...> {
-  // methods
-}
-```
-
-Newtype form (with representation):
-```p7
-type Name(ReprType) {
-  // methods
-}
-```
-
-With conformance list:
-```p7
-type[Proto1, Proto2, ...] Name(ReprType) {
-  // methods
-}
-```
-
-### 12.5.2 Representation list rule
-
-If a parenthesized representation list is present (e.g., `type Name(ReprType)`), it MUST contain exactly one type. Otherwise, ERROR.
-
-### 12.5.3 No value constructor
-
-Unlike structs, `Name(...)` where `Name` is a `type` is ERROR. Types do not have public value constructors. Construction is performed via methods or internal constructors within the type body.
-
-### 12.5.4 Transparent newtype semantics
-
-When a `type` is declared with a representation (e.g., `type Name(ReprType)`):
-
-- **Runtime representation**: The type has the exact runtime representation of `ReprType` (size, alignment, calling convention).
-- **Access restriction**: The representation is not directly accessible outside the type body.
-- **Inside the type body**:
-  - `Self(expr)` is allowed as a type-local constructor from `expr: ReprType`.
-  - `self.0` is allowed to access the underlying representation (at least for `ref self`). [[TODO]] decide `self.0` behavior for by-value `self` regarding move interaction (§23).
-
-Example:
-```p7
-type UserId(int) {
-  pub fn new(id: int) -> UserId {
-    return Self(id);
-  }
-  pub fn value(ref self) -> int {
-    return self.0;
-  }
-}
-```
-
-### 12.5.5 Methods
-
-A `type` may include:
-- Method bodies (full implementations).
-- Signature-only method declarations.
-
-**Signature-only methods** MUST be annotated with exactly one of:
-- `@intrinsic()` – indicates the method is implemented by the compiler/runtime.
-- `@ffi(...)` – indicates the method is provided by a foreign function interface.
-
-Otherwise, a signature-only method is ERROR.
-
-[[TODO]] specify `@intrinsic()` and `@ffi(...)` schemas (§23).
-
-Example:
-```p7
-type Handle(ptr) {
-  @ffi(lib = "mylib", name = "handle_close")
-  pub fn close(self) -> unit;
-  
-  @intrinsic()
-  pub fn as_ptr(self) -> ptr;
-}
-```
-
-### 12.5.6 Conformance list semantics
-
-The conformance list on a `type` works the same as for structs and enums (§18.6):
-- Each name in `type[...]` MUST be the name of a proto.
-- The compiler MUST check structural satisfaction.
-- Listing a proto MAY enable implicit behaviors (§18.6).
-
-### 12.5.7 Copy-treated policy for `type`
-
-A new `type` is **NOT** Copy-treated by default. A `type` becomes Copy-treated only by declaring `type[Copy] ...`.
-
-Copy-eligibility for `type Name(ReprType)` follows the underlying representation: if `ReprType` is Copy-eligible, then `Name` is Copy-eligible.
-
-Example:
-```p7
-type[Copy] UserId(int) {
-  pub fn new(id: int) -> UserId {
-    return Self(id);
-  }
-}
-// UserId is Copy-treated because it declares [Copy].
-// UserId is Copy-eligible because int is Copy-eligible.
 ```
 
 ---
@@ -1649,9 +1673,9 @@ let p: ref<Printable> = r as ref<Printable>;
 [[TODO]] finalize cast syntax and coercion sites.
 
 
-### 18.6 Declaring proto conformances on structs, enums, and types
+### 18.6 Declaring proto conformances on structs and enums
 
-A struct, enum, or type may declare conformances in a bracket list:
+A struct or enum may declare conformances in a bracket list:
 
 ```p7
 struct[Printable, Copy] Vec2(
@@ -1668,14 +1692,10 @@ enum[Printable, Copy] Status(
 ) {
   pub fn print(self: ref<Self>) -> unit { ... }
 }
-
-type[Printable, Copy] UserId(int) {
-  pub fn print(self: ref<Self>) -> unit { ... }
-}
 ```
 
 Rules:
-- Each name in `struct[...]`, `enum[...]`, or `type[...]` MUST be the name of a proto.
+- Each name in `struct[...]` or `enum[...]` MUST be the name of a proto.
 - The compiler MUST check structural satisfaction.
 - Listing a proto MAY enable implicit behaviors described by this spec:
   - `Copy` and `Send` opt-in behavior (§6.3, §6.5).
@@ -2104,10 +2124,8 @@ If both extensions enabled:
 3) Coercion sites and cast spelling for `box<T> -> box<P>` (§18.5)
 4) Enablement mechanisms for extensions (§21, §22)
 5) Host ABI: concrete API surfaces for calling, fibers, threads (§17, §21.4, §22)
-6) Specify `@intrinsic()` and `@ffi(...)` attribute schemas for signature-only methods (§12.5.5)
-7) Decide `self.0` behavior for by-value `self` in `type` declarations regarding move interaction (§12.5.4)
-8) Specify prelude location/definition of `box<T>.new` intrinsic method (§7.4)
-9) Specify FFI surface and how it interacts with `ptr` primitive and `type Name(ptr)` wrappers (§3.1, §12.5)
+6) Specify prelude location/definition of `box<T>.new` intrinsic method (§7.4)
+7) Specify representation/ABI attribute like `@repr(transparent)` for structs (especially for newtype/FFI)
 
 ---
 End.
