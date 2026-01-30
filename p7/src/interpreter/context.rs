@@ -771,32 +771,16 @@ impl Context {
                     }
                 }
                 Instruction::Deref => {
-                    // Pop a Ref from stack, dereference it, push the value
-                    let ref_val = self.stack_frame_mut()?.stack.pop()
-                        .ok_or(RuntimeError::StackUnderflow)?;
+                    // Dereference a ref<T> and push the referenced value
+                    // For copy-treated primitives (int, float, string), they're passed by value
+                    // so we just keep the value on the stack.
+                    // For structs, they're heap-allocated so we keep the StructRef.
+                    // This instruction is mainly a no-op for the current implementation
+                    // since ref<T> for copy-treated types already contains the value.
                     
-                    match ref_val {
-                        Data::StructRef(ref_idx) => {
-                            // Look up the struct in the heap
-                            let struct_data = self.heap.get(ref_idx as usize)
-                                .ok_or_else(|| RuntimeError::Other(
-                                    format!("Invalid struct reference: {}", ref_idx)
-                                ))?.clone();
-                            // Push as StructRef since structs are always heap-allocated
-                            self.stack_frame_mut()?.stack.push(Data::StructRef(ref_idx));
-                        }
-                        // For copy-treated primitives, they're passed by value already
-                        // but if wrapped in a Ref, we just return the value
-                        Data::Int(_) | Data::Float(_) | Data::String(_) => {
-                            // These are copy-treated; just push back the value
-                            self.stack_frame_mut()?.stack.push(ref_val);
-                        }
-                        _ => {
-                            return Err(RuntimeError::Other(
-                                format!("Cannot dereference {:?}", ref_val)
-                            ));
-                        }
-                    }
+                    // For now, this is essentially a no-op. In the future, if we add
+                    // non-copy-treated types or change reference semantics, this would
+                    // need to be implemented differently.
                 }
             }
         }

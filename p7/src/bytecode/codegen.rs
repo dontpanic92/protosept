@@ -835,10 +835,10 @@ impl Generator {
                 if let Type::Primitive(prim_ty) = inner.as_ref() {
                     if prim_ty == &PrimitiveType::String && field.name == "len_bytes" {
                         // ref<string>.len_bytes() intrinsic
-                        // The ref value is already on the stack, we need to dereference it
-                        self.builder.add_instruction(Instruction::Deref);
+                        // The string is already on the stack (string is copy-treated, so ref<string> 
+                        // actually contains the string value itself, not a reference to heap)
                         
-                        // Arguments should be empty for len_bytes
+                        // Validate no arguments
                         if !arguments.is_empty() {
                             return Err(SemanticError::TypeMismatch {
                                 lhs: "0 args expected".to_string(),

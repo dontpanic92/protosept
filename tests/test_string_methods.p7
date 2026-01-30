@@ -27,3 +27,14 @@ fn test_string_len_bytes_abc() -> int {
 fn test_string_len_bytes_long() -> int {
     "abcdefghijklmnopqrstuvwxyz!".len_bytes()
 }
+
+// Test with ref<string> parameter
+fn helper_len_bytes(s: ref<string>) -> int {
+    s.len_bytes()
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_string_len_bytes_ref() -> int {
+    let s = "hello";
+    helper_len_bytes(ref(s))
+}

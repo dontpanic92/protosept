@@ -97,7 +97,7 @@ The **builtin package** is a compiler-bundled package that is automatically load
 - The builtin package is **always available**, even in `nostd` mode (when an optional standard library is not loaded).
 - It declares fundamental types using `@builtin()` structs (§12.6), providing discoverable method signatures for IDE navigation (e.g., F12 "Go to Definition").
 - Builtin types include `string` and other compiler-defined nominal types.
-- Methods in the builtin package are typically marked `@intrinsic()` (§19.1), meaning they have no runtime implementation source; instead, the compiler lowers calls to these methods directly to intrinsic operations during codegen.
+- Methods in the builtin package are typically marked `@intrinsic()` (§19.8.2), meaning they have no runtime implementation source; instead, the compiler lowers calls to these methods directly to intrinsic operations during codegen.
 
 **Distinction from standard library:**
 - **Builtin package**: Compiler-bundled, always loaded, contains fundamental types and intrinsics. Available in all compilation modes.
