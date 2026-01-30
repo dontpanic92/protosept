@@ -198,8 +198,8 @@ Identifiers start with `_` or a letter and continue with letters, digits, or `_`
 
 These identifiers have special meaning only in specific syntactic positions:
 - **Type position:** `ref<T>`, `box<T>`, `robox<T>` denote reference, boxed, and read-only boxed types.
-- **Expression position:** `ref(expr)` and `box(expr)` construct reference and boxed values.
-- **Method receiver position:** `ref self` desugars to `self: ref<Self>` and `box self` desugars to `self: box<Self>` (see §11.4).
+- **Expression position:** `ref(expr)` and `box(expr)` construct reference and boxed values. Note: `robox` has no expression-position form; `robox<T>` values are obtained via type ascription or coercion from `box<T>`.
+- **Method receiver position:** `ref self` desugars to `self: ref<Self>` and `box self` desugars to `self: box<Self>` (see §11.4). Note: `robox self` is not a valid receiver form.
 - In all other positions, `ref`, `box`, and `robox` are ordinary identifiers and may be used as variable names, parameter names, etc.
 
 **Contextual keywords** (not reserved; allowed as identifiers in most contexts):  
@@ -220,7 +220,7 @@ These identifiers are recognized in the effect syntax `fn[effect1, effect2, ...]
 
 ### 2.4 Syntactic Shorthands (Sigils)
 
-To facilitate rapid authoring without sacrificing the auditability of the final code, the compiler accepts specific symbols (sigils) as synonyms for core keywords.
+To facilitate rapid authoring without sacrificing the auditability of the final code, the compiler accepts specific symbols (sigils) as synonyms for `ref` and `box`.
 
 **Canonicalization Rule:**
 While the compiler accepts these sigils, standard formatters and linters are encouraged to replace them with their word-form equivalents (`ref`, `box`) in stored source files to maximize readability for reviewers.
