@@ -9,6 +9,10 @@ use crate::bytecode::{Instruction, Module};
 use crate::errors::RuntimeError;
 pub type ContextResult<T> = std::result::Result<T, RuntimeError>;
 
+/// Type for host functions that can be called from p7 code
+/// Takes a mutable reference to the context to access the stack
+pub type HostFunction = fn(&mut Context) -> ContextResult<()>;
+
 #[derive(Debug, Clone)]
 pub enum Data {
     Int(i32),
@@ -155,11 +159,13 @@ pub struct Context {
     gc_threshold: usize,
     // Vtable for dynamic dispatch: (concrete_type_id, proto_id, method_name_hash) -> symbol_id
     vtable: HashMap<(u32, u32, u32), u32>,
+    // Host function registry: function_name -> host function
+    host_functions: HashMap<String, HostFunction>,
 }
 
 impl Context {
     pub fn new() -> Self {
-        Self {
+        let mut ctx = Self {
             stack: vec![StackFrame::new()],
             modules: Vec::new(),
             heap: Vec::new(),
@@ -167,7 +173,22 @@ impl Context {
             allocation_count: 0,
             gc_threshold: 100, // Run GC after every 100 allocations
             vtable: HashMap::new(),
-        }
+            host_functions: HashMap::new(),
+        };
+        
+        // Register builtin host functions
+        ctx.register_builtin_host_functions();
+        ctx
+    }
+    
+    /// Register all builtin host functions
+    fn register_builtin_host_functions(&mut self) {
+        self.host_functions.insert("string.len_bytes".to_string(), host_string_len_bytes);
+    }
+    
+    /// Register a custom host function
+    pub fn register_host_function(&mut self, name: String, func: HostFunction) {
+        self.host_functions.insert(name, func);
     }
 
     pub fn load_module(&mut self, module: Module) {
@@ -753,6 +774,22 @@ impl Context {
 
                     self.stack.push(new_frame);
                 }
+                Instruction::InvokeHost(string_index) => {
+                    // Look up the host function name from string constants
+                    let function_name = self.modules[0].string_constants.get(string_index as usize)
+                        .ok_or_else(|| RuntimeError::Other(
+                            format!("Invalid string constant index for host function: {}", string_index)
+                        ))?;
+                    
+                    // Look up and call the host function
+                    let host_fn = self.host_functions.get(function_name)
+                        .ok_or_else(|| RuntimeError::Other(
+                            format!("Host function not found: {}", function_name)
+                        ))?;
+                    
+                    // Call the host function
+                    host_fn(self)?;
+                }
             }
         }
 
@@ -971,6 +1008,31 @@ impl Context {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+// ===== Host Functions =====
+
+/// Host function: string.len_bytes
+/// Expects: self (ref<string>) as parameter 0
+/// Returns: int (byte length) on stack
+fn host_string_len_bytes(ctx: &mut Context) -> ContextResult<()> {
+    // The self parameter is passed as param 0 (it's a ref<string>, which is the string value itself)
+    let string_val = ctx.stack_frame_mut()?.stack.pop()
+        .ok_or(RuntimeError::Other("string.len_bytes: missing self parameter".to_string()))?
+        .clone();
+    
+    match string_val {
+        Data::String(s) => {
+            let byte_len = s.len() as i32;
+            ctx.stack_frame_mut()?.stack.push(Data::Int(byte_len));
+            Ok(())
+        }
+        _ => {
+            Err(RuntimeError::Other(
+                format!("string.len_bytes expected string, found {:?}", string_val)
+            ))
         }
     }
 }

@@ -1008,8 +1008,10 @@ impl Parser {
     }
 
     fn parse_struct_method(&mut self) -> ParseResult<StructMethod> {
+        // Parse any attributes before the method
+        let attributes = self.parse_attributes()?;
         let is_pub = self.consume_match(TokenType::Pub).is_ok();
-        let function = self.parse_function_declaration(vec![], is_pub)?;
+        let function = self.parse_function_declaration(attributes, is_pub)?;
 
         Ok(StructMethod { is_pub, function })
     }
@@ -1439,16 +1441,16 @@ impl Parser {
     }
 
     fn parse_statement(&mut self) -> ParseResult<Statement> {
-        // First, check for pub keyword
+        // Parse attributes first (they come before pub in the syntax)
+        let attributes = self.parse_attributes()?;
+        
+        // Then, check for pub keyword
         let is_pub = if self.peek_match(TokenType::Pub) {
             self.consume();
             true
         } else {
             false
         };
-        
-        // Then, try to parse attributes
-        let attributes = self.parse_attributes()?;
 
         match self.peek().map(|t| t.token_type.clone()) {
             Some(TokenType::Import) => {

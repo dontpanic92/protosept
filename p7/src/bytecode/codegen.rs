@@ -1,9 +1,9 @@
+use core::panic;
+
 use crate::errors::SourcePos;
 use crate::{
-    ast::{
-        Expression, FunctionCall, FunctionDeclaration, Identifier, MatchArm, Statement,
-    },
-    bytecode::{builder::ByteCodeBuilder, Instruction},
+    ast::{Expression, FunctionCall, FunctionDeclaration, Identifier, MatchArm, Statement},
+    bytecode::{Instruction, builder::ByteCodeBuilder},
     semantic::{
         Enum, Function, LocalSymbolScope, PrimitiveType, Proto, Struct, Symbol, SymbolKind,
         SymbolTable, Type, TypeId, UserDefinedType, Variable,
@@ -22,15 +22,21 @@ pub(super) const SYNTHETIC_COL: usize = 0;
 
 #[derive(Clone)]
 pub(super) struct LoopContext {
-    pub(super) break_patches: Vec<u32>,  // Addresses of break jumps to patch
-    pub(super) continue_target: u32,      // Address to jump to for continue
+    pub(super) break_patches: Vec<u32>, // Addresses of break jumps to patch
+    pub(super) continue_target: u32,    // Address to jump to for continue
+}
+
+pub struct ExternSymbolId {
+    pub module_path: String,
+    pub symbol_id: u32,
 }
 
 pub struct Generator {
     pub(super) builder: ByteCodeBuilder,
     pub(super) symbol_table: SymbolTable,
     pub(super) local_scope: Option<LocalSymbolScope>,
-    pub(super) pending_monomorphizations: Vec<(u32, TypeId, Vec<Statement>, Vec<String>, Vec<Type>)>, // (symbol_id, type_id, body, param_names, params)
+    pub(super) pending_monomorphizations:
+        Vec<(u32, TypeId, Vec<Statement>, Vec<String>, Vec<Type>)>, // (symbol_id, type_id, body, param_names, params)
     pub(super) module_provider: Box<dyn crate::ModuleProvider>,
     pub(super) imported_modules: std::collections::HashMap<String, Module>,
     // Track which variables have been moved (by their index in local scope)
@@ -41,6 +47,7 @@ pub struct Generator {
     pub(super) string_constants: Vec<String>,
     // Track the containing type when generating methods (for Self resolution)
     pub(super) current_self_type: Option<Type>,
+    pub(super) is_compiling_builtin: bool,
 }
 
 impl Generator {
@@ -56,6 +63,7 @@ impl Generator {
             loop_context_stack: Vec::new(),
             string_constants: Vec::new(),
             current_self_type: None,
+            is_compiling_builtin: false,
         }
     }
 
@@ -63,26 +71,30 @@ impl Generator {
         for statement in statements {
             self.generate_statement(statement)?;
         }
-        
         // Generate bytecode for all pending monomorphizations
         // These were deferred to avoid inline generation during function bodies
         while !self.pending_monomorphizations.is_empty() {
             // Take all pending monomorphizations
             let pending = std::mem::take(&mut self.pending_monomorphizations);
-            
+
             for (symbol_id, _type_id, body, param_names, params) in pending {
                 // Generate the monomorphized function's bytecode
                 let address = self.builder.next_address() as u32;
-                
+
                 // Update the symbol's address
                 if let Some(sym) = self.symbol_table.symbols.get_mut(symbol_id as usize) {
-                    if let SymbolKind::Function { address: ref mut func_addr, .. } = sym.kind {
+                    if let SymbolKind::Function {
+                        address: ref mut func_addr,
+                        ..
+                    } = sym.kind
+                    {
                         *func_addr = address;
                     }
                 }
-                
+
                 // Set up local scope and generate body
-                let variables: Vec<Variable> = param_names.iter()
+                let variables: Vec<Variable> = param_names
+                    .iter()
                     .zip(params.iter())
                     .map(|(name, ty)| Variable {
                         name: name.clone(),
@@ -90,14 +102,14 @@ impl Generator {
                         is_mutable: false, // Parameters are immutable
                     })
                     .collect();
-                
+
                 let saved_local_scope = self.local_scope.take();
                 self.clear_moved_variables(); // Clear moved variables when entering new function
                 self.local_scope = Some(LocalSymbolScope::new(variables));
-                
+
                 let _ = self.generate_block(body, vec![])?;
                 self.builder.ret();
-                
+
                 self.local_scope = saved_local_scope;
             }
         }
@@ -108,6 +120,40 @@ impl Generator {
             types: self.symbol_table.types.clone(),
             string_constants: self.string_constants.clone(),
         })
+    }
+
+    /// Try to load a builtin type on-demand
+    pub(super) fn load_builtin(&mut self) {
+        // Avoid recursive loading
+        if self.is_compiling_builtin {
+            return;
+        }
+
+        const MODULE_PATH: &str = "builtin";
+
+        // Check if already loaded
+        if self.imported_modules.contains_key(MODULE_PATH) {
+            return;
+        }
+
+        // Load the builtin module
+        if let Some(source) = self.module_provider.load_module(MODULE_PATH) {
+            match self.compile_module(source) {
+                Ok(module) => {
+                    // Store the compiled module
+                    self.imported_modules
+                        .insert(MODULE_PATH.to_string(), module);
+                }
+                Err(e) => {
+                    eprintln!("DEBUG try_load_builtin_type: compile error = {:?}", e);
+                }
+            }
+        } else {
+            panic!(
+                "Builtin module '{}' not found in module provider",
+                MODULE_PATH
+            );
+        }
     }
 
     /// Helper method to compile an imported module
@@ -126,16 +172,39 @@ impl Generator {
         }
 
         let mut parser = crate::parser::Parser::new(tokens);
-        let statements = parser.parse().map_err(|e| 
-            SemanticError::Other(format!("Parse error in imported module: {:?}", e))
-        )?;
+        let statements = match parser.parse() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("DEBUG compile_module: parse error = {:?}", e);
+                return Err(SemanticError::Other(format!(
+                    "Parse error in imported module: {:?}",
+                    e
+                )));
+            }
+        };
 
         // Create a new generator for the imported module with a cloned provider
-        let mut module_gen = Generator::new(self.module_provider.clone_boxed());
-        module_gen.generate(statements)
+        let mut module_gen = Generator::new_for_module(self.module_provider.clone_boxed());
+        let result = module_gen.generate(statements);
+        result
     }
 
-
+    /// Create a new generator for compiling imported modules (skips builtin preload to avoid recursion)
+    fn new_for_module(module_provider: Box<dyn crate::ModuleProvider>) -> Self {
+        Generator {
+            builder: ByteCodeBuilder::new(),
+            symbol_table: SymbolTable::new(),
+            local_scope: None,
+            pending_monomorphizations: Vec::new(),
+            module_provider,
+            imported_modules: std::collections::HashMap::new(),
+            moved_variables: std::collections::HashSet::new(),
+            loop_context_stack: Vec::new(),
+            string_constants: Vec::new(),
+            current_self_type: None,
+            is_compiling_builtin: true, // Skip builtin preload to avoid infinite recursion
+        }
+    }
 
     pub(super) fn generate_block(
         &mut self,
@@ -162,8 +231,6 @@ impl Generator {
 
         Ok(ty)
     }
-
-
 
     /// Generate pattern matching code for a list of match arms.
     /// The scrutinee value should already be on the stack.
@@ -235,25 +302,26 @@ impl Generator {
         Ok(result_ty.unwrap_or(Type::Primitive(PrimitiveType::Unit)))
     }
 
-
-
-    pub(super) fn process_function_declaration(&mut self, declaration: FunctionDeclaration) -> SaResult<()> {
+    pub(super) fn process_function_declaration(
+        &mut self,
+        declaration: FunctionDeclaration,
+    ) -> SaResult<()> {
         // TODO: Store declaration.is_pub for module visibility checking
         let _ = declaration.is_pub;
-        
+
         let qualified_name = self
             .symbol_table
             .get_new_symbol_qualified_name(declaration.name.name.clone());
-        
+
         // Extract type parameter names
         let type_param_names: Vec<String> = declaration
             .type_parameters
             .iter()
             .map(|tp| tp.name.name.clone())
             .collect();
-        
+
         let is_generic = !type_param_names.is_empty();
-        
+
         // For generic functions, store parsed parameter types; for non-generic, resolve them
         let (params, generic_param_types) = if is_generic {
             // For generic functions, store placeholder types and keep parsed types
@@ -264,17 +332,17 @@ impl Generator {
                     Ok(Variable {
                         name: arg.name.name.clone(),
                         ty: Type::Primitive(PrimitiveType::Unit), // Placeholder
-                        is_mutable: false, // Parameters are immutable
+                        is_mutable: false,                        // Parameters are immutable
                     })
                 })
                 .collect::<SaResult<Vec<Variable>>>()?;
-            
+
             let generic_types: Vec<crate::ast::Type> = declaration
                 .parameters
                 .iter()
                 .map(|arg| arg.arg_type.clone())
                 .collect();
-            
+
             (params, Some(generic_types))
         } else {
             // For non-generic functions, resolve types normally
@@ -311,13 +379,13 @@ impl Generator {
             } else {
                 Type::Primitive(PrimitiveType::Unit)
             };
-            
+
             if matches!(ret_type, Type::Reference(_)) {
                 return Err(SemanticError::Other(
                     "Functions cannot return non-escapable ref types".to_string(),
                 ));
             }
-            
+
             (ret_type, None)
         };
 
@@ -328,18 +396,22 @@ impl Generator {
             params: params.iter().map(|var| var.ty.clone()).collect(),
             param_names: params.iter().map(|var| var.name.clone()).collect(),
             param_defaults: param_defaults.clone(),
-            return_type,
+            return_type: return_type.clone(),
             attributes: declaration.attributes.clone(),
-            intrinsic_name,
+            intrinsic_name: intrinsic_name.clone(),
             type_parameters: type_param_names.clone(),
             generic_param_types,
             generic_return_type,
-            generic_body: if is_generic { Some(declaration.body.clone()) } else { None },
-            monomorphization: None,  // This is the generic definition, not a monomorphization
+            generic_body: if is_generic {
+                Some(declaration.body.clone())
+            } else {
+                None
+            },
+            monomorphization: None, // This is the generic definition, not a monomorphization
         };
 
         let type_id = self.symbol_table.add_udt(UserDefinedType::Function(ty));
-        
+
         // For generic functions, use placeholder address (no bytecode generated)
         // For non-generic functions, capture the address where body generation will start
         let symbol = Symbol::new(
@@ -358,14 +430,17 @@ impl Generator {
         if !is_generic {
             self.clear_moved_variables(); // Clear moved variables when entering new function
             self.local_scope = Some(LocalSymbolScope::new(params.clone()));
-            
+
             // Set current_self_type if this is a method inside a type/struct/enum
             // The current symbol is the function itself, so we need to look at its parent
             let prev_self_type = self.current_self_type.clone();
             if self.symbol_table.symbol_chain.len() >= 2 {
                 // Get the parent symbol (not the current function symbol)
-                let parent_symbol_id = self.symbol_table.symbol_chain[self.symbol_table.symbol_chain.len() - 2];
-                if let Some(parent_symbol) = self.symbol_table.symbols.get(parent_symbol_id as usize) {
+                let parent_symbol_id =
+                    self.symbol_table.symbol_chain[self.symbol_table.symbol_chain.len() - 2];
+                if let Some(parent_symbol) =
+                    self.symbol_table.symbols.get(parent_symbol_id as usize)
+                {
                     self.current_self_type = match &parent_symbol.kind {
                         SymbolKind::Struct(type_id) => Some(Type::Struct(*type_id)),
                         SymbolKind::Enum(type_id) => Some(Type::Enum(*type_id)),
@@ -373,12 +448,20 @@ impl Generator {
                     };
                 }
             }
-            
-            let ty = self.generate_block(declaration.body, vec![])?;
-            
+
+            // For intrinsic functions, generate a call_host_function instead of the body
+            let ty = if let Some(ref intrinsic_fn_name) = intrinsic_name {
+                // Emit call_host_function with the intrinsic name
+                let host_fn_name_idx = self.add_string_constant(intrinsic_fn_name.clone());
+                self.builder.call_host_function(host_fn_name_idx);
+                return_type.clone()
+            } else {
+                self.generate_block(declaration.body, vec![])?
+            };
+
             // Restore previous self_type
             self.current_self_type = prev_self_type;
-            
+
             // Always emit Ret so unit-returning functions don't fall-through into subsequent code.
             // The VM `Ret` handler is responsible for popping the frame even if there's no value.
             if ty != Type::Primitive(PrimitiveType::Unit) {
@@ -389,7 +472,7 @@ impl Generator {
 
             self.local_scope = None;
         }
-        
+
         self.symbol_table.pop_symbol();
 
         Ok(())
@@ -414,10 +497,10 @@ impl Generator {
                     }),
                 },
             )?;
-            
+
             let symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
-            let symbol_kind = symbol.kind.clone();  // Clone to avoid borrow issues
-            
+            let symbol_kind = symbol.kind.clone(); // Clone to avoid borrow issues
+
             match symbol_kind {
                 SymbolKind::Function { type_id, .. } => {
                     // This is a generic function call like identity<int>(42)
@@ -426,7 +509,7 @@ impl Generator {
                     for arg in type_args {
                         resolved_type_args.push(self.get_semantic_type(arg)?);
                     }
-                    
+
                     // Monomorphize the function
                     let (_addr, func_type_id, symbol_id) = self.monomorphize_function(
                         type_id,
@@ -435,7 +518,7 @@ impl Generator {
                         base.line,
                         base.col,
                     )?;
-                    
+
                     let function_udt = match self.symbol_table.get_udt(func_type_id) {
                         UserDefinedType::Function(f) => f.clone(),
                         _ => {
@@ -448,11 +531,12 @@ impl Generator {
                             });
                         }
                     };
-                    
+
                     let param_names: Vec<String> = function_udt.param_names.clone();
-                    let param_defaults: Vec<Option<Expression>> = function_udt.param_defaults.clone();
+                    let param_defaults: Vec<Option<Expression>> =
+                        function_udt.param_defaults.clone();
                     let ret_type = function_udt.return_type.clone();
-                    
+
                     // Process arguments
                     let ordered_exprs = self.process_arguments(
                         &base.name,
@@ -462,20 +546,29 @@ impl Generator {
                         &param_names,
                         &param_defaults,
                     )?;
-                    
+
                     // Generate argument evaluation
                     for expr in ordered_exprs {
                         // Check if this expression involves a move (before consuming it)
                         let move_info = if let Expression::Identifier(ref ident) = expr {
-                            if let Some(var_id) = self.local_scope.as_ref().unwrap().find_variable(&ident.name) {
-                                let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
+                            if let Some(var_id) = self
+                                .local_scope
+                                .as_ref()
+                                .unwrap()
+                                .find_variable(&ident.name)
+                            {
+                                let ty =
+                                    self.local_scope.as_ref().unwrap().get_variable_type(var_id);
                                 if !ty.is_copy_treated(&self.symbol_table) {
                                     Some(var_id)
                                 } else {
                                     None
                                 }
-                            } else if let Some(param_id) = self.local_scope.as_ref().unwrap().find_param(&ident.name) {
-                                let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
+                            } else if let Some(param_id) =
+                                self.local_scope.as_ref().unwrap().find_param(&ident.name)
+                            {
+                                let ty =
+                                    self.local_scope.as_ref().unwrap().get_param_type(param_id);
                                 if !ty.is_copy_treated(&self.symbol_table) {
                                     Some(param_id)
                                 } else {
@@ -495,10 +588,10 @@ impl Generator {
                             self.mark_variable_moved(var_id);
                         }
                     }
-                    
+
                     // Call the monomorphized function using symbol_id
                     self.builder.call(symbol_id);
-                    
+
                     return Ok(ret_type);
                 }
                 SymbolKind::Struct(_type_id) => {
@@ -508,10 +601,10 @@ impl Generator {
                         base: base.clone(),
                         type_args: type_args.clone(),
                     };
-                    
+
                     // Use monomorphization to get the concrete type
                     let ty = self.get_semantic_type(&parsed_type)?;
-                    
+
                     if let Type::Struct(struct_type_id) = ty {
                         return self.generate_struct_from_call(
                             crate::ast::FunctionCall {
@@ -538,10 +631,10 @@ impl Generator {
                         base: base.clone(),
                         type_args: type_args.clone(),
                     };
-                    
+
                     // Use monomorphization to get the concrete enum type
                     let ty = self.get_semantic_type(&parsed_type)?;
-                    
+
                     if let Type::Enum(enum_type_id) = ty {
                         return self.generate_enum_variant_from_call(
                             callee_expr.clone(),
@@ -586,7 +679,7 @@ impl Generator {
                         type_args: type_args.clone(),
                     };
                     let concrete_ty = self.get_semantic_type(&parsed_type)?;
-                    
+
                     // Handle enum variant construction: Option<int>.Some(42)
                     if let Type::Enum(type_id) = concrete_ty {
                         return self.generate_enum_variant_from_call(
@@ -595,14 +688,14 @@ impl Generator {
                             type_id,
                         );
                     }
-                    
+
                     // Handle struct methods on generic structs if needed
                     if let Type::Struct(_type_id) = concrete_ty {
                         // TODO: Handle static methods on generic structs if needed
                     }
                 }
             }
-            
+
             // Case 2: Static method call like `Type.method(...)` (object is identifier referring to a type)
             if let Expression::Identifier(ident) = object.as_ref() {
                 if let Some(ty) = self.symbol_table.find_type_in_scope(&ident.name) {
@@ -700,18 +793,26 @@ impl Generator {
 
             // Check if this is a proto box method call
             if let Type::BoxType(inner) = &object_ty {
-                if let Type::Proto(proto_id) = inner.as_ref() {
+                if let Type::Primitive(prim_ty) = inner.as_ref() {
+                    let ty = self.handle_primitive_method_call(
+                        prim_ty, field, &arguments, call_line, call_col,
+                    )?;
+
+                    return Ok(ty);
+                } else if let Type::Proto(proto_id) = inner.as_ref() {
                     // This is a call to a method on box<Proto> - use dynamic dispatch
                     // The receiver (ProtoBoxRef) is already on the stack
-                    
+
                     // Get the proto definition to find method signature
                     let proto = match &self.symbol_table.types[*proto_id as usize] {
                         UserDefinedType::Proto(p) => p,
                         _ => return Err(SemanticError::Other("Expected proto type".to_string())),
                     };
-                    
+
                     // Find the method in the proto
-                    let (method_params, method_return) = proto.methods.iter()
+                    let (method_params, method_return) = proto
+                        .methods
+                        .iter()
                         .find(|(name, _, _)| name == &field.name)
                         .map(|(_, params, ret)| (params.clone(), ret.clone()))
                         .ok_or_else(|| SemanticError::FunctionNotFound {
@@ -721,7 +822,7 @@ impl Generator {
                                 col: field.col,
                             }),
                         })?;
-                    
+
                     // Process arguments (skip first param which is self)
                     let param_count = method_params.len();
                     if param_count > 0 {
@@ -733,35 +834,44 @@ impl Generator {
                             self.generate_expression(expr)?;
                         }
                     }
-                    
+
                     // Hash the method name
                     use std::collections::hash_map::DefaultHasher;
                     use std::hash::{Hash, Hasher};
                     let mut hasher = DefaultHasher::new();
                     field.name.hash(&mut hasher);
                     let method_hash = hasher.finish() as u32;
-                    
+
                     // Emit CallProtoMethod instruction
-                    self.builder.add_instruction(Instruction::CallProtoMethod(*proto_id, method_hash));
-                    
+                    self.builder
+                        .add_instruction(Instruction::CallProtoMethod(*proto_id, method_hash));
+
                     return Ok(method_return.unwrap_or(Type::Primitive(PrimitiveType::Unit)));
                 }
             }
-            
+
             // Check if this is a proto ref method call
             if let Type::Reference(inner) = &object_ty {
-                if let Type::Proto(proto_id) = inner.as_ref() {
+                if let Type::Primitive(prim_ty) = inner.as_ref() {
+                    let ty = self.handle_primitive_method_call(
+                        prim_ty, field, &arguments, call_line, call_col,
+                    )?;
+
+                    return Ok(ty);
+                } else if let Type::Proto(proto_id) = inner.as_ref() {
                     // This is a call to a method on ref<Proto> - use dynamic dispatch
                     // The receiver (ProtoRefRef) is already on the stack
-                    
+
                     // Get the proto definition to find method signature
                     let proto = match &self.symbol_table.types[*proto_id as usize] {
                         UserDefinedType::Proto(p) => p,
                         _ => return Err(SemanticError::Other("Expected proto type".to_string())),
                     };
-                    
+
                     // Find the method in the proto
-                    let (method_params, method_return) = proto.methods.iter()
+                    let (method_params, method_return) = proto
+                        .methods
+                        .iter()
                         .find(|(name, _, _)| name == &field.name)
                         .map(|(_, params, ret)| (params.clone(), ret.clone()))
                         .ok_or_else(|| SemanticError::FunctionNotFound {
@@ -771,7 +881,7 @@ impl Generator {
                                 col: field.col,
                             }),
                         })?;
-                    
+
                     // Process arguments (skip first param which is self)
                     let param_count = method_params.len();
                     if param_count > 0 {
@@ -783,66 +893,64 @@ impl Generator {
                             self.generate_expression(expr)?;
                         }
                     }
-                    
+
                     // Hash the method name
                     use std::collections::hash_map::DefaultHasher;
                     use std::hash::{Hash, Hasher};
                     let mut hasher = DefaultHasher::new();
                     field.name.hash(&mut hasher);
                     let method_hash = hasher.finish() as u32;
-                    
+
                     // Emit CallProtoMethod instruction
-                    self.builder.add_instruction(Instruction::CallProtoMethod(*proto_id, method_hash));
-                    
+                    self.builder
+                        .add_instruction(Instruction::CallProtoMethod(*proto_id, method_hash));
+
                     return Ok(method_return.unwrap_or(Type::Primitive(PrimitiveType::Unit)));
                 }
             }
-            
-            // Resolve underlying struct or type TypeId
-            let struct_type_id = if let Type::Reference(boxed) = &object_ty {
-                if let Type::Struct(id) = **boxed {
-                    Some(id)
-                } else {
-                    None
+
+            // Resolve the type symbol for method lookup
+            // For primitive types like string, look up the primitive type symbol
+            // For struct types, look up the struct symbol
+            let type_symbol_id = if let Type::Reference(boxed) = &object_ty {
+                match boxed.as_ref() {
+                    Type::Struct(id) => {
+                        // Find the struct symbol corresponding to the TypeId
+                        self.symbol_table
+                            .symbols
+                            .iter()
+                            .enumerate()
+                            .find(|(_, s)| match s.kind {
+                                SymbolKind::Struct(sid) => sid == *id,
+                                _ => false,
+                            })
+                            .map(|(i, _)| i as u32)
+                    }
+                    _ => None,
                 }
             } else if let Type::Struct(id) = &object_ty {
-                Some(*id)
+                // Find the struct symbol corresponding to the TypeId
+                self.symbol_table
+                    .symbols
+                    .iter()
+                    .enumerate()
+                    .find(|(_, s)| match s.kind {
+                        SymbolKind::Struct(sid) => sid == *id,
+                        _ => false,
+                    })
+                    .map(|(i, _)| i as u32)
+            } else if let Type::Primitive(prim_ty) = &object_ty {
+                let ty = self
+                    .handle_primitive_method_call(prim_ty, field, &arguments, call_line, call_col);
+                return ty;
             } else {
                 None
             };
 
-            if struct_type_id.is_none() {
-                return Err(SemanticError::TypeMismatch {
-                    lhs: object_ty.to_string(),
-                    rhs: "Struct instance".to_string(),
-                    pos: Some(SourcePos {
-                        line: field.line,
-                        col: field.col,
-                    }),
-                });
-            }
-
-            let type_id = struct_type_id.unwrap();
-
-            // Find the struct symbol corresponding to the TypeId
-            let symbol_id_opt = self
-                .symbol_table
-                .symbols
-                .iter()
-                .enumerate()
-                .find(|(_, s)| match s.kind {
-                    SymbolKind::Struct(id) => id == type_id,
-                    _ => false,
-                })
-                .map(|(i, _)| i as u32);
-
-            let symbol_id = symbol_id_opt.ok_or(SemanticError::FunctionNotFound {
-                name: field.name.clone(),
-                pos: Some(SourcePos {
-                    line: field.line,
-                    col: field.col,
-                }),
-            })?;
+            let symbol_id = type_symbol_id.expect(&format!(
+                "Generating method call for type failed: {:?}",
+                object_ty
+            ));
 
             let type_symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
             let method_symbol_id = type_symbol.children.get(&field.name).cloned().ok_or(
@@ -932,17 +1040,19 @@ impl Generator {
         } else {
             // Non-field callee: top-level function or constructor by name
             let call_name = call_name;
-            
+
             // Handle box(expr) intrinsic constructor
             if call_name == "box" {
                 // box(expr) takes one argument and returns box<T> where T is the type of expr
                 if arguments.len() != 1 {
                     return Err(SemanticError::Other(format!(
                         "box() requires exactly one argument, found {} at line {} column {}",
-                        arguments.len(), call_line, call_col
+                        arguments.len(),
+                        call_line,
+                        call_col
                     )));
                 }
-                
+
                 // Check if argument is named (not allowed for box)
                 let (name_opt, expr) = &arguments[0];
                 if name_opt.is_some() {
@@ -951,17 +1061,17 @@ impl Generator {
                         call_line, call_col
                     )));
                 }
-                
+
                 // Generate code for the argument expression
                 let inner_ty = self.generate_expression(expr.clone())?;
-                
+
                 // Generate box allocation instruction
                 self.builder.box_alloc();
-                
+
                 // Return box<T> type
                 return Ok(Type::BoxType(Box::new(inner_ty)));
             }
-            
+
             // First try type-name constructor (e.g., Point(...))
             // Handle Self(...) for struct construction inside methods
             if call_name == "Self" {
@@ -970,11 +1080,13 @@ impl Generator {
                         Type::Struct(type_id) => {
                             return self.generate_struct_from_call(
                                 crate::ast::FunctionCall {
-                                    callee: Box::new(Expression::Identifier(crate::ast::Identifier {
-                                        name: "Self".to_string(),
-                                        line: call_line,
-                                        col: call_col,
-                                    })),
+                                    callee: Box::new(Expression::Identifier(
+                                        crate::ast::Identifier {
+                                            name: "Self".to_string(),
+                                            line: call_line,
+                                            col: call_col,
+                                        },
+                                    )),
                                     arguments,
                                 },
                                 *type_id,
@@ -1002,7 +1114,7 @@ impl Generator {
                     )));
                 }
             }
-            
+
             if let Some(ty) = self.symbol_table.find_type_in_scope(&call_name)
                 && let Type::Struct(type_id) = ty
             {
@@ -1076,7 +1188,12 @@ impl Generator {
                     &param_defaults,
                 )?;
 
-                self.push_typed_argument_list(ordered_exprs, &function_udt.params, call_line, call_col)?;
+                self.push_typed_argument_list(
+                    ordered_exprs,
+                    &function_udt.params,
+                    call_line,
+                    call_col,
+                )?;
                 self.builder.call(symbol_id);
 
                 let ty = self.symbol_table.get_udt(type_id);
@@ -1098,7 +1215,7 @@ impl Generator {
 
     /// Process arguments (positional or named) and map them to parameters/fields.
     /// Returns ordered expressions matching the parameter/field order.
-    fn process_arguments(
+    pub(super) fn process_arguments(
         &self,
         call_name: &str,
         call_line: usize,
@@ -1272,7 +1389,9 @@ impl Generator {
         };
 
         // Find the variant
-        let variant_opt = enum_def.variants.iter()
+        let variant_opt = enum_def
+            .variants
+            .iter()
             .enumerate()
             .find(|(_, (name, _))| name == &variant_name);
 
@@ -1292,7 +1411,11 @@ impl Generator {
         // Validate argument count
         if arguments.len() != field_types.len() {
             return Err(SemanticError::TypeMismatch {
-                lhs: format!("{} arguments expected for variant '{}'", field_types.len(), variant_name),
+                lhs: format!(
+                    "{} arguments expected for variant '{}'",
+                    field_types.len(),
+                    variant_name
+                ),
                 rhs: format!("{} provided", arguments.len()),
                 pos: Some(SourcePos {
                     line: callee_expr.get_pos().0,
@@ -1317,12 +1440,12 @@ impl Generator {
         // For payload variants, generate code to create the enum value
         // First, push the variant index
         self.builder.ldi(variant_index as i32);
-        
+
         // Then push all the field values
         for (arg_opt, expected_type) in arguments.iter().zip(field_types.iter()) {
             let arg_expr = &arg_opt.1;
             let arg_type = self.generate_expression(arg_expr.clone())?;
-            
+
             // Type check the argument
             if !self.types_compatible(&arg_type, expected_type) {
                 return Err(SemanticError::TypeMismatch {
@@ -1335,7 +1458,7 @@ impl Generator {
                 });
             }
         }
-        
+
         // Create the enum value with the variant index and fields
         // We represent enum values as structs where the first field is the variant index
         // and subsequent fields are the payload values: [variant_index, field1, field2, ...]
@@ -1352,7 +1475,7 @@ impl Generator {
         Ok(())
     }
 
-    fn push_typed_argument_list(
+    pub(super) fn push_typed_argument_list(
         &mut self,
         arguments: Vec<Expression>,
         param_types: &[Type],
@@ -1373,14 +1496,21 @@ impl Generator {
         for (expr, param_ty) in arguments.into_iter().zip(param_types.iter()) {
             // Check if this expression involves a move (before consuming it)
             let move_info = if let Expression::Identifier(ref ident) = expr {
-                if let Some(var_id) = self.local_scope.as_ref().unwrap().find_variable(&ident.name) {
+                if let Some(var_id) = self
+                    .local_scope
+                    .as_ref()
+                    .unwrap()
+                    .find_variable(&ident.name)
+                {
                     let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
                     if !ty.is_copy_treated(&self.symbol_table) {
                         Some(var_id)
                     } else {
                         None
                     }
-                } else if let Some(param_id) = self.local_scope.as_ref().unwrap().find_param(&ident.name) {
+                } else if let Some(param_id) =
+                    self.local_scope.as_ref().unwrap().find_param(&ident.name)
+                {
                     let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
                     if !ty.is_copy_treated(&self.symbol_table) {
                         Some(param_id)

@@ -90,6 +90,21 @@ A **module** is a single source file.
   - Recommended mapping: `/` becomes `.`.
   - Example: `src/util/string.p7` → `mypackage.src.util.string`.
 
+### 1.1.2a Builtin package
+
+The **builtin package** is a compiler-bundled package that is automatically loaded before user code.
+
+- The builtin package is **always available**, even in `nostd` mode (when an optional standard library is not loaded).
+- It declares fundamental types using `@builtin()` structs (§12.6), providing discoverable method signatures for IDE navigation (e.g., F12 "Go to Definition").
+- Builtin types include `string` and other compiler-defined nominal types.
+- Methods in the builtin package are typically marked `@intrinsic()` (§19.8.2), meaning they have no runtime implementation source; instead, the compiler lowers calls to these methods directly to intrinsic operations during codegen.
+
+**Distinction from standard library:**
+- **Builtin package**: Compiler-bundled, always loaded, contains fundamental types and intrinsics. Available in all compilation modes.
+- **Standard library (stdlib)**: Optional, user-loadable library with utility functions, data structures, etc. May be excluded in `nostd` mode.
+
+The builtin package provides the canonical declarations for types like `string`, allowing method calls such as `s.len_bytes()` to resolve through normal method resolution, while the compiler generates intrinsic code at compile time.
+
 ### 1.1.3 Absolute module paths
 
 An **absolute module path** begins with a package name and uses `.` as a separator.
@@ -295,11 +310,20 @@ Types in v1:
 ## 3.2 `string`
 
 - `string` is a built-in **immutable value type** containing UTF-8 text.
+- `string` is a **builtin nominal type** with compiler-defined representation (§1.1.2a).
+- Its canonical declaration and method signatures are declared in the builtin package as an `@builtin()` struct (§12.6).
 - Iteration unit is `char`.
 
-Minimum v1 operations (exact spelling may be in a prelude/stdlib; these names are normative placeholders):
-- `len_chars(s: string) -> int`  
-- `get_char(s: string, i: int) -> ?char` (0-based; out of bounds → `null`)
+Minimum v1 operations (declared as intrinsic methods in the builtin package):
+- `len_bytes(self: ref<string>) -> int` — Returns the byte length of the string (UTF-8 encoded).
+- `len_chars(self: ref<string>) -> int` — Returns the character count (number of Unicode scalar values). [[TODO]]
+- `get_char(self: ref<string>, i: int) -> ?char` — Returns the character at index `i` (0-based; out of bounds → `null`). [[TODO]]
+
+**Method call syntax:**
+```p7
+let s = "hello";
+let byte_len = s.len_bytes();  // 5
+```
 
 Indexing policy:
 - No `s[i]` syntax for strings in v1.
@@ -1448,8 +1472,25 @@ struct Handle;
 - Construction `Handle(...)` is ERROR unless provided by the compiler via intrinsics or FFI.
 - Field access `h.field` is not applicable (no fields are accessible).
 - Methods may be declared with signature-only declarations using `@intrinsic()` or `@ffi(...)` (§19).
+- Methods marked `@intrinsic()` are resolved at compile/codegen time; the runtime does **not** look up source implementations. The compiler lowers intrinsic method calls directly to intrinsic operations during codegen.
 
-**Example:**
+**Example: Builtin string with intrinsic method**
+
+```p7
+@builtin()
+struct string {
+  @intrinsic("string.len_bytes")
+  pub fn len_bytes(self: ref<string>) -> int;
+}
+```
+
+In the above example:
+- `string` is a builtin nominal type with no source-level fields.
+- `len_bytes` is a signature-only method marked as intrinsic.
+- Calls to `s.len_bytes()` are resolved via normal method resolution, but code generation lowers the call directly to an intrinsic operation.
+- No runtime source lookup occurs; intrinsics are fully resolved during compilation.
+
+**Example: FFI handle**
 
 ```p7
 @builtin()
@@ -1459,7 +1500,7 @@ struct FileHandle {
 }
 ```
 
-**Rationale:** `@builtin()` structs allow the compiler to define opaque types for FFI, runtime handles, or platform-specific types without exposing internal representation.
+**Rationale:** `@builtin()` structs allow the compiler to define opaque types for fundamental types (like `string`), FFI, runtime handles, or platform-specific types without exposing internal representation. Intrinsic methods provide a discoverable API surface for IDE tooling (e.g., "Go to Definition") while maintaining the performance of compiler-lowered operations.
 
 ---
 
@@ -2008,6 +2049,42 @@ ERROR if:
 - required field omitted
 - non-constant value provided
 - field type not permitted
+
+### 19.8 Standard compiler attributes
+
+The compiler recognizes certain standard attributes with special semantics:
+
+#### 19.8.1 `@builtin()`
+Marks a struct as a compiler-defined opaque type (§12.6).
+
+#### 19.8.2 `@intrinsic()`
+Marks a function or method as a compiler intrinsic.
+
+Syntax:
+```p7
+@intrinsic()              // Intrinsic name derived from context
+@intrinsic("name")        // Explicit intrinsic name
+@intrinsic(name = "...")  // Named parameter form
+```
+
+**Semantics:**
+- The function/method has no source implementation; it is a signature-only declaration.
+- The compiler lowers calls to the intrinsic directly during codegen.
+- No runtime source lookup occurs.
+- Intrinsic names identify the specific compiler operation to use.
+
+**Common use:**
+- Methods on `@builtin()` structs (e.g., `string.len_bytes`)
+- Compiler-provided operations that cannot be expressed in source
+
+**Example:**
+```p7
+@builtin()
+struct string {
+  @intrinsic("string.len_bytes")
+  pub fn len_bytes(self: ref<string>) -> int;
+}
+```
 
 ---
 

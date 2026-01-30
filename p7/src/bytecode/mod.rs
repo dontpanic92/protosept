@@ -156,6 +156,12 @@ pub enum Instruction {
     // Parameters: string_index (index into Module.string_constants)
     #[brw(magic = 37u8)]
     Lds(u32),
+    
+    // Call a host function by name.
+    // Expects: [..., args] -> pops args, calls host function, pushes result
+    // Parameters: string_index (index into Module.string_constants for function name)
+    #[brw(magic = 38u8)]
+    InvokeHost(u32),
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {
