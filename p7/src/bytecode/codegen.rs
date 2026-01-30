@@ -139,24 +139,61 @@ impl Generator {
         if let Some(source) = self.module_provider.load_module(module_path) {
             match self.compile_module(source) {
                 Ok(module) => {
-                    // Import the type into the global scope
-                    for symbol in &module.symbols {
+                        module_path, module.symbols.len(), module.types.len());
+                    
+                    // Calculate offset for symbol and type IDs
+                    let symbol_offset = self.symbol_table.symbols.len() as u32;
+                    let type_offset = self.symbol_table.types.len() as u32;
+                    
+                    // Copy all types from the builtin module
+                    for udt in &module.types {
+                        self.symbol_table.types.push(udt.clone());
+                    }
+                    
+                    // Copy all symbols from the builtin module, adjusting IDs
+                    let mut imported_symbol_id = None;
+                    for (idx, symbol) in module.symbols.iter().enumerate() {
+                        // Adjust kind to fix type_id and address references
+                        let adjusted_kind = match &symbol.kind {
+                            SymbolKind::Function { address, type_id } => {
+                                SymbolKind::Function {
+                                    address: *address,
+                                    type_id: type_id + type_offset,
+                                }
+                            }
+                            SymbolKind::Struct(type_id) => SymbolKind::Struct(type_id + type_offset),
+                            SymbolKind::Enum(type_id) => SymbolKind::Enum(type_id + type_offset),
+                            SymbolKind::Proto(type_id) => SymbolKind::Proto(type_id + type_offset),
+                            _ => symbol.kind.clone(),
+                        };
+                        
+                        // Adjust children HashMap to use new symbol IDs
+                        let adjusted_children: std::collections::HashMap<String, u32> = symbol
+                            .children
+                            .iter()
+                            .map(|(name, old_id)| (name.clone(), old_id + symbol_offset))
+                            .collect();
+                        
+                        let adjusted_symbol = Symbol {
+                            name: symbol.name.clone(),
+                            qualified_name: symbol.qualified_name.clone(),
+                            kind: adjusted_kind,
+                            children: adjusted_children,
+                        };
+                        
+                        self.symbol_table.symbols.push(adjusted_symbol);
+                        
+                        // Track the imported type symbol
                         if symbol.name == type_name {
-                            // Add the symbol to the global scope
-                            let symbol_id = self.symbol_table.symbols.len() as u32;
-                            let new_symbol = Symbol::new(
-                                symbol.name.clone(),
-                                symbol.qualified_name.clone(),
-                                symbol.kind.clone(),
-                            );
-                            self.symbol_table.symbols.push(new_symbol);
-                            
-                            // Add as child of root scope
-                            self.symbol_table.symbols[0]
-                                .children
-                                .insert(type_name.to_string(), symbol_id);
-                            break;
+                            imported_symbol_id = Some(symbol_offset + idx as u32);
                         }
+                    }
+                    
+                    // Add the imported type as a child of root scope
+                    if let Some(symbol_id) = imported_symbol_id {
+                        self.symbol_table.symbols[0]
+                            .children
+                            .insert(type_name.to_string(), symbol_id);
                     }
                     
                     // Store the compiled module

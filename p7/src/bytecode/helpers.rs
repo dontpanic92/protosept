@@ -22,10 +22,12 @@ impl Generator {
     /// Look up a method on a type and extract its intrinsic name if it has one
     /// Returns (intrinsic_name, return_type) if found
     pub(super) fn lookup_intrinsic_method(&mut self, type_name: &str, method_name: &str) -> Option<(String, Type)> {
+        
         // First, try to find the type in the symbol table
         if self.symbol_table.find_symbol_in_scope(type_name).is_none() {
             // Type not found, try to load it from builtin
             self.try_load_builtin_type(type_name);
+        } else {
         }
         
         // Look up the type in the symbol table
@@ -49,7 +51,13 @@ impl Generator {
         };
         
         // Extract the intrinsic name from the function's attributes
-        let intrinsic_name = Self::extract_intrinsic_name(&function_type.attributes)?;
+        let intrinsic_name = if let Some(name) = Self::extract_intrinsic_name(&function_type.attributes) {
+            name
+        } else {
+            // Fall back to naming convention: type_name.method_name
+            let derived_name = format!("{}.{}", type_name, method_name);
+            derived_name
+        };
         let return_type = function_type.return_type.clone();
         
         Some((intrinsic_name, return_type))
