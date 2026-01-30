@@ -1,0 +1,4 @@
+fn test() -> int {
+    let s = "hello";
+    s.len_bytes()
+}

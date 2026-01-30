@@ -1,7 +1,7 @@
 use crate::errors::SourcePos;
 use crate::{
     ast::{Expression, Identifier, Pattern, Statement},
-    semantic::{Type, SymbolKind, UserDefinedType, PrimitiveType, Symbol},
+    semantic::{Type, SymbolKind, UserDefinedType, PrimitiveType, Symbol, TypeId},
 };
 use crate::errors::SemanticError;
 
@@ -16,6 +16,33 @@ impl Generator {
             let idx = self.string_constants.len() as u32;
             self.string_constants.push(s);
             idx
+        }
+    }
+    
+    /// Resolve a primitive type to its corresponding builtin struct TypeId
+    /// This loads the builtin module on-demand if not already loaded
+    pub(super) fn resolve_primitive_to_struct_type(&mut self, prim_ty: &PrimitiveType) -> Option<TypeId> {
+        let type_name = match prim_ty {
+            PrimitiveType::String => "string",
+            _ => return None, // Other primitive types don't have builtin struct implementations yet
+        };
+        
+        // Try to load the builtin type if not already loaded
+        self.try_load_builtin_type(type_name);
+        
+        eprintln!("DEBUG: Looking for symbol '{}' in scope", type_name);
+        eprintln!("DEBUG: symbol_chain = {:?}", self.symbol_table.symbol_chain);
+        eprintln!("DEBUG: root symbols children = {:?}", self.symbol_table.symbols.get(0).map(|s| &s.children));
+        
+        // Look up the struct symbol directly (not find_type_in_scope, which returns primitives for names like "string")
+        let symbol_id = self.symbol_table.find_symbol_in_scope(type_name)?;
+        eprintln!("DEBUG: Found symbol_id = {}", symbol_id);
+        let symbol = self.symbol_table.get_symbol(symbol_id)?;
+        eprintln!("DEBUG: Found symbol = {:?}", symbol);
+        
+        match symbol.kind {
+            SymbolKind::Struct(type_id) => Some(type_id),
+            _ => None,
         }
     }
     

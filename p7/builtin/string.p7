@@ -2,11 +2,14 @@
 // This module is part of the compiler-bundled builtin package.
 // It is always loaded before user code, even in nostd mode.
 
+struct builtin();
+
+struct intrinsic(pub name: string);
+
+@builtin()
 pub struct string() {
+
     // Return the byte length (UTF-8 encoded) of the string
-    // Intrinsic: string.len_bytes
-    pub fn len_bytes(self: ref<string>) -> int {
-        // Implementation provided by compiler host function
-        return 0;
-    }
+    @intrinsic(name="string.len_bytes")
+    pub fn len_bytes(self: ref<string>) -> int {}
 }

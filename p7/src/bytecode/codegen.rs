@@ -115,8 +115,10 @@ impl Generator {
     
     /// Try to load a builtin type on-demand
     pub(super) fn try_load_builtin_type(&mut self, type_name: &str) {
+        eprintln!("DEBUG try_load_builtin_type: type_name={}", type_name);
         // Avoid recursive loading
         if self.is_compiling_builtin {
+            eprintln!("DEBUG try_load_builtin_type: is_compiling_builtin, returning early");
             return;
         }
         
@@ -125,25 +127,34 @@ impl Generator {
         let module_path = match type_name {
             "string" => "builtin.string",
             _ => {
+                eprintln!("DEBUG try_load_builtin_type: unknown type, returning early");
                 return;
             }
         };
         
         // Check if already loaded
         if self.imported_modules.contains_key(module_path) {
+            eprintln!("DEBUG try_load_builtin_type: already loaded, returning early");
             return;
         }
         
+        eprintln!("DEBUG try_load_builtin_type: loading module_path={}", module_path);
         
         // Load the builtin module
         if let Some(source) = self.module_provider.load_module(module_path) {
+            eprintln!("DEBUG try_load_builtin_type: got source, compiling...");
             match self.compile_module(source) {
-                Ok(module) => {
-                        module_path, module.symbols.len(), module.types.len());
+                Ok(module) => {     
+                    eprintln!("DEBUG try_load_builtin_type: compile OK, module.symbols.len()={}", module.symbols.len());
+                    for (i, s) in module.symbols.iter().enumerate() {
+                        eprintln!("DEBUG   module.symbols[{}] = name={}, kind={:?}", i, s.name, std::mem::discriminant(&s.kind));
+                    }
                     
                     // Calculate offset for symbol and type IDs
                     let symbol_offset = self.symbol_table.symbols.len() as u32;
                     let type_offset = self.symbol_table.types.len() as u32;
+                    
+                    eprintln!("DEBUG try_load_builtin_type: symbol_offset={}, type_offset={}", symbol_offset, type_offset);
                     
                     // Copy all types from the builtin module
                     for udt in &module.types {
@@ -184,17 +195,23 @@ impl Generator {
                         self.symbol_table.symbols.push(adjusted_symbol);
                         
                         // Track the imported type symbol
+                        eprintln!("DEBUG try_load_builtin_type: checking symbol '{}' == type_name '{}'", symbol.name, type_name);
                         if symbol.name == type_name {
                             imported_symbol_id = Some(symbol_offset + idx as u32);
+                            eprintln!("DEBUG try_load_builtin_type: found! imported_symbol_id={:?}", imported_symbol_id);
                         }
                     }
                     
                     // Add the imported type as a child of root scope
+                    eprintln!("DEBUG try_load_builtin_type: imported_symbol_id={:?}", imported_symbol_id);
                     if let Some(symbol_id) = imported_symbol_id {
                         self.symbol_table.symbols[0]
                             .children
                             .insert(type_name.to_string(), symbol_id);
+                        eprintln!("DEBUG try_load_builtin_type: added to root children");
                     }
+                    
+                    eprintln!("DEBUG try_load_builtin_type: root children after = {:?}", self.symbol_table.symbols[0].children);
                     
                     // Store the compiled module
                     self.imported_modules.insert(module_path.to_string(), module);
@@ -208,6 +225,7 @@ impl Generator {
 
     /// Helper method to compile an imported module
     pub(super) fn compile_module(&self, source: String) -> SaResult<Module> {
+        eprintln!("DEBUG compile_module: starting");
         // Parse the module source
         let mut lexer = crate::lexer::Lexer::new(source);
         let mut tokens = vec![];
@@ -220,15 +238,23 @@ impl Generator {
                 tokens.push(token);
             }
         }
+        eprintln!("DEBUG compile_module: got {} tokens", tokens.len());
 
         let mut parser = crate::parser::Parser::new(tokens);
-        let statements = parser.parse().map_err(|e| 
-            SemanticError::Other(format!("Parse error in imported module: {:?}", e))
-        )?;
+        let statements = match parser.parse() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("DEBUG compile_module: parse error = {:?}", e);
+                return Err(SemanticError::Other(format!("Parse error in imported module: {:?}", e)));
+            }
+        };
+        eprintln!("DEBUG compile_module: parsed {} statements", statements.len());
 
         // Create a new generator for the imported module with a cloned provider
         let mut module_gen = Generator::new_for_module(self.module_provider.clone_boxed());
-        module_gen.generate(statements)
+        let result = module_gen.generate(statements);
+        eprintln!("DEBUG compile_module: generate result = {:?}", result.is_ok());
+        result
     }
     
     /// Create a new generator for compiling imported modules (skips builtin preload to avoid recursion)
@@ -441,9 +467,9 @@ impl Generator {
             params: params.iter().map(|var| var.ty.clone()).collect(),
             param_names: params.iter().map(|var| var.name.clone()).collect(),
             param_defaults: param_defaults.clone(),
-            return_type,
+            return_type: return_type.clone(),
             attributes: declaration.attributes.clone(),
-            intrinsic_name,
+            intrinsic_name: intrinsic_name.clone(),
             type_parameters: type_param_names.clone(),
             generic_param_types,
             generic_return_type,
@@ -487,7 +513,15 @@ impl Generator {
                 }
             }
             
-            let ty = self.generate_block(declaration.body, vec![])?;
+            // For intrinsic functions, generate a call_host_function instead of the body
+            let ty = if let Some(ref intrinsic_fn_name) = intrinsic_name {
+                // Emit call_host_function with the intrinsic name
+                let host_fn_name_idx = self.add_string_constant(intrinsic_fn_name.clone());
+                self.builder.call_host_function(host_fn_name_idx);
+                return_type.clone()
+            } else {
+                self.generate_block(declaration.body, vec![])?
+            };
             
             // Restore previous self_type
             self.current_self_type = prev_self_type;
@@ -911,112 +945,18 @@ impl Generator {
                 }
             }
             
-            // Check for builtin primitive type methods (e.g., string.len_bytes)
-            if let Type::Primitive(prim_ty) = &object_ty {
-                // For primitive types, look up the type in the symbol table to find intrinsic methods
-                let type_name = match prim_ty {
-                    PrimitiveType::String => "string",
-                    _ => {
-                        // Other primitive types don't have methods yet
-                        return Err(SemanticError::FunctionNotFound {
-                            name: format!("{:?}.{}", prim_ty, field.name),
-                            pos: Some(SourcePos {
-                                line: field.line,
-                                col: field.col,
-                            }),
-                        });
-                    }
-                };
-                
-                // Look up the method and its intrinsic attribute
-                if let Some((intrinsic_name, return_type)) = self.lookup_intrinsic_method(type_name, &field.name) {
-                    // The primitive value is already on the stack
-                    // Validate arguments match method signature
-                    if !arguments.is_empty() {
-                        return Err(SemanticError::TypeMismatch {
-                            lhs: "0 args expected".to_string(),
-                            rhs: format!("{} provided", arguments.len()),
-                            pos: Some(SourcePos {
-                                line: call_line,
-                                col: call_col,
-                            }),
-                        });
-                    }
-                    
-                    // Emit CallHostFunction with the intrinsic name from the attribute
-                    let host_fn_name_idx = self.add_string_constant(intrinsic_name);
-                    self.builder.call_host_function(host_fn_name_idx);
-                    return Ok(return_type);
-                }
-                
-                // Method not found on primitive type
-                return Err(SemanticError::FunctionNotFound {
-                    name: format!("{}.{}", type_name, field.name),
-                    pos: Some(SourcePos {
-                        line: field.line,
-                        col: field.col,
-                    }),
-                });
-            }
-            
-            // Also check for ref<primitive> method calls
-            if let Type::Reference(inner) = &object_ty {
-                if let Type::Primitive(prim_ty) = inner.as_ref() {
-                    // For ref<primitive>, look up the type to find intrinsic methods
-                    let type_name = match prim_ty {
-                        PrimitiveType::String => "string",
-                        _ => {
-                            return Err(SemanticError::FunctionNotFound {
-                                name: format!("ref<{:?}>.{}", prim_ty, field.name),
-                                pos: Some(SourcePos {
-                                    line: field.line,
-                                    col: field.col,
-                                }),
-                            });
-                        }
-                    };
-                    
-                    // Look up the method and its intrinsic attribute
-                    if let Some((intrinsic_name, return_type)) = self.lookup_intrinsic_method(type_name, &field.name) {
-                        // The value is already on the stack (primitives are copy-treated)
-                        // Validate arguments
-                        if !arguments.is_empty() {
-                            return Err(SemanticError::TypeMismatch {
-                                lhs: "0 args expected".to_string(),
-                                rhs: format!("{} provided", arguments.len()),
-                                pos: Some(SourcePos {
-                                    line: call_line,
-                                    col: call_col,
-                                }),
-                            });
-                        }
-                        
-                        // Emit CallHostFunction with the intrinsic name from the attribute
-                        let host_fn_name_idx = self.add_string_constant(intrinsic_name);
-                        self.builder.call_host_function(host_fn_name_idx);
-                        return Ok(return_type);
-                    }
-                    
-                    // Method not found on ref<primitive>
-                    return Err(SemanticError::FunctionNotFound {
-                        name: format!("ref<{}>.{}", type_name, field.name),
-                        pos: Some(SourcePos {
-                            line: field.line,
-                            col: field.col,
-                        }),
-                    });
-                }
-            }
-            
             // Resolve underlying struct or type TypeId
+            // For primitive types like string, look up the corresponding builtin struct
             let struct_type_id = if let Type::Reference(boxed) = &object_ty {
-                if let Type::Struct(id) = **boxed {
-                    Some(id)
-                } else {
-                    None
+                match boxed.as_ref() {
+                    Type::Struct(id) => Some(*id),
+                    Type::Primitive(prim_ty) => self.resolve_primitive_to_struct_type(prim_ty),
+                    _ => None,
                 }
             } else if let Type::Struct(id) = &object_ty {
                 Some(*id)
+            } else if let Type::Primitive(prim_ty) = &object_ty {
+                self.resolve_primitive_to_struct_type(prim_ty)
             } else {
                 None
             };
