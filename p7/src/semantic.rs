@@ -187,8 +187,11 @@ impl Type {
                 if let UserDefinedType::Struct(s) = symbol_table.get_udt(*type_id) {
                     // Check if struct conforms to Copy proto
                     s.conforming_to.iter().any(|proto_id| {
-                        if let Some(UserDefinedType::Proto(proto)) = symbol_table.types.get(*proto_id as usize) {
-                            proto.qualified_name.ends_with(".Copy") || proto.qualified_name == "Copy"
+                        if let Some(UserDefinedType::Proto(proto)) =
+                            symbol_table.types.get(*proto_id as usize)
+                        {
+                            proto.qualified_name.ends_with(".Copy")
+                                || proto.qualified_name == "Copy"
                         } else {
                             false
                         }
@@ -293,7 +296,7 @@ pub struct SymbolTable {
     pub types: Vec<UserDefinedType>,
 
     pub symbol_chain: Vec<SymbolId>,
-    
+
     // Cache for monomorphized types: (base_type_id, type_args) -> monomorphized_type_id
     pub monomorphization_cache: HashMap<(TypeId, Vec<Type>), TypeId>,
 }
@@ -400,7 +403,9 @@ impl SymbolTable {
     }
 
     pub fn find_symbol_by_qualified_name(&self, qualified_name: &str) -> Option<&Symbol> {
-        self.symbols.iter().find(|s| s.qualified_name == qualified_name)
+        self.symbols
+            .iter()
+            .find(|s| s.qualified_name == qualified_name)
     }
 
     pub fn get_new_symbol_qualified_name(&self, name: String) -> String {
@@ -474,12 +479,21 @@ impl LocalSymbolScope {
         self.params = params;
     }
 
-    pub fn add_variable(&mut self, name: String, var_type: Type, is_mutable: bool) -> LocalSymbolScopeResult<u32> {
+    pub fn add_variable(
+        &mut self,
+        name: String,
+        var_type: Type,
+        is_mutable: bool,
+    ) -> LocalSymbolScopeResult<u32> {
         if self.scopes.is_empty() {
             Err(LocalSymbolScopeError::NoScopePushed)
         } else {
             let var_id = self.locals.len() as u32;
-            self.locals.push(Variable { name, ty: var_type, is_mutable });
+            self.locals.push(Variable {
+                name,
+                ty: var_type,
+                is_mutable,
+            });
             self.scopes.last_mut().unwrap().var_ids.push(var_id);
             Ok(var_id)
         }

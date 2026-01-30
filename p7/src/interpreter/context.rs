@@ -1015,11 +1015,13 @@ impl Context {
 // ===== Host Functions =====
 
 /// Host function: string.len_bytes
-/// Expects: [..., string] on stack
-/// Returns: [..., int] (byte length)
+/// Expects: self (ref<string>) as parameter 0
+/// Returns: int (byte length) on stack
 fn host_string_len_bytes(ctx: &mut Context) -> ContextResult<()> {
-    let string_val = ctx.stack_frame_mut()?.stack.pop()
-        .ok_or(RuntimeError::StackUnderflow)?;
+    // The self parameter is passed as param 0 (it's a ref<string>, which is the string value itself)
+    let string_val = ctx.stack_frame()?.params.get(0)
+        .ok_or(RuntimeError::Other("string.len_bytes: missing self parameter".to_string()))?
+        .clone();
     
     match string_val {
         Data::String(s) => {

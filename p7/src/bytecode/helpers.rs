@@ -1,16 +1,20 @@
+use crate::errors::SemanticError;
 use crate::errors::SourcePos;
 use crate::{
     ast::{Expression, Identifier, Pattern, Statement},
-    semantic::{Type, SymbolKind, UserDefinedType, PrimitiveType, Symbol, TypeId},
+    semantic::{PrimitiveType, Symbol, SymbolKind, Type, TypeId, UserDefinedType},
 };
-use crate::errors::SemanticError;
 
 use super::codegen::{Generator, SaResult};
 
 impl Generator {
     /// Helper to add a string constant to the pool and return its index
     pub(super) fn add_string_constant(&mut self, s: String) -> u32 {
-        if let Some(idx) = self.string_constants.iter().position(|existing| existing == &s) {
+        if let Some(idx) = self
+            .string_constants
+            .iter()
+            .position(|existing| existing == &s)
+        {
             idx as u32
         } else {
             let idx = self.string_constants.len() as u32;
@@ -18,78 +22,24 @@ impl Generator {
             idx
         }
     }
-    
-    /// Resolve a primitive type to its corresponding builtin struct TypeId
-    /// This loads the builtin module on-demand if not already loaded
-    pub(super) fn resolve_primitive_to_struct_type(&mut self, prim_ty: &PrimitiveType) -> Option<TypeId> {
+
+    /// Resolve a primitive type to its corresponding symbol ID for method lookup
+    /// The primitive type symbol is registered during generator initialization
+    pub(super) fn resolve_primitive_to_symbol_id(&mut self, prim_ty: &PrimitiveType) -> Option<u32> {
         let type_name = match prim_ty {
             PrimitiveType::String => "string",
-            _ => return None, // Other primitive types don't have builtin struct implementations yet
+            _ => return None, // Other primitive types don't have methods yet
         };
-        
-        // Try to load the builtin type if not already loaded
+
         self.try_load_builtin_type(type_name);
-        
-        eprintln!("DEBUG: Looking for symbol '{}' in scope", type_name);
-        eprintln!("DEBUG: symbol_chain = {:?}", self.symbol_table.symbol_chain);
-        eprintln!("DEBUG: root symbols children = {:?}", self.symbol_table.symbols.get(0).map(|s| &s.children));
-        
-        // Look up the struct symbol directly (not find_type_in_scope, which returns primitives for names like "string")
-        let symbol_id = self.symbol_table.find_symbol_in_scope(type_name)?;
-        eprintln!("DEBUG: Found symbol_id = {}", symbol_id);
-        let symbol = self.symbol_table.get_symbol(symbol_id)?;
-        eprintln!("DEBUG: Found symbol = {:?}", symbol);
-        
-        match symbol.kind {
-            SymbolKind::Struct(type_id) => Some(type_id),
-            _ => None,
-        }
+
+        println!("Resolving primitive type '{}' to symbol ID", type_name);
+        println!("Current symbol table: {:?}", self.symbol_table.symbols);
+        println!("Current symbol table types: {:?}", self.symbol_table.types);
+        // Look up the primitive type symbol directly
+        self.symbol_table.find_symbol_in_scope(type_name)
     }
-    
-    /// Look up a method on a type and extract its intrinsic name if it has one
-    /// Returns (intrinsic_name, return_type) if found
-    pub(super) fn lookup_intrinsic_method(&mut self, type_name: &str, method_name: &str) -> Option<(String, Type)> {
-        
-        // First, try to find the type in the symbol table
-        if self.symbol_table.find_symbol_in_scope(type_name).is_none() {
-            // Type not found, try to load it from builtin
-            self.try_load_builtin_type(type_name);
-        } else {
-        }
-        
-        // Look up the type in the symbol table
-        let type_symbol_id = self.symbol_table.find_symbol_in_scope(type_name)?;
-        let type_symbol = self.symbol_table.get_symbol(type_symbol_id)?;
-        
-        // Find the method in the type's children
-        let method_symbol_id = type_symbol.children.get(method_name)?;
-        let method_symbol = self.symbol_table.get_symbol(*method_symbol_id)?;
-        
-        // Get the method's type info
-        let (_, method_type_id) = match method_symbol.kind {
-            SymbolKind::Function { address, type_id } => (address, type_id),
-            _ => return None,
-        };
-        
-        let method_udt = self.symbol_table.get_udt(method_type_id);
-        let function_type = match method_udt {
-            UserDefinedType::Function(f) => f,
-            _ => return None,
-        };
-        
-        // Extract the intrinsic name from the function's attributes
-        let intrinsic_name = if let Some(name) = Self::extract_intrinsic_name(&function_type.attributes) {
-            name
-        } else {
-            // Fall back to naming convention: type_name.method_name
-            let derived_name = format!("{}.{}", type_name, method_name);
-            derived_name
-        };
-        let return_type = function_type.return_type.clone();
-        
-        Some((intrinsic_name, return_type))
-    }
-    
+
     /// Helper to mark a variable as moved
     pub(super) fn mark_variable_moved(&mut self, var_id: u32) {
         self.moved_variables.insert(var_id);
@@ -185,10 +135,15 @@ impl Generator {
         }
         None
     }
-    
+
     /// Resolve a protocol identifier to its TypeId
-    pub(super) fn resolve_proto_identifier(&self, proto_name: &Identifier) -> SaResult<crate::semantic::TypeId> {
-        let proto_type = self.symbol_table.find_type_in_scope(&proto_name.name)
+    pub(super) fn resolve_proto_identifier(
+        &self,
+        proto_name: &Identifier,
+    ) -> SaResult<crate::semantic::TypeId> {
+        let proto_type = self
+            .symbol_table
+            .find_type_in_scope(&proto_name.name)
             .ok_or_else(|| SemanticError::TypeNotFound {
                 name: proto_name.name.clone(),
                 pos: Some(SourcePos {
@@ -196,7 +151,7 @@ impl Generator {
                     col: proto_name.col,
                 }),
             })?;
-        
+
         match proto_type {
             Type::Proto(proto_id) => Ok(proto_id),
             _ => Err(SemanticError::Other(format!(

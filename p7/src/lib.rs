@@ -81,7 +81,7 @@ impl BuiltinModuleProvider {
     
     fn get_builtin_module(module_path: &str) -> Option<String> {
         match module_path {
-            "builtin.string" => Some(include_str!("../builtin/string.p7").to_string()),
+            "builtin" => Some(include_str!("../builtin.p7").to_string()),
             _ => None,
         }
     }
