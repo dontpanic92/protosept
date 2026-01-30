@@ -298,15 +298,39 @@ Types in v1:
 - Iteration unit is `char`.
 
 Minimum v1 operations (exact spelling may be in a prelude/stdlib; these names are normative placeholders):
-- `len_chars(s: string) -> int`  
-- `get_char(s: string, i: int) -> ?char` (0-based; out of bounds → `null`)
+- `len_bytes(s: string) -> int` — returns the number of UTF-8 bytes in the string.
+- `len_chars(s: string) -> int` — returns the number of Unicode scalar values (characters) in the string.
+- `get_byte(s: string, i: int) -> ?int` — returns the byte at index `i` (0-based) as an integer in the range `0..255`, or `null` if `i` is out of bounds or negative.
+- `get_char(s: string, i: int) -> ?char` — returns the Unicode scalar value at index `i` (0-based by scalar value count), or `null` if `i` is out of bounds or negative.
 
 Indexing policy:
 - No `s[i]` syntax for strings in v1.
 
 String literal syntax and escapes are defined in §4.3.
 
-[[TODO]] concatenation spelling, slicing APIs.
+### 3.2.1 String concatenation
+
+The `+` operator concatenates two strings:
+
+```p7
+let a: string = "hello";
+let b: string = "world";
+let c: string = a + b;  // "helloworld"
+```
+
+- When both operands are of type `string`, `a + b` yields a new `string` by UTF-8 byte concatenation.
+- No implicit numeric-to-string conversion occurs in v1. Concatenating a `string` with a non-`string` is an ERROR unless an explicit conversion is applied.
+
+### 3.2.2 String equality and inequality
+
+String comparison for equality is exact UTF-8 byte sequence equality:
+
+- `a == b` is `true` if and only if `a` and `b` have identical UTF-8 byte sequences.
+- `a != b` is `true` if and only if `a` and `b` have different UTF-8 byte sequences.
+
+No Unicode normalization is performed in v1.
+
+[[TODO]] alternative concatenation operators removed; slicing, search, pattern matching, Unicode normalization, formatting APIs.
 
 ---
 
@@ -901,6 +925,8 @@ Operator precedence (highest to lowest):
 3) Multiplicative: `*`, `/`, `%`
 
 4) Additive: `+`, `-`
+   - For numeric operands, `+` and `-` perform arithmetic addition and subtraction.
+   - For `string` operands, `+` performs string concatenation (§3.2.1). Operand type determines the operation.
 
 5) Comparisons: `<`, `<=`, `>`, `>=`
 
@@ -2343,13 +2369,119 @@ If both extensions enabled:
 
 ## 23. Open items / TODO list (curated)
 
-1) String concatenation spelling, slicing APIs
+1) String slicing, search, pattern matching, Unicode normalization, and formatting APIs (§3.2.2)
 2) Boxed array mutation API surface and semantics (§3.3.3)
 3) Coercion sites and cast spelling for `box<T> -> box<P>` (§18.5)
 4) Enablement mechanisms for extensions (§21, §22)
 5) Host ABI: concrete API surfaces for calling, fibers, threads (§17, §21.4, §22)
 6) Specify prelude location/definition of `box<T>.new` intrinsic method (§7.4)
 7) Specify representation/ABI attribute like `@repr(transparent)` for structs (especially for newtype/FFI)
+
+---
+
+## Appendix A: Built-in types and required operations (v1) (normative reference)
+
+This appendix consolidates normative requirements for built-in types and their operations. Detailed semantics are found in the main specification sections; this appendix provides a quick reference.
+
+### A.1 Built-in types overview
+
+**Primitives:**
+- `int` — fixed-width signed integer (implementation-defined width, typically 64-bit).
+- `float` — IEEE 754 binary64 floating-point.
+- `bool` — boolean type with values `true` and `false`.
+- `char` — Unicode scalar value (21-bit, excludes surrogate code points).
+
+**Built-in value types:**
+- `string` — immutable UTF-8 text (§3.2).
+- `array<T>` — immutable array (§3.3).
+- Tuple types — `(T, U, ...)` (§3.4).
+
+**Wrappers and handles:**
+- `?T` — nullable type (§3.5).
+- `ref<T>` — borrowed view (non-owning reference) (§3.6, §7).
+- `box<T>` — owned heap handle (§3.7, §7).
+- `robox<T>` — read-only owned heap handle (§3.8, §7).
+
+### A.2 Copy/Send summary (built-in summary)
+
+This is an informative summary. See §6 for definitive `Copy` rules and §6.5 for `Send` rules.
+
+**Copy-treated types (implicit copy at value-flow sites):**
+- Primitives: `int`, `float`, `bool`, `char`
+- `string`
+- `?T` where `T` is Copy-treated
+- `ref<T>` (always Copy-treated)
+- `robox<T>` (always Copy-treated)
+
+**Non-Copy types (move-by-default):**
+- `array<T>` (all instances)
+- `box<T>` (all instances)
+- Structs and enums (unless conforming to `Copy` proto)
+
+**Send-eligible (cross-thread transfer allowed, if threading enabled):**
+- Primitives, `string`, `array<T>` where `T: Send`
+- `box<T>` where `T: Send`
+- `robox<T>` where `T: Send`
+- `?T` where `T: Send`
+- Structs/enums that satisfy `Send`
+
+**Non-Send (thread-local only):**
+- `ref<T>` (all instances)
+
+### A.3 Required `string` operations (v1)
+
+Normative operations for `string` (exact spelling may be in prelude/stdlib):
+
+**Length queries:**
+- `len_bytes(s: string) -> int` — UTF-8 byte count.
+- `len_chars(s: string) -> int` — Unicode scalar value (character) count.
+
+**Element access:**
+- `get_byte(s: string, i: int) -> ?int` — returns byte at index `i` (0..255), or `null` if out of bounds or negative.
+- `get_char(s: string, i: int) -> ?char` — returns character at index `i` (0-based by scalar value), or `null` if out of bounds or negative.
+
+**Operators:**
+- `+` (concatenation) — `a + b` where both are `string` yields `string` by UTF-8 byte concatenation (§3.2.1).
+- `==`, `!=` (equality) — exact UTF-8 byte sequence equality; no normalization in v1 (§3.2.2).
+
+**Indexing policy:**
+- No `s[i]` syntax in v1.
+
+**Iteration:**
+- `for c in s { ... }` iterates over characters (`char`). [[TODO]] finalize iteration API.
+
+### A.4 Required `array<T>` operations (v1)
+
+See §3.3 for detailed semantics.
+
+**Minimum operations (placeholders):**
+- `len(a: array<T>) -> int` — returns the number of elements.
+- `a[i]` — trap indexing; out-of-bounds access is a TRAP.
+
+**Boxed array mutation:**
+- See §3.3.3 and §7.4 for mutation APIs on `box<array<T>>`.
+
+[[TODO]] finalize array API surface, slicing, construction patterns.
+
+### A.5 Required `box<T>` / `robox<T>` operations (v1)
+
+See §7.4 (box) and §7.5 (robox) for detailed semantics.
+
+**Construction:**
+- `box<T>.new(value: T) -> box<T>` — allocates a new boxed value (§7.4).
+
+**Dereferencing:**
+- `*b` where `b: box<T>` yields borrowed view `ref<T>` (§7.4).
+- `*rb` where `rb: robox<T>` yields borrowed view `ref<T>` (§7.5).
+
+**Capability weakening:**
+- `box<T>` coerces to `robox<T>` (§15.3.1).
+
+**Mutation:**
+- Mutation is performed via methods on `box<T>` or via dereference-and-assign for addressable locations (§7.4).
+- `robox<T>` does not provide mutation operations (§7.5).
+
+[[TODO]] finalize `box<T>` method surface, especially for container types like `box<array<T>>`.
 
 ---
 End.
