@@ -1,7 +1,7 @@
 use crate::errors::SourcePos;
 use crate::{
-    ast::{Expression, Identifier, Pattern},
-    semantic::Type,
+    ast::{Expression, Identifier, Pattern, Statement},
+    semantic::{Type, SymbolKind, UserDefinedType, PrimitiveType, Symbol},
 };
 use crate::errors::SemanticError;
 
@@ -17,6 +17,42 @@ impl Generator {
             self.string_constants.push(s);
             idx
         }
+    }
+    
+    /// Look up a method on a type and extract its intrinsic name if it has one
+    /// Returns (intrinsic_name, return_type) if found
+    pub(super) fn lookup_intrinsic_method(&mut self, type_name: &str, method_name: &str) -> Option<(String, Type)> {
+        // First, try to find the type in the symbol table
+        if self.symbol_table.find_symbol_in_scope(type_name).is_none() {
+            // Type not found, try to load it from builtin
+            self.try_load_builtin_type(type_name);
+        }
+        
+        // Look up the type in the symbol table
+        let type_symbol_id = self.symbol_table.find_symbol_in_scope(type_name)?;
+        let type_symbol = self.symbol_table.get_symbol(type_symbol_id)?;
+        
+        // Find the method in the type's children
+        let method_symbol_id = type_symbol.children.get(method_name)?;
+        let method_symbol = self.symbol_table.get_symbol(*method_symbol_id)?;
+        
+        // Get the method's type info
+        let (_, method_type_id) = match method_symbol.kind {
+            SymbolKind::Function { address, type_id } => (address, type_id),
+            _ => return None,
+        };
+        
+        let method_udt = self.symbol_table.get_udt(method_type_id);
+        let function_type = match method_udt {
+            UserDefinedType::Function(f) => f,
+            _ => return None,
+        };
+        
+        // Extract the intrinsic name from the function's attributes
+        let intrinsic_name = Self::extract_intrinsic_name(&function_type.attributes)?;
+        let return_type = function_type.return_type.clone();
+        
+        Some((intrinsic_name, return_type))
     }
     
     /// Helper to mark a variable as moved

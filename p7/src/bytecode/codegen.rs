@@ -41,6 +41,8 @@ pub struct Generator {
     pub(super) string_constants: Vec<String>,
     // Track the containing type when generating methods (for Self resolution)
     pub(super) current_self_type: Option<Type>,
+    // Flag to prevent recursive builtin loading
+    is_compiling_builtin: bool,
 }
 
 impl Generator {
@@ -56,6 +58,7 @@ impl Generator {
             loop_context_stack: Vec::new(),
             string_constants: Vec::new(),
             current_self_type: None,
+            is_compiling_builtin: false,
         }
     }
 
@@ -109,6 +112,62 @@ impl Generator {
             string_constants: self.string_constants.clone(),
         })
     }
+    
+    /// Try to load a builtin type on-demand
+    pub(super) fn try_load_builtin_type(&mut self, type_name: &str) {
+        // Avoid recursive loading
+        if self.is_compiling_builtin {
+            return;
+        }
+        
+        
+        // Map type name to builtin module
+        let module_path = match type_name {
+            "string" => "builtin.string",
+            _ => {
+                return;
+            }
+        };
+        
+        // Check if already loaded
+        if self.imported_modules.contains_key(module_path) {
+            return;
+        }
+        
+        
+        // Load the builtin module
+        if let Some(source) = self.module_provider.load_module(module_path) {
+            match self.compile_module(source) {
+                Ok(module) => {
+                    // Import the type into the global scope
+                    for symbol in &module.symbols {
+                        if symbol.name == type_name {
+                            // Add the symbol to the global scope
+                            let symbol_id = self.symbol_table.symbols.len() as u32;
+                            let new_symbol = Symbol::new(
+                                symbol.name.clone(),
+                                symbol.qualified_name.clone(),
+                                symbol.kind.clone(),
+                            );
+                            self.symbol_table.symbols.push(new_symbol);
+                            
+                            // Add as child of root scope
+                            self.symbol_table.symbols[0]
+                                .children
+                                .insert(type_name.to_string(), symbol_id);
+                            break;
+                        }
+                    }
+                    
+                    // Store the compiled module
+                    self.imported_modules.insert(module_path.to_string(), module);
+                }
+                Err(e) => {
+                }
+            }
+        } else {
+        }
+    }
 
     /// Helper method to compile an imported module
     pub(super) fn compile_module(&self, source: String) -> SaResult<Module> {
@@ -131,8 +190,25 @@ impl Generator {
         )?;
 
         // Create a new generator for the imported module with a cloned provider
-        let mut module_gen = Generator::new(self.module_provider.clone_boxed());
+        let mut module_gen = Generator::new_for_module(self.module_provider.clone_boxed());
         module_gen.generate(statements)
+    }
+    
+    /// Create a new generator for compiling imported modules (skips builtin preload to avoid recursion)
+    fn new_for_module(module_provider: Box<dyn crate::ModuleProvider>) -> Self {
+        Generator {
+            builder: ByteCodeBuilder::new(),
+            symbol_table: SymbolTable::new(),
+            local_scope: None,
+            pending_monomorphizations: Vec::new(),
+            module_provider,
+            imported_modules: std::collections::HashMap::new(),
+            moved_variables: std::collections::HashSet::new(),
+            loop_context_stack: Vec::new(),
+            string_constants: Vec::new(),
+            current_self_type: None,
+            is_compiling_builtin: true, // Skip builtin preload to avoid infinite recursion
+        }
     }
 
 
@@ -800,10 +876,25 @@ impl Generator {
             
             // Check for builtin primitive type methods (e.g., string.len_bytes)
             if let Type::Primitive(prim_ty) = &object_ty {
-                if prim_ty == &PrimitiveType::String && field.name == "len_bytes" {
-                    // string.len_bytes() - call host function
-                    // The string value is already on the stack
-                    // Arguments should be empty for len_bytes
+                // For primitive types, look up the type in the symbol table to find intrinsic methods
+                let type_name = match prim_ty {
+                    PrimitiveType::String => "string",
+                    _ => {
+                        // Other primitive types don't have methods yet
+                        return Err(SemanticError::FunctionNotFound {
+                            name: format!("{:?}.{}", prim_ty, field.name),
+                            pos: Some(SourcePos {
+                                line: field.line,
+                                col: field.col,
+                            }),
+                        });
+                    }
+                };
+                
+                // Look up the method and its intrinsic attribute
+                if let Some((intrinsic_name, return_type)) = self.lookup_intrinsic_method(type_name, &field.name) {
+                    // The primitive value is already on the stack
+                    // Validate arguments match method signature
                     if !arguments.is_empty() {
                         return Err(SemanticError::TypeMismatch {
                             lhs: "0 args expected".to_string(),
@@ -815,15 +906,15 @@ impl Generator {
                         });
                     }
                     
-                    // Add "string.len_bytes" to string constants and emit CallHostFunction
-                    let host_fn_name_idx = self.add_string_constant("string.len_bytes".to_string());
+                    // Emit CallHostFunction with the intrinsic name from the attribute
+                    let host_fn_name_idx = self.add_string_constant(intrinsic_name);
                     self.builder.call_host_function(host_fn_name_idx);
-                    return Ok(Type::Primitive(PrimitiveType::Int));
+                    return Ok(return_type);
                 }
                 
-                // Unknown method on primitive type
+                // Method not found on primitive type
                 return Err(SemanticError::FunctionNotFound {
-                    name: format!("{:?}.{}", prim_ty, field.name),
+                    name: format!("{}.{}", type_name, field.name),
                     pos: Some(SourcePos {
                         line: field.line,
                         col: field.col,
@@ -831,15 +922,27 @@ impl Generator {
                 });
             }
             
-            // Also check for ref<string> method calls
+            // Also check for ref<primitive> method calls
             if let Type::Reference(inner) = &object_ty {
                 if let Type::Primitive(prim_ty) = inner.as_ref() {
-                    if prim_ty == &PrimitiveType::String && field.name == "len_bytes" {
-                        // ref<string>.len_bytes() - call host function
-                        // The string is already on the stack (string is copy-treated, so ref<string> 
-                        // actually contains the string value itself, not a reference to heap)
-                        
-                        // Validate no arguments
+                    // For ref<primitive>, look up the type to find intrinsic methods
+                    let type_name = match prim_ty {
+                        PrimitiveType::String => "string",
+                        _ => {
+                            return Err(SemanticError::FunctionNotFound {
+                                name: format!("ref<{:?}>.{}", prim_ty, field.name),
+                                pos: Some(SourcePos {
+                                    line: field.line,
+                                    col: field.col,
+                                }),
+                            });
+                        }
+                    };
+                    
+                    // Look up the method and its intrinsic attribute
+                    if let Some((intrinsic_name, return_type)) = self.lookup_intrinsic_method(type_name, &field.name) {
+                        // The value is already on the stack (primitives are copy-treated)
+                        // Validate arguments
                         if !arguments.is_empty() {
                             return Err(SemanticError::TypeMismatch {
                                 lhs: "0 args expected".to_string(),
@@ -851,15 +954,15 @@ impl Generator {
                             });
                         }
                         
-                        // Add "string.len_bytes" to string constants and emit CallHostFunction
-                        let host_fn_name_idx = self.add_string_constant("string.len_bytes".to_string());
+                        // Emit CallHostFunction with the intrinsic name from the attribute
+                        let host_fn_name_idx = self.add_string_constant(intrinsic_name);
                         self.builder.call_host_function(host_fn_name_idx);
-                        return Ok(Type::Primitive(PrimitiveType::Int));
+                        return Ok(return_type);
                     }
                     
-                    // Unknown method on ref<primitive>
+                    // Method not found on ref<primitive>
                     return Err(SemanticError::FunctionNotFound {
-                        name: format!("ref<{:?}>.{}", prim_ty, field.name),
+                        name: format!("ref<{}>.{}", type_name, field.name),
                         pos: Some(SourcePos {
                             line: field.line,
                             col: field.col,
