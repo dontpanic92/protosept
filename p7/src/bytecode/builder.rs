@@ -193,6 +193,17 @@ impl ByteCodeBuilder {
     pub fn box_deref(&mut self) {
         self.add_instruction(Instruction::BoxDeref);
     }
+    
+    /// Dereference a ref<T> and push its referenced value (copy for copy-treated types).
+    pub fn deref(&mut self) {
+        self.add_instruction(Instruction::Deref);
+    }
+    
+    /// Get the byte length of a string (UTF-8 encoded).
+    /// Expects string on stack, pops it and pushes int (byte length).
+    pub fn string_len_bytes(&mut self) {
+        self.add_instruction(Instruction::StringLenBytes);
+    }
 
     pub fn get_bytecode(&self) -> Vec<u8> {
         self.writer.get_ref().clone()

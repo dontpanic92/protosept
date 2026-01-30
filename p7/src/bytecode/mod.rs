@@ -156,6 +156,16 @@ pub enum Instruction {
     // Parameters: string_index (index into Module.string_constants)
     #[brw(magic = 37u8)]
     Lds(u32),
+    
+    // Get the byte length of a string (UTF-8 encoded).
+    // Expects: [..., string] -> pops string, pushes int (byte length)
+    #[brw(magic = 38u8)]
+    StringLenBytes,
+    
+    // Dereference a ref<T> and push its referenced value.
+    // Expects: [..., Ref] -> pops Ref, pushes the referenced value (copy for copy-treated types)
+    #[brw(magic = 39u8)]
+    Deref,
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {

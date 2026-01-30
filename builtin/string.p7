@@ -1,0 +1,13 @@
+// Builtin string type declaration
+// This module is part of the compiler-bundled builtin package.
+// It is always loaded before user code, even in nostd mode.
+
+@builtin()
+pub struct string {
+    // string is a compiler-defined opaque type with UTF-8 text representation.
+    // No fields are accessible from source code.
+    
+    // Return the byte length (UTF-8 encoded) of the string
+    @intrinsic("string.len_bytes")
+    pub fn len_bytes(self: ref<string>) -> int;
+}

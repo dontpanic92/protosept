@@ -66,6 +66,42 @@ impl ModuleProvider for InMemoryModuleProvider {
     }
 }
 
+/// Module provider that includes builtin modules and wraps another provider
+#[derive(Clone)]
+pub struct BuiltinModuleProvider {
+    inner: Rc<Box<dyn ModuleProvider>>,
+}
+
+impl BuiltinModuleProvider {
+    pub fn new(inner: Box<dyn ModuleProvider>) -> Self {
+        BuiltinModuleProvider {
+            inner: Rc::new(inner),
+        }
+    }
+    
+    fn get_builtin_module(module_path: &str) -> Option<String> {
+        match module_path {
+            "builtin.string" => Some(include_str!("../../builtin/string.p7").to_string()),
+            _ => None,
+        }
+    }
+}
+
+impl ModuleProvider for BuiltinModuleProvider {
+    fn load_module(&self, module_path: &str) -> Option<String> {
+        // First try to load from builtin modules
+        if let Some(builtin) = Self::get_builtin_module(module_path) {
+            return Some(builtin);
+        }
+        // Fall back to the inner provider
+        self.inner.load_module(module_path)
+    }
+    
+    fn clone_boxed(&self) -> Box<dyn ModuleProvider> {
+        Box::new(self.clone())
+    }
+}
+
 pub fn compile(contents: String) -> Result<bytecode::Module, Proto7Error> {
     compile_with_provider(contents, Box::new(NoModuleProvider))
 }
@@ -74,6 +110,9 @@ pub fn compile_with_provider(
     contents: String,
     provider: Box<dyn ModuleProvider>,
 ) -> Result<bytecode::Module, Proto7Error> {
+    // Wrap the provider with builtin support
+    let provider_with_builtins = Box::new(BuiltinModuleProvider::new(provider));
+    
     let mut lexer = lexer::Lexer::new(contents);
     let mut tokens = vec![];
 
@@ -89,7 +128,7 @@ pub fn compile_with_provider(
     let mut parser = parser::Parser::new(tokens);
     let statements = parser.parse()?;
 
-    let mut codegen = bytecode::codegen::Generator::new(provider);
+    let mut codegen = bytecode::codegen::Generator::new(provider_with_builtins);
     let module = codegen.generate(statements)?;
 
     Ok(module)

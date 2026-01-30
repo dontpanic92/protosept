@@ -753,6 +753,51 @@ impl Context {
 
                     self.stack.push(new_frame);
                 }
+                Instruction::StringLenBytes => {
+                    // Pop string from stack, calculate byte length, push int
+                    let string_val = self.stack_frame_mut()?.stack.pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    
+                    match string_val {
+                        Data::String(s) => {
+                            let byte_len = s.len() as i32;
+                            self.stack_frame_mut()?.stack.push(Data::Int(byte_len));
+                        }
+                        _ => {
+                            return Err(RuntimeError::Other(
+                                format!("Expected string for len_bytes, found {:?}", string_val)
+                            ));
+                        }
+                    }
+                }
+                Instruction::Deref => {
+                    // Pop a Ref from stack, dereference it, push the value
+                    let ref_val = self.stack_frame_mut()?.stack.pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    
+                    match ref_val {
+                        Data::StructRef(ref_idx) => {
+                            // Look up the struct in the heap
+                            let struct_data = self.heap.get(ref_idx as usize)
+                                .ok_or_else(|| RuntimeError::Other(
+                                    format!("Invalid struct reference: {}", ref_idx)
+                                ))?.clone();
+                            // Push as StructRef since structs are always heap-allocated
+                            self.stack_frame_mut()?.stack.push(Data::StructRef(ref_idx));
+                        }
+                        // For copy-treated primitives, they're passed by value already
+                        // but if wrapped in a Ref, we just return the value
+                        Data::Int(_) | Data::Float(_) | Data::String(_) => {
+                            // These are copy-treated; just push back the value
+                            self.stack_frame_mut()?.stack.push(ref_val);
+                        }
+                        _ => {
+                            return Err(RuntimeError::Other(
+                                format!("Cannot dereference {:?}", ref_val)
+                            ));
+                        }
+                    }
+                }
             }
         }
 

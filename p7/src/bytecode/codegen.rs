@@ -798,6 +798,74 @@ impl Generator {
                 }
             }
             
+            // Check for builtin primitive type methods (e.g., string.len_bytes)
+            if let Type::Primitive(prim_ty) = &object_ty {
+                if prim_ty == &PrimitiveType::String && field.name == "len_bytes" {
+                    // string.len_bytes() intrinsic
+                    // The string value is already on the stack
+                    // Arguments should be empty for len_bytes
+                    if !arguments.is_empty() {
+                        return Err(SemanticError::TypeMismatch {
+                            lhs: "0 args expected".to_string(),
+                            rhs: format!("{} provided", arguments.len()),
+                            pos: Some(SourcePos {
+                                line: call_line,
+                                col: call_col,
+                            }),
+                        });
+                    }
+                    
+                    // Emit the StringLenBytes intrinsic instruction
+                    self.builder.add_instruction(Instruction::StringLenBytes);
+                    return Ok(Type::Primitive(PrimitiveType::Int));
+                }
+                
+                // Unknown method on primitive type
+                return Err(SemanticError::FunctionNotFound {
+                    name: format!("{:?}.{}", prim_ty, field.name),
+                    pos: Some(SourcePos {
+                        line: field.line,
+                        col: field.col,
+                    }),
+                });
+            }
+            
+            // Also check for ref<string> method calls
+            if let Type::Reference(inner) = &object_ty {
+                if let Type::Primitive(prim_ty) = inner.as_ref() {
+                    if prim_ty == &PrimitiveType::String && field.name == "len_bytes" {
+                        // ref<string>.len_bytes() intrinsic
+                        // The ref value is already on the stack, we need to dereference it
+                        self.builder.add_instruction(Instruction::Deref);
+                        
+                        // Arguments should be empty for len_bytes
+                        if !arguments.is_empty() {
+                            return Err(SemanticError::TypeMismatch {
+                                lhs: "0 args expected".to_string(),
+                                rhs: format!("{} provided", arguments.len()),
+                                pos: Some(SourcePos {
+                                    line: call_line,
+                                    col: call_col,
+                                }),
+                            });
+                        }
+                        
+                        // Emit the StringLenBytes intrinsic instruction
+                        self.builder.add_instruction(Instruction::StringLenBytes);
+                        return Ok(Type::Primitive(PrimitiveType::Int));
+                    }
+                    
+                    // Unknown method on ref<primitive>
+                    return Err(SemanticError::FunctionNotFound {
+                        name: format!("ref<{:?}>.{}", prim_ty, field.name),
+                        pos: Some(SourcePos {
+                            line: field.line,
+                            col: field.col,
+                        }),
+                    });
+                }
+            }
+            
             // Resolve underlying struct or type TypeId
             let struct_type_id = if let Type::Reference(boxed) = &object_ty {
                 if let Type::Struct(id) = **boxed {
