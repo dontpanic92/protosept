@@ -2,7 +2,7 @@ use p7::{
     ast::{Attribute, Expression},
     errors::Proto7Error,
     interpreter::context::Data as P7Value,
-    semantic::{SymbolKind, UserDefinedType},
+    semantic::SymbolKind,
     InMemoryModuleProvider, ModuleProvider,
 };
 use std::{fs, path::PathBuf};
@@ -83,8 +83,8 @@ fn find_test_cases(module: &p7::bytecode::Module) -> Vec<TestCase> {
     let mut test_cases = Vec::new();
 
     for symbol in &module.symbols {
-        if let SymbolKind::Function { type_id, .. } = symbol.kind {
-            if let UserDefinedType::Function(func) = &module.types[type_id as usize] {
+        if let SymbolKind::Function { func_id, .. } = symbol.kind {
+            if let Some(func) = module.functions.get(func_id as usize) {
                 for attr in &func.attributes {
                     if let Some((expected_type, expected_value)) = parse_test_attribute(attr) {
                         test_cases.push(TestCase {

@@ -5,8 +5,8 @@ use crate::{
     ast::{Expression, FunctionCall, FunctionDeclaration, Identifier, MatchArm, Statement},
     bytecode::{Instruction, builder::ByteCodeBuilder},
     semantic::{
-        Enum, Function, LocalSymbolScope, PrimitiveType, Proto, Struct, Symbol, SymbolKind,
-        SymbolTable, Type, TypeId, UserDefinedType, Variable,
+        Enum, Function, FunctionId, LocalSymbolScope, PrimitiveType, Proto, Struct, Symbol, SymbolKind,
+        SymbolTable, Type, TypeDefinition, TypeId, Variable,
     },
 };
 
@@ -36,7 +36,7 @@ pub struct Generator {
     pub(super) symbol_table: SymbolTable,
     pub(super) local_scope: Option<LocalSymbolScope>,
     pub(super) pending_monomorphizations:
-        Vec<(u32, TypeId, Vec<Statement>, Vec<String>, Vec<Type>)>, // (symbol_id, type_id, body, param_names, params)
+        Vec<(u32, FunctionId, Vec<Statement>, Vec<String>, Vec<Type>)>, // (symbol_id, func_id, body, param_names, params)
     pub(super) module_provider: Box<dyn crate::ModuleProvider>,
     pub(super) imported_modules: std::collections::HashMap<String, Module>,
     // Track which variables have been moved (by their index in local scope)
@@ -117,6 +117,7 @@ impl Generator {
         Ok(Module {
             instructions: self.builder.get_bytecode(),
             symbols: self.symbol_table.symbols.clone(),
+            functions: self.symbol_table.functions.clone(),
             types: self.symbol_table.types.clone(),
             string_constants: self.string_constants.clone(),
         })
@@ -410,7 +411,7 @@ impl Generator {
             monomorphization: None, // This is the generic definition, not a monomorphization
         };
 
-        let type_id = self.symbol_table.add_udt(UserDefinedType::Function(ty));
+        let func_id = self.symbol_table.add_function(ty);
 
         // For generic functions, use placeholder address (no bytecode generated)
         // For non-generic functions, capture the address where body generation will start
@@ -418,7 +419,7 @@ impl Generator {
             declaration.name.name,
             qualified_name,
             SymbolKind::Function {
-                type_id,
+                func_id,
                 address: self.builder.next_address() as u32,
             },
         );
@@ -442,8 +443,13 @@ impl Generator {
                     self.symbol_table.symbols.get(parent_symbol_id as usize)
                 {
                     self.current_self_type = match &parent_symbol.kind {
-                        SymbolKind::Struct(type_id) => Some(Type::Struct(*type_id)),
-                        SymbolKind::Enum(type_id) => Some(Type::Enum(*type_id)),
+                        SymbolKind::Type(type_id) => {
+                            match &self.symbol_table.types[*type_id as usize] {
+                                TypeDefinition::Struct(_) => Some(Type::Struct(*type_id)),
+                                TypeDefinition::Enum(_) => Some(Type::Enum(*type_id)),
+                                TypeDefinition::Proto(_) => None,
+                            }
+                        }
                         _ => None,
                     };
                 }
@@ -502,7 +508,7 @@ impl Generator {
             let symbol_kind = symbol.kind.clone(); // Clone to avoid borrow issues
 
             match symbol_kind {
-                SymbolKind::Function { type_id, .. } => {
+                SymbolKind::Function { func_id, .. } => {
                     // This is a generic function call like identity<int>(42)
                     // Resolve all type arguments
                     let mut resolved_type_args = Vec::new();
@@ -511,31 +517,20 @@ impl Generator {
                     }
 
                     // Monomorphize the function
-                    let (_addr, func_type_id, symbol_id) = self.monomorphize_function(
-                        type_id,
+                    let (_addr, mono_func_id, symbol_id) = self.monomorphize_function(
+                        func_id,
                         resolved_type_args,
                         &base.name,
                         base.line,
                         base.col,
                     )?;
 
-                    let function_udt = match self.symbol_table.get_udt(func_type_id) {
-                        UserDefinedType::Function(f) => f.clone(),
-                        _ => {
-                            return Err(SemanticError::FunctionNotFound {
-                                name: base.name.clone(),
-                                pos: Some(SourcePos {
-                                    line: base.line,
-                                    col: base.col,
-                                }),
-                            });
-                        }
-                    };
+                    let function_def = self.symbol_table.get_function(mono_func_id).clone();
 
-                    let param_names: Vec<String> = function_udt.param_names.clone();
+                    let param_names: Vec<String> = function_def.param_names.clone();
                     let param_defaults: Vec<Option<Expression>> =
-                        function_udt.param_defaults.clone();
-                    let ret_type = function_udt.return_type.clone();
+                        function_def.param_defaults.clone();
+                    let ret_type = function_def.return_type.clone();
 
                     // Process arguments
                     let ordered_exprs = self.process_arguments(
@@ -594,7 +589,7 @@ impl Generator {
 
                     return Ok(ret_type);
                 }
-                SymbolKind::Struct(_type_id) => {
+                SymbolKind::Type(type_id) if matches!(self.symbol_table.get_type(type_id), TypeDefinition::Struct(_)) => {
                     // This is a struct instantiation like Container<int>(value)
                     // Resolve the generic type with explicit type arguments
                     let parsed_type = crate::ast::Type::Generic {
@@ -624,7 +619,7 @@ impl Generator {
                         });
                     }
                 }
-                SymbolKind::Enum(_type_id) => {
+                SymbolKind::Type(type_id) if matches!(self.symbol_table.get_type(type_id), TypeDefinition::Enum(_)) => {
                     // This is an enum variant construction like Option<int>.Some(42)
                     // Resolve the generic type with explicit type arguments
                     let parsed_type = crate::ast::Type::Generic {
@@ -725,8 +720,8 @@ impl Generator {
                             )?;
 
                         let method_symbol = self.symbol_table.get_symbol(method_symbol_id).unwrap();
-                        let (_addr, type_id) = match method_symbol.kind {
-                            SymbolKind::Function { address, type_id } => (address, type_id),
+                        let func_id = match method_symbol.kind {
+                            SymbolKind::Function { func_id, .. } => func_id,
                             _ => {
                                 return Err(SemanticError::FunctionNotFound {
                                     name: format!("{}.{}", ident.name, field.name),
@@ -738,23 +733,12 @@ impl Generator {
                             }
                         };
 
-                        let function_udt = match self.symbol_table.get_udt(type_id) {
-                            UserDefinedType::Function(f) => f.clone(),
-                            _ => {
-                                return Err(SemanticError::FunctionNotFound {
-                                    name: format!("{}.{}", ident.name, field.name),
-                                    pos: Some(SourcePos {
-                                        line: field.line,
-                                        col: field.col,
-                                    }),
-                                });
-                            }
-                        };
+                        let function_def = self.symbol_table.get_function(func_id).clone();
 
-                        let param_names: Vec<String> = function_udt.param_names.clone();
+                        let param_names: Vec<String> = function_def.param_names.clone();
                         let param_defaults: Vec<Option<Expression>> =
-                            function_udt.param_defaults.clone();
-                        let ret_type = function_udt.return_type.clone();
+                            function_def.param_defaults.clone();
+                        let ret_type = function_def.return_type.clone();
 
                         // Static method: process all args normally (no receiver pre-pushed)
                         let ordered_exprs = self.process_arguments(
@@ -768,7 +752,7 @@ impl Generator {
 
                         self.push_typed_argument_list(
                             ordered_exprs,
-                            &function_udt.params,
+                            &function_def.params,
                             field.line,
                             field.col,
                         )?;
@@ -805,7 +789,7 @@ impl Generator {
 
                     // Get the proto definition to find method signature
                     let proto = match &self.symbol_table.types[*proto_id as usize] {
-                        UserDefinedType::Proto(p) => p,
+                        TypeDefinition::Proto(p) => p,
                         _ => return Err(SemanticError::Other("Expected proto type".to_string())),
                     };
 
@@ -864,7 +848,7 @@ impl Generator {
 
                     // Get the proto definition to find method signature
                     let proto = match &self.symbol_table.types[*proto_id as usize] {
-                        UserDefinedType::Proto(p) => p,
+                        TypeDefinition::Proto(p) => p,
                         _ => return Err(SemanticError::Other("Expected proto type".to_string())),
                     };
 
@@ -920,8 +904,10 @@ impl Generator {
                             .symbols
                             .iter()
                             .enumerate()
-                            .find(|(_, s)| match s.kind {
-                                SymbolKind::Struct(sid) => sid == *id,
+                            .find(|(_, s)| match &s.kind {
+                                SymbolKind::Type(type_id) => {
+                                    matches!(self.symbol_table.types.get(*type_id as usize), Some(TypeDefinition::Struct(_))) && *type_id == *id
+                                }
                                 _ => false,
                             })
                             .map(|(i, _)| i as u32)
@@ -934,8 +920,10 @@ impl Generator {
                     .symbols
                     .iter()
                     .enumerate()
-                    .find(|(_, s)| match s.kind {
-                        SymbolKind::Struct(sid) => sid == *id,
+                    .find(|(_, s)| match &s.kind {
+                        SymbolKind::Type(type_id) => {
+                            matches!(self.symbol_table.types.get(*type_id as usize), Some(TypeDefinition::Struct(_))) && *type_id == *id
+                        }
                         _ => false,
                     })
                     .map(|(i, _)| i as u32)
@@ -964,8 +952,8 @@ impl Generator {
             )?;
 
             let method_symbol = self.symbol_table.get_symbol(method_symbol_id).unwrap();
-            let (_, method_type_id) = match method_symbol.kind {
-                SymbolKind::Function { address, type_id } => (address, type_id),
+            let method_func_id = match method_symbol.kind {
+                SymbolKind::Function { func_id, .. } => func_id,
                 _ => {
                     return Err(SemanticError::FunctionNotFound {
                         name: field.name.clone(),
@@ -977,23 +965,12 @@ impl Generator {
                 }
             };
 
-            let function_udt = match self.symbol_table.get_udt(method_type_id) {
-                UserDefinedType::Function(f) => f.clone(),
-                _ => {
-                    return Err(SemanticError::FunctionNotFound {
-                        name: field.name.clone(),
-                        pos: Some(SourcePos {
-                            line: field.line,
-                            col: field.col,
-                        }),
-                    });
-                }
-            };
+            let function_def = self.symbol_table.get_function(method_func_id).clone();
 
             // For instance methods the first parameter is the receiver (self) which we've already pushed.
             // So process remaining parameters (skip first).
-            let param_names_full: Vec<String> = function_udt.param_names.clone();
-            let param_defaults_full: Vec<Option<Expression>> = function_udt.param_defaults.clone();
+            let param_names_full: Vec<String> = function_def.param_names.clone();
+            let param_defaults_full: Vec<Option<Expression>> = function_def.param_defaults.clone();
 
             if param_names_full.is_empty() {
                 // No params declared (we still pushed receiver) - ensure no args provided
@@ -1010,7 +987,7 @@ impl Generator {
 
                 // Call method (receiver already on stack)
                 self.builder.call(method_symbol_id);
-                return Ok(function_udt.return_type.clone());
+                return Ok(function_def.return_type.clone());
             }
 
             // Skip receiver param
@@ -1030,13 +1007,13 @@ impl Generator {
             // This will generate remaining arguments and push them after the receiver.
             self.push_typed_argument_list(
                 ordered_exprs,
-                &function_udt.params[1..],
+                &function_def.params[1..],
                 field.line,
                 field.col,
             )?;
             self.builder.call(method_symbol_id);
 
-            Ok(function_udt.return_type.clone())
+            Ok(function_def.return_type.clone())
         } else {
             // Non-field callee: top-level function or constructor by name
             let call_name = call_name;
@@ -1135,22 +1112,24 @@ impl Generator {
                 let symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
 
                 // Check if this is a struct initialization (struct name used as a function)
-                if let SymbolKind::Struct(type_id) = symbol.kind {
-                    return self.generate_struct_from_call(
-                        crate::ast::FunctionCall {
-                            callee: Box::new(Expression::Identifier(crate::ast::Identifier {
-                                name: call_name.clone(),
-                                line: call_line,
-                                col: call_col,
-                            })),
-                            arguments,
-                        },
-                        type_id,
-                    );
+                if let SymbolKind::Type(type_id) = symbol.kind {
+                    if matches!(self.symbol_table.get_type(type_id), TypeDefinition::Struct(_)) {
+                        return self.generate_struct_from_call(
+                            crate::ast::FunctionCall {
+                                callee: Box::new(Expression::Identifier(crate::ast::Identifier {
+                                    name: call_name.clone(),
+                                    line: call_line,
+                                    col: call_col,
+                                })),
+                                arguments,
+                            },
+                            type_id,
+                        );
+                    }
                 }
 
-                let (_, type_id) = match symbol.kind {
-                    SymbolKind::Function { address, type_id } => (address, type_id),
+                let func_id = match symbol.kind {
+                    SymbolKind::Function { func_id, .. } => func_id,
                     _ => {
                         return Err(SemanticError::FunctionNotFound {
                             name: call_name.clone(),
@@ -1162,21 +1141,10 @@ impl Generator {
                     }
                 };
 
-                let function_udt = match self.symbol_table.get_udt(type_id) {
-                    UserDefinedType::Function(function) => function.clone(),
-                    _ => {
-                        return Err(SemanticError::FunctionNotFound {
-                            name: call_name.clone(),
-                            pos: Some(SourcePos {
-                                line: call_line,
-                                col: call_col,
-                            }),
-                        });
-                    }
-                };
+                let function_def = self.symbol_table.get_function(func_id).clone();
 
-                let param_names: Vec<String> = function_udt.param_names.clone();
-                let param_defaults: Vec<Option<Expression>> = function_udt.param_defaults.clone();
+                let param_names: Vec<String> = function_def.param_names.clone();
+                let param_defaults: Vec<Option<Expression>> = function_def.param_defaults.clone();
 
                 // Use shared argument processing logic
                 let ordered_exprs = self.process_arguments(
@@ -1190,17 +1158,13 @@ impl Generator {
 
                 self.push_typed_argument_list(
                     ordered_exprs,
-                    &function_udt.params,
+                    &function_def.params,
                     call_line,
                     call_col,
                 )?;
                 self.builder.call(symbol_id);
 
-                let ty = self.symbol_table.get_udt(type_id);
-                match ty {
-                    UserDefinedType::Function(function) => Ok(function.return_type.clone()),
-                    _ => panic!("Function not found"),
-                }
+                Ok(function_def.return_type.clone())
             } else {
                 Err(SemanticError::FunctionNotFound {
                     name: call_name,
@@ -1321,8 +1285,8 @@ impl Generator {
         // Get struct definition
         let (call_name, (call_line, call_col)) = (call.callee.get_name(), call.callee.get_pos());
 
-        let struct_def = match self.symbol_table.get_udt(type_id) {
-            UserDefinedType::Struct(s) => s.clone(),
+        let struct_def = match self.symbol_table.get_type(type_id) {
+            TypeDefinition::Struct(s) => s.clone(),
             _ => {
                 return Err(SemanticError::TypeMismatch {
                     lhs: "Struct".to_string(),
@@ -1374,8 +1338,8 @@ impl Generator {
         };
 
         // Get enum definition
-        let enum_def = match self.symbol_table.get_udt(enum_type_id) {
-            UserDefinedType::Enum(e) => e.clone(),
+        let enum_def = match self.symbol_table.get_type(enum_type_id) {
+            TypeDefinition::Enum(e) => e.clone(),
             _ => {
                 return Err(SemanticError::TypeMismatch {
                     lhs: "Enum".to_string(),

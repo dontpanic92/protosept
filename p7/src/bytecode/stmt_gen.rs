@@ -1,7 +1,7 @@
 use crate::errors::SourcePos;
 use crate::{
     ast::{Expression, Statement},
-    semantic::{Enum, PrimitiveType, Proto, Struct, Symbol, SymbolKind, Type, UserDefinedType},
+    semantic::{Enum, PrimitiveType, Proto, Struct, Symbol, SymbolKind, Type, TypeDefinition},
 };
 use crate::errors::SemanticError;
 
@@ -150,11 +150,12 @@ impl Generator {
                     generic_variant_types,
                     monomorphization: None,
                     conforming_to: conforming_to.clone(),
+                    methods: Vec::new(),
                 };
-                let type_id = self.symbol_table.add_udt(UserDefinedType::Enum(ty));
+                let type_id = self.symbol_table.add_type(TypeDefinition::Enum(ty));
 
                 let symbol =
-                    Symbol::new(name.name.clone(), qualified_name.clone(), SymbolKind::Enum(type_id));
+                    Symbol::new(name.name.clone(), qualified_name.clone(), SymbolKind::Type(type_id));
 
                 self.symbol_table.push_symbol(symbol);
 
@@ -245,10 +246,11 @@ impl Generator {
                     generic_field_types,
                     monomorphization: None,  // This is the generic definition, not a monomorphization
                     conforming_to: conforming_to.clone(),
+                    methods: Vec::new(),
                 };
-                let type_id = self.symbol_table.add_udt(UserDefinedType::Struct(ty));
+                let type_id = self.symbol_table.add_type(TypeDefinition::Struct(ty));
 
-                let symbol = Symbol::new(name.name.clone(), qualified_name.clone(), SymbolKind::Struct(type_id));
+                let symbol = Symbol::new(name.name.clone(), qualified_name.clone(), SymbolKind::Type(type_id));
                 self.symbol_table.push_symbol(symbol);
 
                 for method in methods {
@@ -281,9 +283,9 @@ impl Generator {
                     methods: vec![],
                     attributes: attributes.clone(),
                 };
-                let type_id = self.symbol_table.add_udt(UserDefinedType::Proto(ty));
+                let type_id = self.symbol_table.add_type(TypeDefinition::Proto(ty));
                 
-                let symbol = Symbol::new(name.name.clone(), qualified_name.clone(), SymbolKind::Proto(type_id));
+                let symbol = Symbol::new(name.name.clone(), qualified_name.clone(), SymbolKind::Type(type_id));
                 self.symbol_table.push_symbol(symbol);
                 
                 // Now process the method signatures
@@ -306,7 +308,7 @@ impl Generator {
                     methods: methods_with_types,
                     attributes: attributes.clone(),
                 };
-                self.symbol_table.types[type_id as usize] = UserDefinedType::Proto(ty);
+                self.symbol_table.types[type_id as usize] = TypeDefinition::Proto(ty);
                 
                 self.symbol_table.pop_symbol();
                 

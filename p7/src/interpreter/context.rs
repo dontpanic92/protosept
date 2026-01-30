@@ -198,23 +198,23 @@ impl Context {
     
     /// Build vtable for dynamic dispatch by mapping (concrete_type_id, proto_id, method_name) -> symbol_id
     fn build_vtable(&mut self, module: &Module) {
-        use crate::semantic::UserDefinedType;
+        use crate::semantic::TypeDefinition;
         
         // Iterate through all structs
         for (type_id, udt) in module.types.iter().enumerate() {
-            if let UserDefinedType::Struct(struct_def) = udt {
+            if let TypeDefinition::Struct(struct_def) = udt {
                 let struct_type_id = type_id as u32;
                 
                 // For each protocol this struct conforms to
                 for &proto_id in &struct_def.conforming_to {
                     // Get the proto definition
-                    if let Some(UserDefinedType::Proto(proto)) = module.types.get(proto_id as usize) {
+                    if let Some(TypeDefinition::Proto(proto)) = module.types.get(proto_id as usize) {
                         // For each method in the proto
-                        for (method_name, _, _) in &proto.methods {
-                            // Find the struct's symbol and look for this method
-                            if let Some(struct_symbol) = module.symbols.iter()
-                                .find(|s| matches!(&s.kind, crate::semantic::SymbolKind::Struct(id) if *id == struct_type_id))
-                            {
+                            for (method_name, _, _) in &proto.methods {
+                                // Find the struct's symbol and look for this method
+                                if let Some(struct_symbol) = module.symbols.iter()
+                                    .find(|s| matches!(&s.kind, crate::semantic::SymbolKind::Type(id) if *id == struct_type_id))
+                                {
                                 // Look for the method in the struct's children
                                 if let Some(&method_symbol_id) = struct_symbol.children.get(method_name) {
                                     // Hash the method name for fast lookup
@@ -245,9 +245,9 @@ impl Context {
     
     /// Get method name from hash for error messages (reverse lookup)
     fn get_method_name_from_hash(&self, proto_id: u32, method_hash: u32) -> ContextResult<String> {
-        use crate::semantic::UserDefinedType;
+        use crate::semantic::TypeDefinition;
         
-        if let Some(UserDefinedType::Proto(proto)) = self.modules[0].types.get(proto_id as usize) {
+        if let Some(TypeDefinition::Proto(proto)) = self.modules[0].types.get(proto_id as usize) {
             for (method_name, _, _) in &proto.methods {
                 if Self::hash_method_name(method_name) == method_hash {
                     return Ok(method_name.clone());
@@ -429,28 +429,20 @@ impl Context {
                 }
                 Instruction::Call(symbol_id) => {
                     let (address, args_len) = {
-                        let function = self.modules[0]
+                        let symbol = self.modules[0]
                             .symbols
                             .get(symbol_id as usize)
                             .ok_or(RuntimeError::FunctionNotFound)?;
 
-                        let address = function
-                            .get_function_address()
-                            .ok_or(RuntimeError::FunctionNotFound)?;
-
-                        let udt = function
-                            .get_type_id()
-                            .and_then(|function_type_id| {
-                                self.modules[0].types.get(function_type_id as usize)
-                            })
-                            .ok_or(RuntimeError::FunctionNotFound)?;
-
-                        let function_type = match udt {
-                            crate::semantic::UserDefinedType::Function(function_type) => {
-                                function_type
-                            }
+                        let (func_id, address) = match &symbol.kind {
+                            crate::semantic::SymbolKind::Function { func_id, address } => (*func_id, *address),
                             _ => return Err(RuntimeError::FunctionNotFound),
                         };
+
+                        let function_type = self.modules[0]
+                            .functions
+                            .get(func_id as usize)
+                            .ok_or(RuntimeError::FunctionNotFound)?;
 
                         let args_len = function_type.params.len();
                         (address, args_len)
@@ -702,7 +694,7 @@ impl Context {
                     
                     let method_name = self.get_method_name_from_hash(proto_id, method_hash)?;
                     
-                    let param_count = if let crate::semantic::UserDefinedType::Proto(proto) = proto_type {
+                    let param_count = if let crate::semantic::TypeDefinition::Proto(proto) = proto_type {
                         proto.methods.iter()
                             .find(|(name, _, _)| Self::hash_method_name(name) == method_hash)
                             .map(|(_, params, _)| params.len())
@@ -740,28 +732,20 @@ impl Context {
                     
                     // Now call the method using the standard Call instruction logic
                     let (address, args_len) = {
-                        let function = self.modules[0]
+                        let symbol = self.modules[0]
                             .symbols
                             .get(*method_symbol_id as usize)
                             .ok_or(RuntimeError::FunctionNotFound)?;
 
-                        let address = function
-                            .get_function_address()
-                            .ok_or(RuntimeError::FunctionNotFound)?;
-
-                        let udt = function
-                            .get_type_id()
-                            .and_then(|function_type_id| {
-                                self.modules[0].types.get(function_type_id as usize)
-                            })
-                            .ok_or(RuntimeError::FunctionNotFound)?;
-
-                        let function_type = match udt {
-                            crate::semantic::UserDefinedType::Function(function_type) => {
-                                function_type
-                            }
+                        let (func_id, address) = match &symbol.kind {
+                            crate::semantic::SymbolKind::Function { func_id, address } => (*func_id, *address),
                             _ => return Err(RuntimeError::FunctionNotFound),
                         };
+
+                        let function_type = self.modules[0]
+                            .functions
+                            .get(func_id as usize)
+                            .ok_or(RuntimeError::FunctionNotFound)?;
 
                         let args_len = function_type.params.len();
                         (address, args_len)
