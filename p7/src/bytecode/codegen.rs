@@ -123,10 +123,9 @@ impl Generator {
     }
 
     /// Try to load a builtin type on-demand
-    pub(super) fn try_load_builtin(&mut self) {
+    pub(super) fn load_builtin(&mut self) {
         // Avoid recursive loading
         if self.is_compiling_builtin {
-            eprintln!("DEBUG try_load_builtin_type: is_compiling_builtin, returning early");
             return;
         }
 
@@ -134,33 +133,13 @@ impl Generator {
 
         // Check if already loaded
         if self.imported_modules.contains_key(MODULE_PATH) {
-            eprintln!("DEBUG try_load_builtin_type: already loaded, returning early");
             return;
         }
 
-        eprintln!(
-            "DEBUG try_load_builtin_type: loading MODULE_PATH={}",
-            MODULE_PATH
-        );
-
         // Load the builtin module
         if let Some(source) = self.module_provider.load_module(MODULE_PATH) {
-            eprintln!("DEBUG try_load_builtin_type: got source, compiling...");
             match self.compile_module(source) {
                 Ok(module) => {
-                    eprintln!(
-                        "DEBUG try_load_builtin_type: compile OK, module.symbols.len()={}",
-                        module.symbols.len()
-                    );
-                    for (i, s) in module.symbols.iter().enumerate() {
-                        eprintln!(
-                            "DEBUG   module.symbols[{}] = name={}, kind={:?}",
-                            i,
-                            s.name,
-                            std::mem::discriminant(&s.kind)
-                        );
-                    }
-
                     // Store the compiled module
                     self.imported_modules
                         .insert(MODULE_PATH.to_string(), module);
@@ -179,7 +158,6 @@ impl Generator {
 
     /// Helper method to compile an imported module
     pub(super) fn compile_module(&self, source: String) -> SaResult<Module> {
-        eprintln!("DEBUG compile_module: starting");
         // Parse the module source
         let mut lexer = crate::lexer::Lexer::new(source);
         let mut tokens = vec![];
@@ -192,7 +170,6 @@ impl Generator {
                 tokens.push(token);
             }
         }
-        eprintln!("DEBUG compile_module: got {} tokens", tokens.len());
 
         let mut parser = crate::parser::Parser::new(tokens);
         let statements = match parser.parse() {
@@ -205,18 +182,10 @@ impl Generator {
                 )));
             }
         };
-        eprintln!(
-            "DEBUG compile_module: parsed {} statements",
-            statements.len()
-        );
 
         // Create a new generator for the imported module with a cloned provider
         let mut module_gen = Generator::new_for_module(self.module_provider.clone_boxed());
         let result = module_gen.generate(statements);
-        eprintln!(
-            "DEBUG compile_module: generate result = {:?}",
-            result.is_ok()
-        );
         result
     }
 
@@ -824,7 +793,13 @@ impl Generator {
 
             // Check if this is a proto box method call
             if let Type::BoxType(inner) = &object_ty {
-                if let Type::Proto(proto_id) = inner.as_ref() {
+                if let Type::Primitive(prim_ty) = inner.as_ref() {
+                    let ty = self.handle_primitive_method_call(
+                        prim_ty, field, &arguments, call_line, call_col,
+                    )?;
+
+                    return Ok(ty);
+                } else if let Type::Proto(proto_id) = inner.as_ref() {
                     // This is a call to a method on box<Proto> - use dynamic dispatch
                     // The receiver (ProtoBoxRef) is already on the stack
 
@@ -877,7 +852,13 @@ impl Generator {
 
             // Check if this is a proto ref method call
             if let Type::Reference(inner) = &object_ty {
-                if let Type::Proto(proto_id) = inner.as_ref() {
+                if let Type::Primitive(prim_ty) = inner.as_ref() {
+                    let ty = self.handle_primitive_method_call(
+                        prim_ty, field, &arguments, call_line, call_col,
+                    )?;
+
+                    return Ok(ty);
+                } else if let Type::Proto(proto_id) = inner.as_ref() {
                     // This is a call to a method on ref<Proto> - use dynamic dispatch
                     // The receiver (ProtoRefRef) is already on the stack
 
@@ -945,7 +926,6 @@ impl Generator {
                             })
                             .map(|(i, _)| i as u32)
                     }
-                    Type::Primitive(prim_ty) => self.resolve_primitive_to_symbol_id(prim_ty),
                     _ => None,
                 }
             } else if let Type::Struct(id) = &object_ty {
@@ -960,14 +940,16 @@ impl Generator {
                     })
                     .map(|(i, _)| i as u32)
             } else if let Type::Primitive(prim_ty) = &object_ty {
-                self.resolve_primitive_to_symbol_id(prim_ty)
+                let ty = self
+                    .handle_primitive_method_call(prim_ty, field, &arguments, call_line, call_col);
+                return ty;
             } else {
                 None
             };
 
             let symbol_id = type_symbol_id.expect(&format!(
-                "Generating method call for type_symbol_id: {:?}",
-                type_symbol_id
+                "Generating method call for type failed: {:?}",
+                object_ty
             ));
 
             let type_symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
@@ -1233,7 +1215,7 @@ impl Generator {
 
     /// Process arguments (positional or named) and map them to parameters/fields.
     /// Returns ordered expressions matching the parameter/field order.
-    fn process_arguments(
+    pub(super) fn process_arguments(
         &self,
         call_name: &str,
         call_line: usize,
@@ -1493,7 +1475,7 @@ impl Generator {
         Ok(())
     }
 
-    fn push_typed_argument_list(
+    pub(super) fn push_typed_argument_list(
         &mut self,
         arguments: Vec<Expression>,
         param_types: &[Type],

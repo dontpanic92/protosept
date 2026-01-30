@@ -197,7 +197,7 @@ impl ByteCodeBuilder {
     /// Call a host function by name.
     /// The function name is a string constant at the given index.
     pub fn call_host_function(&mut self, string_index: u32) {
-        self.add_instruction(Instruction::CallHostFunction(string_index));
+        self.add_instruction(Instruction::InvokeHost(string_index));
     }
 
     pub fn get_bytecode(&self) -> Vec<u8> {

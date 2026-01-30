@@ -774,7 +774,7 @@ impl Context {
 
                     self.stack.push(new_frame);
                 }
-                Instruction::CallHostFunction(string_index) => {
+                Instruction::InvokeHost(string_index) => {
                     // Look up the host function name from string constants
                     let function_name = self.modules[0].string_constants.get(string_index as usize)
                         .ok_or_else(|| RuntimeError::Other(
@@ -1019,7 +1019,7 @@ impl Context {
 /// Returns: int (byte length) on stack
 fn host_string_len_bytes(ctx: &mut Context) -> ContextResult<()> {
     // The self parameter is passed as param 0 (it's a ref<string>, which is the string value itself)
-    let string_val = ctx.stack_frame()?.params.get(0)
+    let string_val = ctx.stack_frame_mut()?.stack.pop()
         .ok_or(RuntimeError::Other("string.len_bytes: missing self parameter".to_string()))?
         .clone();
     

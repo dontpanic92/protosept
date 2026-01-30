@@ -252,7 +252,7 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
         Instruction::CallProtoMethod(proto_id, method_hash) => format!("{}  call_proto_method {} {:#x}", offset_hex, proto_id, method_hash),
         Instruction::RefToProto(struct_id, proto_id) => format!("{}  ref_to_proto {} {}", offset_hex, struct_id, proto_id),
         Instruction::Lds(string_index) => format!("{}  lds {}", offset_hex, string_index),
-        Instruction::CallHostFunction(string_index) => format!("{}  call_host_function {}", offset_hex, string_index),
+        Instruction::InvokeHost(string_index) => format!("{}  invoke_host {}", offset_hex, string_index),
     }
 }
 

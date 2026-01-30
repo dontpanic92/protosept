@@ -1,3 +1,5 @@
+use core::panic;
+
 use crate::errors::SemanticError;
 use crate::errors::SourcePos;
 use crate::{
@@ -23,21 +25,80 @@ impl Generator {
         }
     }
 
-    /// Resolve a primitive type to its corresponding symbol ID for method lookup
-    /// The primitive type symbol is registered during generator initialization
-    pub(super) fn resolve_primitive_to_symbol_id(&mut self, prim_ty: &PrimitiveType) -> Option<u32> {
-        let type_name = match prim_ty {
-            PrimitiveType::String => "string",
-            _ => return None, // Other primitive types don't have methods yet
-        };
+    pub(super) fn handle_primitive_method_call(
+        &mut self,
+        prim_ty: &PrimitiveType,
+        field: &Identifier,
+        arguments: &Vec<(Option<Identifier>, Expression)>,
+        call_line: usize,
+        call_col: usize,
+    ) -> SaResult<Type> {
+        self.load_builtin();
+        match prim_ty {
+            PrimitiveType::String => {
+                let builtin = &self.imported_modules["builtin"];
+                let method = {
+                    let string = builtin.symbols.iter().find(|s| s.name == "string").unwrap();
+                    string.children.iter().find(|s| s.0 == &field.name)
+                };
 
-        self.try_load_builtin_type(type_name);
+                if method.is_none() {
+                    return Err(SemanticError::FunctionNotFound {
+                        name: format!("string.{}", field.name),
+                        pos: Some(SourcePos {
+                            line: field.line,
+                            col: field.col,
+                        }),
+                    });
+                }
 
-        println!("Resolving primitive type '{}' to symbol ID", type_name);
-        println!("Current symbol table: {:?}", self.symbol_table.symbols);
-        println!("Current symbol table types: {:?}", self.symbol_table.types);
-        // Look up the primitive type symbol directly
-        self.symbol_table.find_symbol_in_scope(type_name)
+                let method_id = *method.unwrap().1;
+                let method_symbol = builtin.symbols.get(method_id as usize).unwrap();
+                let method_ty = method_symbol.get_type_id().unwrap();
+                let function_udt = match builtin.types.get(method_ty as usize).unwrap() {
+                    UserDefinedType::Function(udt) => udt.clone(),
+                    _ => {
+                        panic!("???");
+                    }
+                };
+
+                let intrinsic_name =
+                    Self::extract_intrinsic_name(&function_udt.attributes).unwrap();
+
+                let param_names: Vec<String> = function_udt.param_names.clone();
+                let param_defaults: Vec<Option<Expression>> = function_udt.param_defaults.clone();
+
+                // Use shared argument processing logic
+                let ordered_exprs = self.process_arguments(
+                    &format!("string.{}", field.name),
+                    call_line,
+                    call_col,
+                    arguments.clone(),
+                    &param_names[1..],
+                    &param_defaults[1..],
+                )?;
+
+                // receivers already on stack
+                self.push_typed_argument_list(
+                    ordered_exprs,
+                    &function_udt.params[1..],
+                    call_line,
+                    call_col,
+                )?;
+                let string_id = self.add_string_constant(intrinsic_name.clone());
+                self.builder.call_host_function(string_id);
+                Ok(function_udt.return_type.clone())
+            }
+            _ => {
+                return Err(SemanticError::FunctionNotFound {
+                    name: format!("{:?}.{}", prim_ty, field.name),
+                    pos: Some(SourcePos {
+                        line: field.line,
+                        col: field.col,
+                    }),
+                });
+            }
+        }
     }
 
     /// Helper to mark a variable as moved
