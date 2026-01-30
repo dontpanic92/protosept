@@ -801,7 +801,7 @@ impl Generator {
             // Check for builtin primitive type methods (e.g., string.len_bytes)
             if let Type::Primitive(prim_ty) = &object_ty {
                 if prim_ty == &PrimitiveType::String && field.name == "len_bytes" {
-                    // string.len_bytes() intrinsic
+                    // string.len_bytes() - call host function
                     // The string value is already on the stack
                     // Arguments should be empty for len_bytes
                     if !arguments.is_empty() {
@@ -815,8 +815,9 @@ impl Generator {
                         });
                     }
                     
-                    // Emit the StringLenBytes intrinsic instruction
-                    self.builder.add_instruction(Instruction::StringLenBytes);
+                    // Add "string.len_bytes" to string constants and emit CallHostFunction
+                    let host_fn_name_idx = self.add_string_constant("string.len_bytes".to_string());
+                    self.builder.call_host_function(host_fn_name_idx);
                     return Ok(Type::Primitive(PrimitiveType::Int));
                 }
                 
@@ -834,7 +835,7 @@ impl Generator {
             if let Type::Reference(inner) = &object_ty {
                 if let Type::Primitive(prim_ty) = inner.as_ref() {
                     if prim_ty == &PrimitiveType::String && field.name == "len_bytes" {
-                        // ref<string>.len_bytes() intrinsic
+                        // ref<string>.len_bytes() - call host function
                         // The string is already on the stack (string is copy-treated, so ref<string> 
                         // actually contains the string value itself, not a reference to heap)
                         
@@ -850,8 +851,9 @@ impl Generator {
                             });
                         }
                         
-                        // Emit the StringLenBytes intrinsic instruction
-                        self.builder.add_instruction(Instruction::StringLenBytes);
+                        // Add "string.len_bytes" to string constants and emit CallHostFunction
+                        let host_fn_name_idx = self.add_string_constant("string.len_bytes".to_string());
+                        self.builder.call_host_function(host_fn_name_idx);
                         return Ok(Type::Primitive(PrimitiveType::Int));
                     }
                     

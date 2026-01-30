@@ -194,15 +194,10 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::BoxDeref);
     }
     
-    /// Dereference a ref<T> and push its referenced value (copy for copy-treated types).
-    pub fn deref(&mut self) {
-        self.add_instruction(Instruction::Deref);
-    }
-    
-    /// Get the byte length of a string (UTF-8 encoded).
-    /// Expects string on stack, pops it and pushes int (byte length).
-    pub fn string_len_bytes(&mut self) {
-        self.add_instruction(Instruction::StringLenBytes);
+    /// Call a host function by name.
+    /// The function name is a string constant at the given index.
+    pub fn call_host_function(&mut self, string_index: u32) {
+        self.add_instruction(Instruction::CallHostFunction(string_index));
     }
 
     pub fn get_bytecode(&self) -> Vec<u8> {

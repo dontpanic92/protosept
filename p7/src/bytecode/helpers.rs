@@ -8,6 +8,17 @@ use crate::errors::SemanticError;
 use super::codegen::{Generator, SaResult};
 
 impl Generator {
+    /// Helper to add a string constant to the pool and return its index
+    pub(super) fn add_string_constant(&mut self, s: String) -> u32 {
+        if let Some(idx) = self.string_constants.iter().position(|existing| existing == &s) {
+            idx as u32
+        } else {
+            let idx = self.string_constants.len() as u32;
+            self.string_constants.push(s);
+            idx
+        }
+    }
+    
     /// Helper to mark a variable as moved
     pub(super) fn mark_variable_moved(&mut self, var_id: u32) {
         self.moved_variables.insert(var_id);
