@@ -1,8 +1,9 @@
 use std::ops::Deref;
 
 use crate::ast::{
-    Attribute, Effect, EnumVariant, Expression, FunctionCall, FunctionDeclaration, Identifier, NamedPattern,
-    Parameter, Pattern, ProtoMethod, Statement, StructField, StructMethod, Type, TypeParameter,
+    Attribute, Effect, EnumVariant, Expression, FunctionCall, FunctionDeclaration, Identifier,
+    NamedPattern, Parameter, Pattern, ProtoMethod, Statement, StructField, StructMethod, Type,
+    TypeParameter,
 };
 use crate::errors::{ParseError, SourcePos};
 use crate::lexer::{Token, TokenType};
@@ -182,7 +183,7 @@ impl Parser {
 
     fn parse_field_access(&mut self, object: Expression) -> ParseResult<Expression> {
         self.consume_match(TokenType::Dot)?;
-        
+
         // Parse field name - can be either an identifier or an integer (for tuple-like access)
         let field = match self.peek() {
             Some(Token {
@@ -223,7 +224,7 @@ impl Parser {
                     break;
                 }
             }
-            
+
             if self.peek_match(TokenType::OpenParen) {
                 expression = self.parse_function_call(expression)?;
             } else if self.peek_match(TokenType::Dot) {
@@ -418,7 +419,7 @@ impl Parser {
                 };
                 continue;
             }
-            
+
             let prec = Self::get_precedence(&token.token_type);
             if prec < min_prec || prec == 0 {
                 break;
@@ -479,10 +480,14 @@ impl Parser {
     fn parse_break_expression(&mut self) -> ParseResult<Expression> {
         let break_pos = self.consume_expecting(TokenType::Break)?;
         let value = match self.peek() {
-            Some(t) if matches!(
-                t.token_type,
-                TokenType::Semicolon | TokenType::CloseBrace | TokenType::EOF
-            ) => None,
+            Some(t)
+                if matches!(
+                    t.token_type,
+                    TokenType::Semicolon | TokenType::CloseBrace | TokenType::EOF
+                ) =>
+            {
+                None
+            }
             Some(_) => Some(Box::new(self.parse_expression()?)),
             None => None,
         };
@@ -494,9 +499,7 @@ impl Parser {
 
     fn parse_continue_expression(&mut self) -> ParseResult<Expression> {
         let continue_pos = self.consume_expecting(TokenType::Continue)?;
-        Ok(Expression::Continue {
-            pos: continue_pos,
-        })
+        Ok(Expression::Continue { pos: continue_pos })
     }
 
     fn parse_pattern_suffix(&mut self, mut pattern: Pattern) -> ParseResult<Pattern> {
@@ -561,7 +564,10 @@ impl Parser {
                 // Look ahead to see if there's a colon after the identifier
                 let saved_pos = self.position;
                 let _ = self.parse_identifier();
-                let has_colon = self.peek().map(|t| t.token_type == TokenType::Colon).unwrap_or(false);
+                let has_colon = self
+                    .peek()
+                    .map(|t| t.token_type == TokenType::Colon)
+                    .unwrap_or(false);
                 self.position = saved_pos; // Restore position
                 has_colon
             } else {
@@ -602,7 +608,10 @@ impl Parser {
                     self.consume_match(TokenType::FatRightArrow)?;
                     let expression = self.parse_expression()?;
 
-                    arms.push(crate::ast::MatchArm { pattern, expression });
+                    arms.push(crate::ast::MatchArm {
+                        pattern,
+                        expression,
+                    });
 
                     let ends_with_brace = self.ends_with_brace();
                     let comma = self.consume_match(TokenType::Comma);
@@ -627,7 +636,10 @@ impl Parser {
                     }),
                 };
                 let expression = self.parse_expression()?;
-                vec![crate::ast::MatchArm { pattern, expression }]
+                vec![crate::ast::MatchArm {
+                    pattern,
+                    expression,
+                }]
             }
         } else {
             vec![]
@@ -656,7 +668,10 @@ impl Parser {
             self.consume_match(TokenType::FatRightArrow)?;
             let expression = self.parse_expression()?;
 
-            arms.push(crate::ast::MatchArm { pattern, expression });
+            arms.push(crate::ast::MatchArm {
+                pattern,
+                expression,
+            });
 
             // Handle optional comma
             let ends_with_brace = self.ends_with_brace();
@@ -821,29 +836,33 @@ impl Parser {
         Ok(attributes)
     }
 
-    fn parse_enum_declaration(&mut self, attributes: Vec<Attribute>, is_pub: bool) -> ParseResult<Statement> {
+    fn parse_enum_declaration(
+        &mut self,
+        attributes: Vec<Attribute>,
+        is_pub: bool,
+    ) -> ParseResult<Statement> {
         self.consume_match(TokenType::Enum)?;
-        
+
         // Parse optional conformance list: enum[Proto1, Proto2]
         let conformance = if self.peek_match(TokenType::OpenBracket) {
             self.consume();
             let mut protos = vec![];
-            
+
             // Parse first protocol
             protos.push(self.parse_identifier()?);
-            
+
             // Parse additional protocols separated by commas
             while self.peek_match(TokenType::Comma) {
                 self.consume();
                 protos.push(self.parse_identifier()?);
             }
-            
+
             self.consume_match(TokenType::CloseBracket)?;
             protos
         } else {
             vec![]
         };
-        
+
         let name = self.parse_identifier()?;
         let type_parameters = self.parse_type_parameters()?;
 
@@ -858,25 +877,25 @@ impl Parser {
             }
 
             let variant_name = self.parse_identifier()?;
-            
+
             // Check if this is a payload variant (has colon)
             let fields = if self.peek_match(TokenType::Colon) {
                 self.consume_match(TokenType::Colon)?;
-                
+
                 // Check if we have a tuple type (multi-field payload)
                 if self.peek_match(TokenType::OpenParen) {
                     self.consume_match(TokenType::OpenParen)?;
                     let mut field_types = Vec::new();
-                    
+
                     // Parse comma-separated list of types in the tuple
                     while !self.peek_match(TokenType::CloseParen) {
                         field_types.push(self.parse_type()?);
-                        
+
                         if !self.peek_match(TokenType::CloseParen) {
                             self.consume_match(TokenType::Comma)?;
                         }
                     }
-                    
+
                     self.consume_match(TokenType::CloseParen)?;
                     field_types
                 } else {
@@ -887,8 +906,8 @@ impl Parser {
                 // Unit variant - no fields
                 Vec::new()
             };
-            
-            values.push(EnumVariant { 
+
+            values.push(EnumVariant {
                 name: variant_name.name,
                 fields,
             });
@@ -903,18 +922,15 @@ impl Parser {
         let methods = if self.peek_match(TokenType::OpenBrace) {
             self.consume_match(TokenType::OpenBrace)?;
             let mut methods = Vec::new();
-            
+
             while !self.peek_match(TokenType::CloseBrace) {
                 // Parse attributes for the method
                 let attributes = self.parse_attributes()?;
                 let is_pub = self.consume_match(TokenType::Pub).is_ok();
                 let function = self.parse_function_declaration(attributes, is_pub)?;
-                methods.push(StructMethod { 
-                    is_pub, 
-                    function 
-                });
+                methods.push(StructMethod { is_pub, function });
             }
-            
+
             self.consume_match(TokenType::CloseBrace)?;
             methods
         } else {
@@ -974,7 +990,7 @@ impl Parser {
         } else {
             // Parse unnamed field (tuple struct): type
             let field_type = self.parse_type()?;
-            
+
             Ok(StructField {
                 is_pub,
                 name: None,
@@ -1036,29 +1052,33 @@ impl Parser {
         Ok(methods)
     }
 
-    fn parse_struct_declaration(&mut self, attributes: Vec<Attribute>, is_pub: bool) -> ParseResult<Statement> {
+    fn parse_struct_declaration(
+        &mut self,
+        attributes: Vec<Attribute>,
+        is_pub: bool,
+    ) -> ParseResult<Statement> {
         self.consume_match(TokenType::Struct)?;
-        
+
         // Parse optional conformance list: struct[Proto1, Proto2]
         let conformance = if self.peek_match(TokenType::OpenBracket) {
             self.consume();
             let mut protos = vec![];
-            
+
             // Parse first protocol
             protos.push(self.parse_identifier()?);
-            
+
             // Parse additional protocols separated by commas
             while self.peek_match(TokenType::Comma) {
                 self.consume();
                 protos.push(self.parse_identifier()?);
             }
-            
+
             self.consume_match(TokenType::CloseBracket)?;
             protos
         } else {
             vec![]
         };
-        
+
         let name = self.parse_identifier()?;
         let type_parameters = self.parse_type_parameters()?;
 
@@ -1091,7 +1111,7 @@ impl Parser {
             None
         };
         self.consume_match(TokenType::Semicolon)?;
-        
+
         Ok(ProtoMethod {
             name,
             parameters,
@@ -1102,16 +1122,20 @@ impl Parser {
     fn parse_proto_method_list(&mut self) -> ParseResult<Vec<ProtoMethod>> {
         self.consume_match(TokenType::OpenBrace)?;
         let mut methods = vec![];
-        
+
         while !self.peek_match(TokenType::CloseBrace) && !self.peek_match(TokenType::EOF) {
             methods.push(self.parse_proto_method()?);
         }
-        
+
         self.consume_match(TokenType::CloseBrace)?;
         Ok(methods)
     }
 
-    fn parse_proto_declaration(&mut self, attributes: Vec<Attribute>, is_pub: bool) -> ParseResult<Statement> {
+    fn parse_proto_declaration(
+        &mut self,
+        attributes: Vec<Attribute>,
+        is_pub: bool,
+    ) -> ParseResult<Statement> {
         self.consume_match(TokenType::Proto)?;
         let name = self.parse_identifier()?;
 
@@ -1141,17 +1165,17 @@ impl Parser {
         let effects = if self.peek_match(TokenType::OpenBracket) {
             self.consume(); // consume '['
             let mut effects = vec![];
-            
+
             while !self.peek_match(TokenType::CloseBracket) && !self.peek_match(TokenType::EOF) {
                 // Parse effect identifier (e.g., "throws", "suspend")
                 let effect_name = self.parse_identifier()?;
-                
+
                 // Check for parameterized effect: throws<ErrorType>
                 if self.peek_match(TokenType::LessThan) {
                     self.consume(); // consume '<'
                     let type_param = self.parse_type()?;
                     self.consume_match(TokenType::GreaterThan)?;
-                    
+
                     effects.push(Effect::Parameterized {
                         name: effect_name,
                         type_param,
@@ -1159,13 +1183,13 @@ impl Parser {
                 } else {
                     effects.push(Effect::Simple(effect_name));
                 }
-                
+
                 // Consume comma if present (for multiple effects)
                 if self.peek_match(TokenType::Comma) {
                     self.consume();
                 }
             }
-            
+
             self.consume_match(TokenType::CloseBracket)?;
             effects
         } else {
@@ -1214,11 +1238,11 @@ impl Parser {
                 }
                 TokenType::Identifier(_) => {
                     let ident = self.parse_identifier()?;
-                    
+
                     // Check for generic type syntax: identifier<type_args>
                     if self.peek_match(TokenType::LessThan) {
                         self.consume(); // consume '<'
-                        
+
                         // Handle empty type argument list: identifier<>
                         if self.peek_match(TokenType::GreaterThan) {
                             self.consume(); // consume '>'
@@ -1230,21 +1254,21 @@ impl Parser {
                                 }),
                             });
                         }
-                        
+
                         let mut type_args = vec![];
-                        
+
                         loop {
                             type_args.push(self.parse_type()?);
-                            
+
                             if self.peek_match(TokenType::Comma) {
                                 self.consume(); // consume ','
                             } else {
                                 break;
                             }
                         }
-                        
+
                         self.consume_match(TokenType::GreaterThan)?; // consume '>'
-                        
+
                         Ok(Type::Generic {
                             base: ident,
                             type_args,
@@ -1273,7 +1297,7 @@ impl Parser {
 
     /// Try to parse type arguments in expression context (e.g., Container<int>)
     /// Returns Ok with type args if successful, Err otherwise.
-    /// 
+    ///
     /// This is used to disambiguate between generic instantiation (`Container<int>`)
     /// and comparison operators (`a < b`). The parser saves its position and attempts
     /// to parse type arguments. If successful, it's a generic instantiation; if it fails,
@@ -1281,7 +1305,7 @@ impl Parser {
     fn try_parse_type_arguments(&mut self) -> ParseResult<Vec<Type>> {
         // Save parser state for potential backtracking
         let saved_pos = self.position;
-        
+
         // Consume the '<'
         if !self.peek_match(TokenType::LessThan) {
             return Err(ParseError::UnexpectedToken {
@@ -1290,7 +1314,7 @@ impl Parser {
             });
         }
         self.consume();
-        
+
         // Check for empty type argument list: identifier<>
         // This is not allowed (consistent with parse_type behavior)
         if self.peek_match(TokenType::GreaterThan) {
@@ -1300,10 +1324,10 @@ impl Parser {
                 pos: None,
             });
         }
-        
+
         // Try to parse type arguments
         let mut type_args = vec![];
-        
+
         loop {
             // Try to parse a type
             match self.parse_type() {
@@ -1318,14 +1342,14 @@ impl Parser {
                     });
                 }
             }
-            
+
             if self.peek_match(TokenType::Comma) {
                 self.consume();
             } else {
                 break;
             }
         }
-        
+
         // Must end with '>'
         if !self.peek_match(TokenType::GreaterThan) {
             self.position = saved_pos;
@@ -1335,7 +1359,7 @@ impl Parser {
             });
         }
         self.consume();
-        
+
         Ok(type_args)
     }
 
@@ -1343,20 +1367,20 @@ impl Parser {
         if !self.peek_match(TokenType::LessThan) {
             return Ok(vec![]);
         }
-        
+
         self.consume(); // consume '<'
-        
+
         // Handle empty type parameter list: <>
         if self.peek_match(TokenType::GreaterThan) {
             self.consume(); // consume '>'
             return Ok(vec![]);
         }
-        
+
         let mut type_params = vec![];
-        
+
         loop {
             let name = self.parse_identifier()?;
-            
+
             // Check for bound: T: Printable
             let bound = if self.peek_match(TokenType::Colon) {
                 self.consume(); // consume ':'
@@ -1364,32 +1388,32 @@ impl Parser {
             } else {
                 None
             };
-            
+
             type_params.push(TypeParameter { name, bound });
-            
+
             if self.peek_match(TokenType::Comma) {
                 self.consume(); // consume ','
             } else {
                 break;
             }
         }
-        
+
         self.consume_match(TokenType::GreaterThan)?; // consume '>'
         Ok(type_params)
     }
 
     fn parse_import_statement(&mut self) -> ParseResult<Statement> {
         self.consume_match(TokenType::Import)?;
-        
+
         // Parse the module path (can be dotted identifier or relative path starting with .)
         let mut module_path = String::new();
-        
+
         // Check if it's a relative import starting with .
         if self.peek_match(TokenType::Dot) {
             module_path.push('.');
             self.consume();
         }
-        
+
         // Parse the rest of the path
         loop {
             match self.peek() {
@@ -1399,7 +1423,7 @@ impl Parser {
                 }) => {
                     module_path.push_str(id);
                     self.consume();
-                    
+
                     // Check for another dot
                     if self.peek_match(TokenType::Dot) {
                         module_path.push('.');
@@ -1423,7 +1447,7 @@ impl Parser {
                 }
             }
         }
-        
+
         // Check for optional "as" alias
         let alias = if self.peek_match(TokenType::As) {
             self.consume();
@@ -1431,19 +1455,16 @@ impl Parser {
         } else {
             None
         };
-        
+
         self.consume_match(TokenType::Semicolon)?;
-        
-        Ok(Statement::Import {
-            module_path,
-            alias,
-        })
+
+        Ok(Statement::Import { module_path, alias })
     }
 
     fn parse_statement(&mut self) -> ParseResult<Statement> {
         // Parse attributes first (they come before pub in the syntax)
         let attributes = self.parse_attributes()?;
-        
+
         // Then, check for pub keyword
         let is_pub = if self.peek_match(TokenType::Pub) {
             self.consume();
@@ -1548,12 +1569,12 @@ impl Parser {
                         }),
                     });
                 }
-                
+
                 let is_mutable = matches!(self.peek().map(|t| &t.token_type), Some(TokenType::Var));
                 self.consume();
 
                 let identifier = self.parse_identifier()?;
-                
+
                 // Check for optional type annotation: let p: Type = ...
                 let type_annotation = if self.peek_match(TokenType::Colon) {
                     self.consume(); // consume ':'
@@ -1561,7 +1582,7 @@ impl Parser {
                 } else {
                     None
                 };
-                
+
                 self.consume_match(TokenType::Assignment)?;
                 let expression = self.parse_expression()?;
                 self.consume_match(TokenType::Semicolon)?;

@@ -1,0 +1,10 @@
+// compile_fail
+
+enum E {
+    A(int),
+    B(),
+}
+
+fn bad() {
+    E.A(1, 2);
+}

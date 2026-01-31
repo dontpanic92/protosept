@@ -16,7 +16,7 @@ pub trait ModuleProvider {
     /// Load a module by its path (e.g., "test.test" or "std.collections.list")
     /// Returns the source code for the module, or None if not found
     fn load_module(&self, module_path: &str) -> Option<String>;
-    
+
     /// Clone the provider into a Box for recursive compilation
     fn clone_boxed(&self) -> Box<dyn ModuleProvider>;
 }
@@ -29,7 +29,7 @@ impl ModuleProvider for NoModuleProvider {
     fn load_module(&self, _module_path: &str) -> Option<String> {
         None
     }
-    
+
     fn clone_boxed(&self) -> Box<dyn ModuleProvider> {
         Box::new(self.clone())
     }
@@ -60,7 +60,7 @@ impl ModuleProvider for InMemoryModuleProvider {
     fn load_module(&self, module_path: &str) -> Option<String> {
         self.modules.get(module_path).cloned()
     }
-    
+
     fn clone_boxed(&self) -> Box<dyn ModuleProvider> {
         Box::new(self.clone())
     }
@@ -78,7 +78,7 @@ impl BuiltinModuleProvider {
             inner: Rc::new(inner),
         }
     }
-    
+
     fn get_builtin_module(module_path: &str) -> Option<String> {
         match module_path {
             "builtin" => Some(include_str!("../builtin.p7").to_string()),
@@ -96,7 +96,7 @@ impl ModuleProvider for BuiltinModuleProvider {
         // Fall back to the inner provider
         self.inner.load_module(module_path)
     }
-    
+
     fn clone_boxed(&self) -> Box<dyn ModuleProvider> {
         Box::new(self.clone())
     }
@@ -112,7 +112,7 @@ pub fn compile_with_provider(
 ) -> Result<bytecode::Module, Proto7Error> {
     // Wrap the provider with builtin support
     let provider_with_builtins = Box::new(BuiltinModuleProvider::new(provider));
-    
+
     let mut lexer = lexer::Lexer::new(contents);
     let mut tokens = vec![];
 

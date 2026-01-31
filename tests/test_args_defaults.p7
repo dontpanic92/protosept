@@ -1,0 +1,15 @@
+import test.test;
+
+fn f(a: int, b: int = 5, c: int = 7) -> int {
+    a + b * c
+}
+
+@test(expected_type = "int", expected_value = "40")
+fn test_positional_defaults() -> int {
+    f(5)
+}
+
+@test(expected_type = "int", expected_value = "33")
+fn test_positional_override_b() -> int {
+    f(5, 4)
+}

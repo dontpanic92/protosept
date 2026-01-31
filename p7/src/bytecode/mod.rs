@@ -1,10 +1,5 @@
 pub mod builder;
 pub mod codegen;
-mod helpers;
-mod type_check;
-mod monomorph;
-mod stmt_gen;
-mod expr_gen;
 
 use binrw::{BinRead, binrw};
 
@@ -122,41 +117,41 @@ pub enum Instruction {
     // Pops N field values, creates struct on heap, pushes StructRef
     #[brw(magic = 30u8)]
     NewStruct(u32),
-    
+
     // Allocate a box on the heap and store the top stack value in it.
     // Expects: [..., value] -> pops value, allocates box, stores value, pushes BoxRef
     #[brw(magic = 32u8)]
     BoxAlloc,
-    
+
     // Dereference a box and push its contained value.
     // Expects: [..., BoxRef] -> pops BoxRef, pushes the contained value
     #[brw(magic = 33u8)]
     BoxDeref,
-    
+
     // Convert a box<T> to a proto box box<P> for dynamic dispatch.
     // Expects: [..., BoxRef] -> pops BoxRef, pushes ProtoBoxRef with type_id
     // Parameters: (struct_type_id, proto_type_id)
     #[brw(magic = 34u8)]
     BoxToProto(u32, u32),
-    
+
     // Call a proto method with dynamic dispatch.
     // Expects: [..., ProtoBoxRef/ProtoRefRef, args] -> performs dynamic method lookup and calls impl
     // Parameters: (proto_id, method_name_hash)
     #[brw(magic = 35u8)]
     CallProtoMethod(u32, u32),
-    
+
     // Convert a ref<T> to a proto ref ref<P> for dynamic dispatch.
     // Expects: [..., StructRef] -> pops StructRef, pushes ProtoRefRef with type_id
     // Parameters: (struct_type_id, proto_type_id)
     #[brw(magic = 36u8)]
     RefToProto(u32, u32),
-    
+
     // Load a string constant from the string table.
     // Expects: [...] -> pushes string value
     // Parameters: string_index (index into Module.string_constants)
     #[brw(magic = 37u8)]
     Lds(u32),
-    
+
     // Call a host function by name.
     // Expects: [..., args] -> pops args, calls host function, pushes result
     // Parameters: string_index (index into Module.string_constants for function name)

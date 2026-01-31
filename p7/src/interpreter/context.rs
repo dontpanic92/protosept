@@ -1,5 +1,5 @@
 use core::panic;
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 
 use binrw::BinRead;
@@ -24,9 +24,15 @@ pub enum Data {
     /// For box<proto>, stores both the box index and the concrete type_id for dynamic dispatch.
     BoxRef(u32),
     /// Proto box reference: stores box index and concrete struct type_id for dynamic dispatch
-    ProtoBoxRef { box_idx: u32, concrete_type_id: u32 },
+    ProtoBoxRef {
+        box_idx: u32,
+        concrete_type_id: u32,
+    },
     /// Proto ref reference: stores ref index and concrete struct type_id for dynamic dispatch
-    ProtoRefRef { ref_idx: u32, concrete_type_id: u32 },
+    ProtoRefRef {
+        ref_idx: u32,
+        concrete_type_id: u32,
+    },
     /// Exception value (enum variant ID) - used for try-catch as special return value
     Exception(i32),
 }
@@ -74,7 +80,7 @@ macro_rules! arithmetic_op {
                 // Arithmetic on struct references is invalid.
                 return Err(RuntimeError::UnexpectedStructRef);
             }
-            (Data::BoxRef(_), _) | (_, Data::BoxRef(_)) 
+            (Data::BoxRef(_), _) | (_, Data::BoxRef(_))
             | (Data::ProtoBoxRef { .. }, _) | (_, Data::ProtoBoxRef { .. })
             | (Data::ProtoRefRef { .. }, _) | (_, Data::ProtoRefRef { .. }) => {
                 // Arithmetic on box/proto references is invalid.
@@ -175,17 +181,18 @@ impl Context {
             vtable: HashMap::new(),
             host_functions: HashMap::new(),
         };
-        
+
         // Register builtin host functions
         ctx.register_builtin_host_functions();
         ctx
     }
-    
+
     /// Register all builtin host functions
     fn register_builtin_host_functions(&mut self) {
-        self.host_functions.insert("string.len_bytes".to_string(), host_string_len_bytes);
+        self.host_functions
+            .insert("string.len_bytes".to_string(), host_string_len_bytes);
     }
-    
+
     /// Register a custom host function
     pub fn register_host_function(&mut self, name: String, func: HostFunction) {
         self.host_functions.insert(name, func);
@@ -195,31 +202,32 @@ impl Context {
         self.build_vtable(&module);
         self.modules.push(module);
     }
-    
+
     /// Build vtable for dynamic dispatch by mapping (concrete_type_id, proto_id, method_name) -> symbol_id
     fn build_vtable(&mut self, module: &Module) {
         use crate::semantic::TypeDefinition;
-        
+
         // Iterate through all structs
         for (type_id, udt) in module.types.iter().enumerate() {
             if let TypeDefinition::Struct(struct_def) = udt {
                 let struct_type_id = type_id as u32;
-                
+
                 // For each protocol this struct conforms to
                 for &proto_id in &struct_def.conforming_to {
                     // Get the proto definition
-                    if let Some(TypeDefinition::Proto(proto)) = module.types.get(proto_id as usize) {
+                    if let Some(TypeDefinition::Proto(proto)) = module.types.get(proto_id as usize)
+                    {
                         // For each method in the proto
-                            for (method_name, _, _) in &proto.methods {
-                                // Find the struct's symbol and look for this method
-                                if let Some(struct_symbol) = module.symbols.iter()
+                        for (method_name, _, _) in &proto.methods {
+                            // Find the struct's symbol and look for this method
+                            if let Some(struct_symbol) = module.symbols.iter()
                                     .find(|s| matches!(&s.kind, crate::semantic::SymbolKind::Type(id) if *id == struct_type_id))
                                 {
                                 // Look for the method in the struct's children
                                 if let Some(&method_symbol_id) = struct_symbol.children.get(method_name) {
                                     // Hash the method name for fast lookup
                                     let method_hash = Self::hash_method_name(method_name);
-                                    
+
                                     // Store in vtable: (struct_type_id, proto_id, method_hash) -> method_symbol_id
                                     self.vtable.insert(
                                         (struct_type_id, proto_id, method_hash),
@@ -233,7 +241,7 @@ impl Context {
             }
         }
     }
-    
+
     /// Simple hash function for method names
     fn hash_method_name(name: &str) -> u32 {
         use std::collections::hash_map::DefaultHasher;
@@ -242,11 +250,11 @@ impl Context {
         name.hash(&mut hasher);
         hasher.finish() as u32
     }
-    
+
     /// Get method name from hash for error messages (reverse lookup)
     fn get_method_name_from_hash(&self, proto_id: u32, method_hash: u32) -> ContextResult<String> {
         use crate::semantic::TypeDefinition;
-        
+
         if let Some(TypeDefinition::Proto(proto)) = self.modules[0].types.get(proto_id as usize) {
             for (method_name, _, _) in &proto.methods {
                 if Self::hash_method_name(method_name) == method_hash {
@@ -254,7 +262,10 @@ impl Context {
                 }
             }
         }
-        Err(RuntimeError::Other(format!("Method with hash {} not found in proto {}", method_hash, proto_id)))
+        Err(RuntimeError::Other(format!(
+            "Method with hash {} not found in proto {}",
+            method_hash, proto_id
+        )))
     }
 
     pub fn push_function(&mut self, name: &str, params: Vec<Data>) {
@@ -291,10 +302,19 @@ impl Context {
                 Instruction::Ldi(val) => self.stack_frame_mut()?.stack.push(Data::Int(val)),
                 Instruction::Ldf(val) => self.stack_frame_mut()?.stack.push(Data::Float(val)),
                 Instruction::Lds(string_index) => {
-                    let string_const = self.modules[0].string_constants.get(string_index as usize)
-                        .ok_or_else(|| RuntimeError::Other(format!("String constant index {} out of bounds", string_index)))?
+                    let string_const = self.modules[0]
+                        .string_constants
+                        .get(string_index as usize)
+                        .ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "String constant index {} out of bounds",
+                                string_index
+                            ))
+                        })?
                         .clone();
-                    self.stack_frame_mut()?.stack.push(Data::String(string_const));
+                    self.stack_frame_mut()?
+                        .stack
+                        .push(Data::String(string_const));
                 }
                 Instruction::Ldvar(idx) => {
                     if (idx as usize) < self.stack_frame_mut()?.locals.len() {
@@ -345,12 +365,16 @@ impl Context {
                             Data::Int(i) => self.stack_frame_mut()?.stack.push(Data::Int(-i)),
                             Data::Float(f) => self.stack_frame_mut()?.stack.push(Data::Float(-f)),
                             Data::String(_) => {
-                                return Err(RuntimeError::Other("Cannot negate string".to_string()));
+                                return Err(RuntimeError::Other(
+                                    "Cannot negate string".to_string(),
+                                ));
                             }
                             Data::StructRef(_) => {
                                 return Err(RuntimeError::VariableNotFound);
                             }
-                            Data::BoxRef(_) | Data::ProtoBoxRef { .. } | Data::ProtoRefRef { .. } => {
+                            Data::BoxRef(_)
+                            | Data::ProtoBoxRef { .. }
+                            | Data::ProtoRefRef { .. } => {
                                 return Err(RuntimeError::Other(
                                     "Cannot negate box/proto reference".to_string(),
                                 ));
@@ -379,12 +403,16 @@ impl Context {
                                 .stack
                                 .push(Data::Int((f == 0.0) as i32)),
                             Data::String(_) => {
-                                return Err(RuntimeError::Other("Cannot apply logical NOT to string".to_string()));
+                                return Err(RuntimeError::Other(
+                                    "Cannot apply logical NOT to string".to_string(),
+                                ));
                             }
                             Data::StructRef(_) => {
                                 return Err(RuntimeError::VariableNotFound);
                             }
-                            Data::BoxRef(_) | Data::ProtoBoxRef { .. } | Data::ProtoRefRef { .. } => {
+                            Data::BoxRef(_)
+                            | Data::ProtoBoxRef { .. }
+                            | Data::ProtoRefRef { .. } => {
                                 return Err(RuntimeError::Other(
                                     "Cannot apply logical NOT to box/proto reference".to_string(),
                                 ));
@@ -435,7 +463,9 @@ impl Context {
                             .ok_or(RuntimeError::FunctionNotFound)?;
 
                         let (func_id, address) = match &symbol.kind {
-                            crate::semantic::SymbolKind::Function { func_id, address } => (*func_id, *address),
+                            crate::semantic::SymbolKind::Function { func_id, address } => {
+                                (*func_id, *address)
+                            }
                             _ => return Err(RuntimeError::FunctionNotFound),
                         };
 
@@ -461,11 +491,9 @@ impl Context {
                         // Resolve BoxRef/ProtoBoxRef/ProtoRefRef to the underlying value
                         let resolved_data = match &data {
                             Data::BoxRef(idx) | Data::ProtoBoxRef { box_idx: idx, .. } => {
-                                self.box_heap.get(*idx as usize)
-                                    .cloned()
-                                    .ok_or_else(|| RuntimeError::Other(
-                                        format!("Invalid box reference: {}", idx)
-                                    ))?
+                                self.box_heap.get(*idx as usize).cloned().ok_or_else(|| {
+                                    RuntimeError::Other(format!("Invalid box reference: {}", idx))
+                                })?
                             }
                             Data::ProtoRefRef { ref_idx, .. } => {
                                 // ProtoRefRef points to heap location like StructRef
@@ -473,7 +501,7 @@ impl Context {
                             }
                             other => other.clone(),
                         };
-                        
+
                         match resolved_data {
                             Data::StructRef(ref_id) => {
                                 let ref_usize = ref_id as usize;
@@ -611,12 +639,15 @@ impl Context {
                 }
                 Instruction::BoxAlloc => {
                     // Pop value from stack, allocate a box, store value, push BoxRef
-                    let value = self.stack_frame_mut()?.stack.pop()
+                    let value = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
                         .ok_or(RuntimeError::StackUnderflow)?;
                     let box_idx = self.box_heap.len() as u32;
                     self.box_heap.push(value);
                     self.stack_frame_mut()?.stack.push(Data::BoxRef(box_idx));
-                    
+
                     // Trigger GC if threshold is reached
                     self.allocation_count += 1;
                     if self.allocation_count >= self.gc_threshold {
@@ -626,19 +657,25 @@ impl Context {
                 }
                 Instruction::BoxDeref => {
                     // Pop BoxRef from stack, load value from box, push value
-                    let box_ref = self.stack_frame_mut()?.stack.pop()
+                    let box_ref = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
                         .ok_or(RuntimeError::StackUnderflow)?;
                     match box_ref {
                         Data::BoxRef(idx) | Data::ProtoBoxRef { box_idx: idx, .. } => {
-                            let value = self.box_heap.get(idx as usize)
-                                .ok_or_else(|| RuntimeError::Other(
-                                    format!("Invalid box reference: {}", idx)
-                                ))?.clone();
+                            let value = self
+                                .box_heap
+                                .get(idx as usize)
+                                .ok_or_else(|| {
+                                    RuntimeError::Other(format!("Invalid box reference: {}", idx))
+                                })?
+                                .clone();
                             self.stack_frame_mut()?.stack.push(value);
                         }
                         _ => {
                             return Err(RuntimeError::Other(
-                                "Expected BoxRef on stack for deref".to_string()
+                                "Expected BoxRef on stack for deref".to_string(),
                             ));
                         }
                     }
@@ -646,9 +683,12 @@ impl Context {
                 Instruction::BoxToProto(struct_type_id, proto_type_id) => {
                     // Convert box<T> to box<P> for dynamic dispatch
                     // Pop BoxRef, push ProtoBoxRef with type info
-                    let box_ref = self.stack_frame_mut()?.stack.pop()
+                    let box_ref = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
                         .ok_or(RuntimeError::StackUnderflow)?;
-                    
+
                     if let Data::BoxRef(box_idx) = box_ref {
                         // Create a ProtoBoxRef with the concrete type information
                         self.stack_frame_mut()?.stack.push(Data::ProtoBoxRef {
@@ -656,17 +696,21 @@ impl Context {
                             concrete_type_id: struct_type_id,
                         });
                     } else {
-                        return Err(RuntimeError::Other(
-                            format!("Expected BoxRef on stack for BoxToProto, found {:?}", box_ref)
-                        ));
+                        return Err(RuntimeError::Other(format!(
+                            "Expected BoxRef on stack for BoxToProto, found {:?}",
+                            box_ref
+                        )));
                     }
                 }
                 Instruction::RefToProto(struct_type_id, proto_type_id) => {
                     // Convert ref<T> to ref<P> for dynamic dispatch
                     // Pop StructRef, push ProtoRefRef with type info
-                    let struct_ref = self.stack_frame_mut()?.stack.pop()
+                    let struct_ref = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
                         .ok_or(RuntimeError::StackUnderflow)?;
-                    
+
                     if let Data::StructRef(ref_idx) = struct_ref {
                         // Create a ProtoRefRef with the concrete type information
                         self.stack_frame_mut()?.stack.push(Data::ProtoRefRef {
@@ -674,62 +718,80 @@ impl Context {
                             concrete_type_id: struct_type_id,
                         });
                     } else {
-                        return Err(RuntimeError::Other(
-                            format!("Expected StructRef on stack for RefToProto, found {:?}", struct_ref)
-                        ));
+                        return Err(RuntimeError::Other(format!(
+                            "Expected StructRef on stack for RefToProto, found {:?}",
+                            struct_ref
+                        )));
                     }
                 }
                 Instruction::CallProtoMethod(proto_id, method_hash) => {
                     // Dynamic dispatch: look up method in vtable based on concrete type
                     // The receiver should be a ProtoBoxRef on the stack with arguments after it
-                    
+
                     // We need to peek at the receiver to get the concrete type
                     // The receiver is at the bottom of the arguments
                     // For now, we'll assume the receiver is the first argument (self parameter)
-                    
+
                     // First, let's find the function signature to know how many args there are
                     // We'll need to look up the proto method to get param count
-                    let proto_type = self.modules[0].types.get(proto_id as usize)
+                    let proto_type = self.modules[0]
+                        .types
+                        .get(proto_id as usize)
                         .ok_or(RuntimeError::Other("Proto type not found".to_string()))?;
-                    
+
                     let method_name = self.get_method_name_from_hash(proto_id, method_hash)?;
-                    
-                    let param_count = if let crate::semantic::TypeDefinition::Proto(proto) = proto_type {
-                        proto.methods.iter()
-                            .find(|(name, _, _)| Self::hash_method_name(name) == method_hash)
-                            .map(|(_, params, _)| params.len())
-                            .ok_or(RuntimeError::Other(format!("Method not found in proto")))?
-                    } else {
-                        return Err(RuntimeError::Other("Expected proto type".to_string()));
-                    };
-                    
+
+                    let param_count =
+                        if let crate::semantic::TypeDefinition::Proto(proto) = proto_type {
+                            proto
+                                .methods
+                                .iter()
+                                .find(|(name, _, _)| Self::hash_method_name(name) == method_hash)
+                                .map(|(_, params, _)| params.len())
+                                .ok_or(RuntimeError::Other(format!("Method not found in proto")))?
+                        } else {
+                            return Err(RuntimeError::Other("Expected proto type".to_string()));
+                        };
+
                     // The receiver (self) is at position stack.len() - param_count
                     let stack_len = self.stack_frame()?.stack.len();
                     if stack_len < param_count {
                         return Err(RuntimeError::StackUnderflow);
                     }
-                    
+
                     let receiver_idx = stack_len - param_count;
-                    let receiver = self.stack_frame()?.stack.get(receiver_idx)
+                    let receiver = self
+                        .stack_frame()?
+                        .stack
+                        .get(receiver_idx)
                         .ok_or(RuntimeError::StackUnderflow)?;
-                    
+
                     let concrete_type_id = match receiver {
-                        Data::ProtoBoxRef { concrete_type_id, .. } => *concrete_type_id,
-                        Data::ProtoRefRef { concrete_type_id, .. } => *concrete_type_id,
+                        Data::ProtoBoxRef {
+                            concrete_type_id, ..
+                        } => *concrete_type_id,
+                        Data::ProtoRefRef {
+                            concrete_type_id, ..
+                        } => *concrete_type_id,
                         _ => {
-                            return Err(RuntimeError::Other(
-                                format!("Expected ProtoBoxRef or ProtoRefRef as receiver for proto method call, found {:?}", receiver)
-                            ));
+                            return Err(RuntimeError::Other(format!(
+                                "Expected ProtoBoxRef or ProtoRefRef as receiver for proto method call, found {:?}",
+                                receiver
+                            )));
                         }
                     };
-                    
+
                     // Look up the method in the vtable
-                    let method_symbol_id = self.vtable.get(&(concrete_type_id, proto_id, method_hash))
-                        .ok_or_else(|| RuntimeError::Other(
-                            format!("Method '{}' not found in vtable for type {} implementing proto {}",
-                                method_name, concrete_type_id, proto_id)
-                        ))?;
-                    
+                    let method_symbol_id = self
+                        .vtable
+                        .get(&(concrete_type_id, proto_id, method_hash))
+                        .ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Method '{}' not found in vtable for type {} implementing proto {}",
+                                method_name, concrete_type_id, proto_id
+                            ))
+                        })?;
+
                     // Now call the method using the standard Call instruction logic
                     let (address, args_len) = {
                         let symbol = self.modules[0]
@@ -738,7 +800,9 @@ impl Context {
                             .ok_or(RuntimeError::FunctionNotFound)?;
 
                         let (func_id, address) = match &symbol.kind {
-                            crate::semantic::SymbolKind::Function { func_id, address } => (*func_id, *address),
+                            crate::semantic::SymbolKind::Function { func_id, address } => {
+                                (*func_id, *address)
+                            }
                             _ => return Err(RuntimeError::FunctionNotFound),
                         };
 
@@ -760,17 +824,21 @@ impl Context {
                 }
                 Instruction::InvokeHost(string_index) => {
                     // Look up the host function name from string constants
-                    let function_name = self.modules[0].string_constants.get(string_index as usize)
-                        .ok_or_else(|| RuntimeError::Other(
-                            format!("Invalid string constant index for host function: {}", string_index)
-                        ))?;
-                    
+                    let function_name = self.modules[0]
+                        .string_constants
+                        .get(string_index as usize)
+                        .ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Invalid string constant index for host function: {}",
+                                string_index
+                            ))
+                        })?;
+
                     // Look up and call the host function
-                    let host_fn = self.host_functions.get(function_name)
-                        .ok_or_else(|| RuntimeError::Other(
-                            format!("Host function not found: {}", function_name)
-                        ))?;
-                    
+                    let host_fn = self.host_functions.get(function_name).ok_or_else(|| {
+                        RuntimeError::Other(format!("Host function not found: {}", function_name))
+                    })?;
+
                     // Call the host function
                     host_fn(self)?;
                 }
@@ -971,26 +1039,27 @@ impl Context {
                     }
                 }
             }
-            Data::ProtoBoxRef { box_idx: old_idx, concrete_type_id } => {
-                match index_map.get(*old_idx as usize) {
-                    Some(Some(new_idx)) => {
-                        *old_idx = *new_idx;
-                    }
-                    Some(None) => {
-                        panic!(
-                            "BUG: Attempted to update reference to garbage-collected proto box at index {}",
-                            old_idx
-                        );
-                    }
-                    None => {
-                        panic!(
-                            "BUG: ProtoBoxRef index {} is out of bounds (heap size: {})",
-                            old_idx,
-                            index_map.len()
-                        );
-                    }
+            Data::ProtoBoxRef {
+                box_idx: old_idx,
+                concrete_type_id,
+            } => match index_map.get(*old_idx as usize) {
+                Some(Some(new_idx)) => {
+                    *old_idx = *new_idx;
                 }
-            }
+                Some(None) => {
+                    panic!(
+                        "BUG: Attempted to update reference to garbage-collected proto box at index {}",
+                        old_idx
+                    );
+                }
+                None => {
+                    panic!(
+                        "BUG: ProtoBoxRef index {} is out of bounds (heap size: {})",
+                        old_idx,
+                        index_map.len()
+                    );
+                }
+            },
             _ => {}
         }
     }
@@ -1003,20 +1072,24 @@ impl Context {
 /// Returns: int (byte length) on stack
 fn host_string_len_bytes(ctx: &mut Context) -> ContextResult<()> {
     // The self parameter is passed as param 0 (it's a ref<string>, which is the string value itself)
-    let string_val = ctx.stack_frame_mut()?.stack.pop()
-        .ok_or(RuntimeError::Other("string.len_bytes: missing self parameter".to_string()))?
+    let string_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::Other(
+            "string.len_bytes: missing self parameter".to_string(),
+        ))?
         .clone();
-    
+
     match string_val {
         Data::String(s) => {
             let byte_len = s.len() as i32;
             ctx.stack_frame_mut()?.stack.push(Data::Int(byte_len));
             Ok(())
         }
-        _ => {
-            Err(RuntimeError::Other(
-                format!("string.len_bytes expected string, found {:?}", string_val)
-            ))
-        }
+        _ => Err(RuntimeError::Other(format!(
+            "string.len_bytes expected string, found {:?}",
+            string_val
+        ))),
     }
 }

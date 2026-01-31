@@ -1,11 +1,11 @@
+use crate::errors::SemanticError;
 use crate::errors::SourcePos;
 use crate::{
     ast::{Expression, Statement},
     semantic::{Enum, PrimitiveType, Proto, Struct, Symbol, SymbolKind, Type, TypeDefinition},
 };
-use crate::errors::SemanticError;
 
-use super::codegen::{Generator, SaResult};
+use super::{Generator, SaResult};
 
 impl Generator {
     pub(super) fn generate_statement(&mut self, statement: Statement) -> SaResult<Type> {
@@ -17,27 +17,7 @@ impl Generator {
                 expression,
             } => {
                 // Check if this expression involves a move (before consuming it)
-                let move_info = if let Expression::Identifier(ref ident) = expression {
-                    if let Some(var_id) = self.local_scope.as_ref().unwrap().find_variable(&ident.name) {
-                        let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
-                        if !ty.is_copy_treated(&self.symbol_table) {
-                            Some(var_id)
-                        } else {
-                            None
-                        }
-                    } else if let Some(param_id) = self.local_scope.as_ref().unwrap().find_param(&ident.name) {
-                        let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
-                        if !ty.is_copy_treated(&self.symbol_table) {
-                            Some(param_id)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
+                let move_info = self.compute_move_info(&expression);
 
                 let inferred_ty = self.generate_expression(expression)?;
 
@@ -49,7 +29,7 @@ impl Generator {
                 // Validate type annotation if provided
                 let final_ty = if let Some(annotation) = type_annotation {
                     let annotated_ty = self.get_semantic_type(&annotation)?;
-                    
+
                     // Check if inferred type is compatible with annotation
                     if !self.types_compatible(&inferred_ty, &annotated_ty) {
                         return Err(SemanticError::TypeMismatch {
@@ -61,7 +41,7 @@ impl Generator {
                             }),
                         });
                     }
-                    
+
                     // Use the annotated type (which may be more specific, e.g., float when int was inferred)
                     annotated_ty
                 } else {
@@ -107,19 +87,17 @@ impl Generator {
                 let qualified_name = self
                     .symbol_table
                     .get_new_symbol_qualified_name(name.name.clone());
-                
+
                 // Check if this is a generic enum
                 let is_generic = !type_parameters.is_empty();
-                
+
                 let (variants, generic_variant_types) = if is_generic {
                     // For generic enums, store the original AST types
-                    let generic_types: Vec<Vec<crate::ast::Type>> = values.iter()
-                        .map(|v| v.fields.clone())
-                        .collect();
+                    let generic_types: Vec<Vec<crate::ast::Type>> =
+                        values.iter().map(|v| v.fields.clone()).collect();
                     // Don't resolve types yet - will be done during monomorphization
-                    let variants: Vec<(String, Vec<Type>)> = values.iter()
-                        .map(|v| (v.name.clone(), vec![]))
-                        .collect();
+                    let variants: Vec<(String, Vec<Type>)> =
+                        values.iter().map(|v| (v.name.clone(), vec![])).collect();
                     (variants, Some(generic_types))
                 } else {
                     // For non-generic enums, resolve field types now
@@ -134,19 +112,22 @@ impl Generator {
                     }
                     (resolved_variants, None)
                 };
-                
+
                 // Resolve protocol conformances
                 let mut conforming_to = Vec::new();
                 for proto_name in conformance {
                     let proto_type_id = self.resolve_proto_identifier(&proto_name)?;
                     conforming_to.push(proto_type_id);
                 }
-                
+
                 let ty = Enum {
                     qualified_name: qualified_name.clone(),
                     variants,
                     attributes: attributes.clone(),
-                    type_parameters: type_parameters.iter().map(|tp| tp.name.name.clone()).collect(),
+                    type_parameters: type_parameters
+                        .iter()
+                        .map(|tp| tp.name.name.clone())
+                        .collect(),
                     generic_variant_types,
                     monomorphization: None,
                     conforming_to: conforming_to.clone(),
@@ -154,8 +135,11 @@ impl Generator {
                 };
                 let type_id = self.symbol_table.add_type(TypeDefinition::Enum(ty));
 
-                let symbol =
-                    Symbol::new(name.name.clone(), qualified_name.clone(), SymbolKind::Type(type_id));
+                let symbol = Symbol::new(
+                    name.name.clone(),
+                    qualified_name.clone(),
+                    SymbolKind::Type(type_id),
+                );
 
                 self.symbol_table.push_symbol(symbol);
 
@@ -163,7 +147,7 @@ impl Generator {
                 for method in methods {
                     self.process_function_declaration(method.function)?;
                 }
-                
+
                 // Check conformance after processing methods
                 self.check_struct_conformance(type_id, &conforming_to, name.line, name.col)?;
 
@@ -185,51 +169,53 @@ impl Generator {
                 let qualified_name = self
                     .symbol_table
                     .get_new_symbol_qualified_name(name.name.clone());
-                
+
                 // Extract type parameter names
                 let type_param_names: Vec<String> = type_parameters
                     .iter()
                     .map(|tp| tp.name.name.clone())
                     .collect();
-                
+
                 let is_generic = !type_param_names.is_empty();
-                
+
                 // For generic structs, store parsed field types; for non-generic, resolve them
                 let (fields_with_types, generic_field_types) = if is_generic {
                     // For generic structs, store placeholder types and keep parsed types
-                    let parsed_field_types: Vec<crate::ast::Type> = fields
-                        .iter()
-                        .map(|f| f.field_type.clone())
-                        .collect();
-                    
+                    let parsed_field_types: Vec<crate::ast::Type> =
+                        fields.iter().map(|f| f.field_type.clone()).collect();
+
                     // Use Unit as placeholder - these will be properly typed during monomorphization
                     let placeholder_fields: Vec<(String, Type)> = fields
                         .iter()
                         .enumerate()
                         .map(|(idx, f)| {
-                            let field_name = f.name.as_ref()
+                            let field_name = f
+                                .name
+                                .as_ref()
                                 .map(|n| n.name.clone())
                                 .unwrap_or_else(|| idx.to_string());
                             (field_name, Type::Primitive(PrimitiveType::Unit))
                         })
                         .collect();
-                    
+
                     (placeholder_fields, Some(parsed_field_types))
                 } else {
                     // For non-generic structs, resolve types normally
                     let mut resolved_fields = Vec::new();
                     for (idx, f) in fields.iter().enumerate() {
                         let field_type = self.get_semantic_type(&f.field_type)?;
-                        let field_name = f.name.as_ref()
+                        let field_name = f
+                            .name
+                            .as_ref()
                             .map(|n| n.name.clone())
                             .unwrap_or_else(|| idx.to_string());
                         resolved_fields.push((field_name, field_type));
                     }
                     (resolved_fields, None)
                 };
-                
+
                 let field_defaults = fields.iter().map(|f| f.default_value.clone()).collect();
-                
+
                 // Resolve protocol conformances
                 let mut conforming_to = Vec::new();
                 for proto_name in conformance {
@@ -244,22 +230,26 @@ impl Generator {
                     attributes: attributes.clone(),
                     type_parameters: type_param_names,
                     generic_field_types,
-                    monomorphization: None,  // This is the generic definition, not a monomorphization
+                    monomorphization: None, // This is the generic definition, not a monomorphization
                     conforming_to: conforming_to.clone(),
                     methods: Vec::new(),
                 };
                 let type_id = self.symbol_table.add_type(TypeDefinition::Struct(ty));
 
-                let symbol = Symbol::new(name.name.clone(), qualified_name.clone(), SymbolKind::Type(type_id));
+                let symbol = Symbol::new(
+                    name.name.clone(),
+                    qualified_name.clone(),
+                    SymbolKind::Type(type_id),
+                );
                 self.symbol_table.push_symbol(symbol);
 
                 for method in methods {
                     self.process_function_declaration(method.function)?;
                 }
-                
+
                 // Check conformance after processing methods
                 self.check_struct_conformance(type_id, &conforming_to, name.line, name.col)?;
-                
+
                 // TODO: Store is_pub for module visibility checking
                 let _ = is_pub;
 
@@ -275,7 +265,7 @@ impl Generator {
                 let qualified_name = self
                     .symbol_table
                     .get_new_symbol_qualified_name(name.name.clone());
-                
+
                 // First add the proto to the symbol table as a forward declaration
                 // so that method parameters can reference it
                 let ty = Proto {
@@ -284,10 +274,14 @@ impl Generator {
                     attributes: attributes.clone(),
                 };
                 let type_id = self.symbol_table.add_type(TypeDefinition::Proto(ty));
-                
-                let symbol = Symbol::new(name.name.clone(), qualified_name.clone(), SymbolKind::Type(type_id));
+
+                let symbol = Symbol::new(
+                    name.name.clone(),
+                    qualified_name.clone(),
+                    SymbolKind::Type(type_id),
+                );
                 self.symbol_table.push_symbol(symbol);
-                
+
                 // Now process the method signatures
                 let mut methods_with_types = Vec::new();
                 for m in methods {
@@ -309,9 +303,9 @@ impl Generator {
                     attributes: attributes.clone(),
                 };
                 self.symbol_table.types[type_id as usize] = TypeDefinition::Proto(ty);
-                
+
                 self.symbol_table.pop_symbol();
-                
+
                 // TODO: Store is_pub for module visibility checking
                 let _ = is_pub;
 
@@ -320,14 +314,21 @@ impl Generator {
             Statement::Return(expression) => {
                 // Check if this expression involves a move (before consuming it)
                 let move_info = if let Expression::Identifier(ref ident) = *expression {
-                    if let Some(var_id) = self.local_scope.as_ref().unwrap().find_variable(&ident.name) {
+                    if let Some(var_id) = self
+                        .local_scope
+                        .as_ref()
+                        .unwrap()
+                        .find_variable(&ident.name)
+                    {
                         let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
                         if !ty.is_copy_treated(&self.symbol_table) {
                             Some(var_id)
                         } else {
                             None
                         }
-                    } else if let Some(param_id) = self.local_scope.as_ref().unwrap().find_param(&ident.name) {
+                    } else if let Some(param_id) =
+                        self.local_scope.as_ref().unwrap().find_param(&ident.name)
+                    {
                         let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
                         if !ty.is_copy_treated(&self.symbol_table) {
                             Some(param_id)
@@ -358,7 +359,8 @@ impl Generator {
             }
             Statement::Import { module_path, alias } => {
                 // Import semantics: try module first, then symbol from parent module
-                let segments: Vec<&str> = module_path.split('.').filter(|s| !s.is_empty()).collect();
+                let segments: Vec<&str> =
+                    module_path.split('.').filter(|s| !s.is_empty()).collect();
                 if segments.is_empty() {
                     return Err(SemanticError::ImportError {
                         module_path: module_path.clone(),
@@ -367,17 +369,24 @@ impl Generator {
                 }
 
                 // Binding name: alias or last segment
-                let binding_name = alias.clone().unwrap_or_else(|| segments.last().unwrap().to_string());
+                let binding_name = alias
+                    .clone()
+                    .unwrap_or_else(|| segments.last().unwrap().to_string());
 
                 // 1) Try module import: load full module_path
                 if let Some(source) = self.module_provider.load_module(&module_path) {
                     if !self.imported_modules.contains_key(&module_path) {
                         let imported_module = self.compile_module(&module_path, source)?;
-                        self.imported_modules.insert(module_path.clone(), imported_module);
+                        self.imported_modules
+                            .insert(module_path.clone(), imported_module);
                     }
 
                     let module_id = self.symbol_table.register_module(module_path.clone(), 0);
-                    let module_symbol = Symbol::new(binding_name.clone(), module_path.clone(), SymbolKind::Module(module_id));
+                    let module_symbol = Symbol::new(
+                        binding_name.clone(),
+                        module_path.clone(),
+                        SymbolKind::Module(module_id),
+                    );
                     self.symbol_table.insert_symbol(module_symbol);
                     return Ok(Type::Primitive(PrimitiveType::Unit));
                 }
@@ -393,22 +402,32 @@ impl Generator {
                 let parent_path = segments[..segments.len() - 1].join(".");
                 let symbol_name = segments.last().unwrap().to_string();
 
-                let parent_source = self.module_provider.load_module(&parent_path).ok_or_else(|| SemanticError::ImportError {
-                    module_path: parent_path.clone(),
-                    pos: SourcePos { line: 0, col: 0 },
-                })?;
+                let parent_source =
+                    self.module_provider
+                        .load_module(&parent_path)
+                        .ok_or_else(|| SemanticError::ImportError {
+                            module_path: parent_path.clone(),
+                            pos: SourcePos { line: 0, col: 0 },
+                        })?;
 
                 if !self.imported_modules.contains_key(&parent_path) {
                     let imported_module = self.compile_module(&parent_path, parent_source)?;
-                    self.imported_modules.insert(parent_path.clone(), imported_module);
+                    self.imported_modules
+                        .insert(parent_path.clone(), imported_module);
                 }
 
                 let imported_parent = self.imported_modules.get(&parent_path).unwrap();
                 // Symbols exported from parent: children of root
-                let root = imported_parent.symbols.get(0).ok_or_else(|| SemanticError::Other(format!("Invalid module root: {}", parent_path)))?;
+                let root = imported_parent.symbols.get(0).ok_or_else(|| {
+                    SemanticError::Other(format!("Invalid module root: {}", parent_path))
+                })?;
                 if let Some(sym_id) = root.children.get(&symbol_name) {
                     if let Some(sym) = imported_parent.symbols.get(*sym_id as usize) {
-                        let new_symbol = Symbol::new(binding_name.clone(), sym.qualified_name.clone(), sym.kind.clone());
+                        let new_symbol = Symbol::new(
+                            binding_name.clone(),
+                            sym.qualified_name.clone(),
+                            sym.kind.clone(),
+                        );
                         self.symbol_table.insert_symbol(new_symbol);
                         return Ok(Type::Primitive(PrimitiveType::Unit));
                     }

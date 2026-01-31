@@ -1,13 +1,11 @@
-use core::panic;
-
 use crate::errors::SemanticError;
 use crate::errors::SourcePos;
 use crate::{
-    ast::{Expression, Identifier, Pattern, Statement},
-    semantic::{PrimitiveType, Symbol, SymbolKind, Type, TypeId},
+    ast::{Expression, Identifier, Pattern},
+    semantic::{PrimitiveType, Type},
 };
 
-use super::codegen::{Generator, SaResult};
+use super::{Generator, SaResult};
 
 impl Generator {
     /// Helper to add a string constant to the pool and return its index

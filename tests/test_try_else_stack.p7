@@ -1,0 +1,17 @@
+import test.test;
+
+enum SimpleErr(
+    Boom,
+);
+
+fn throws() -> int {
+    throw SimpleErr.Boom;
+}
+
+@test(expected_type = "int", expected_value = "14")
+fn test_try_else() -> int {
+    let result = try throws() else {
+        err: SimpleErr.Boom => 14,
+    };
+    result
+}
