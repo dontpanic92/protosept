@@ -1,11 +1,15 @@
+//! Test runner for the p7 language.
+//! Usage: test-runner [test-file]
+//!   test-file: optional path or file name (with or without .p7) under `tests/`.
+
 use p7::{
     ast::{Attribute, Expression},
     errors::Proto7Error,
     interpreter::context::Data as P7Value,
     semantic::SymbolKind,
-    InMemoryModuleProvider, ModuleProvider,
+    InMemoryModuleProvider,
 };
-use std::{fs, path::PathBuf};
+use std::{env, fs, path::PathBuf};
 
 // Define the test struct module source that will be provided in-memory
 const TEST_MODULE_SOURCE: &str = r#"
@@ -246,37 +250,78 @@ fn main() -> std::io::Result<()> {
         return Ok(());
     }
 
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("Usage: test-runner [test-file]\n  test-file: optional path or file name (with or without .p7) under 'tests/'");
+        return Ok(());
+    }
+
+    let mut files: Vec<PathBuf> = Vec::new();
+
+    if let Some(arg) = args.get(0) {
+        let direct = PathBuf::from(arg);
+        let candidates = [
+            direct.clone(),
+            tests_dir.join(arg),
+            tests_dir.join(format!("{}.p7", arg)),
+        ];
+        let found = candidates
+            .iter()
+            .find(|p| p.exists() && p.is_file())
+            .cloned();
+
+        match found {
+            Some(path) => files.push(path),
+            None => {
+                println!(
+                    "Test file '{}' not found. Provide a valid path or file name under {:?}.",
+                    arg, tests_dir
+                );
+                std::process::exit(1);
+            }
+        }
+    } else {
+        for entry in fs::read_dir(&tests_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                    if file_name.ends_with(".p7") {
+                        files.push(path);
+                    }
+                }
+            }
+        }
+    }
+
+    if files.is_empty() {
+        println!("No test files found to run.");
+        return Ok(());
+    }
+
     let mut passed_count = 0;
     let mut failed_count = 0;
 
-    for entry in fs::read_dir(&tests_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_file() {
-            if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                if file_name.ends_with(".p7") {
-                    match run_tests_in_file(&path) {
-                        Ok(results) => {
-                            for (test_name, result) in results {
-                                print!("Running test: {:?}::{} ... ", path, test_name);
-                                match result {
-                                    TestResult::Success => {
-                                        println!("OK");
-                                        passed_count += 1;
-                                    }
-                                    TestResult::Failure(reason) => {
-                                        println!("FAILED: {:?}", reason);
-                                        failed_count += 1;
-                                    }
-                                }
-                            }
+    for path in files {
+        match run_tests_in_file(&path) {
+            Ok(results) => {
+                for (test_name, result) in results {
+                    print!("Running test: {:?}::{} ... ", path, test_name);
+                    match result {
+                        TestResult::Success => {
+                            println!("OK");
+                            passed_count += 1;
                         }
-                        Err(err) => {
-                            println!("ERROR loading {:?}: {:?}", path, err);
+                        TestResult::Failure(reason) => {
+                            println!("FAILED: {:?}", reason);
                             failed_count += 1;
                         }
                     }
                 }
+            }
+            Err(err) => {
+                println!("ERROR loading {:?}: {:?}", path, err);
+                failed_count += 1;
             }
         }
     }
