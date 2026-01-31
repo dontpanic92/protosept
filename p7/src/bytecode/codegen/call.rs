@@ -74,14 +74,24 @@ impl Generator {
                 ) =>
             {
                 self.generate_generic_struct_instantiation(
-                    base, type_args, callee_expr, arguments, call_line, call_col,
+                    base,
+                    type_args,
+                    callee_expr,
+                    arguments,
+                    call_line,
+                    call_col,
                 )
             }
             SymbolKind::Type(type_id)
                 if matches!(self.symbol_table.get_type(type_id), TypeDefinition::Enum(_)) =>
             {
                 self.generate_generic_enum_instantiation(
-                    base, type_args, callee_expr, arguments, call_line, call_col,
+                    base,
+                    type_args,
+                    callee_expr,
+                    arguments,
+                    call_line,
+                    call_col,
                 )
             }
             _ => Err(SemanticError::TypeMismatch {
@@ -226,12 +236,9 @@ impl Generator {
 
         // Case 3: Static method or enum variant like `Type.method(...)` or `Enum.Variant(...)`
         if let Expression::Identifier(ident) = object.as_ref() {
-            if let Some(result) = self.try_generate_static_call(
-                ident,
-                field,
-                callee_expr.clone(),
-                arguments.clone(),
-            )? {
+            if let Some(result) =
+                self.try_generate_static_call(ident, field, callee_expr.clone(), arguments.clone())?
+            {
                 return Ok(result);
             }
         }
@@ -319,8 +326,7 @@ impl Generator {
 
         match ty {
             Type::Struct(_) => {
-                let result =
-                    self.generate_static_struct_method_call(ident, field, arguments)?;
+                let result = self.generate_static_struct_method_call(ident, field, arguments)?;
                 Ok(Some(result))
             }
             Type::Enum(type_id) => {
@@ -339,24 +345,20 @@ impl Generator {
         field: &Identifier,
         arguments: CallArgs,
     ) -> SaResult<Type> {
-        let struct_symbol_id = self
-            .symbol_table
-            .find_symbol_in_scope(&ident.name)
-            .ok_or(SemanticError::FunctionNotFound {
+        let struct_symbol_id = self.symbol_table.find_symbol_in_scope(&ident.name).ok_or(
+            SemanticError::FunctionNotFound {
                 name: format!("{}.{}", ident.name, field.name),
                 pos: field.pos(),
-            })?;
+            },
+        )?;
 
         let struct_symbol = self.symbol_table.get_symbol(struct_symbol_id).unwrap();
-        let method_symbol_id =
-            struct_symbol
-                .children
-                .get(&field.name)
-                .cloned()
-                .ok_or(SemanticError::FunctionNotFound {
-                    name: format!("{}.{}", ident.name, field.name),
-                    pos: field.pos(),
-                })?;
+        let method_symbol_id = struct_symbol.children.get(&field.name).cloned().ok_or(
+            SemanticError::FunctionNotFound {
+                name: format!("{}.{}", ident.name, field.name),
+                pos: field.pos(),
+            },
+        )?;
 
         let method_symbol = self.symbol_table.get_symbol(method_symbol_id).unwrap();
         let func_id = match method_symbol.kind {
@@ -407,9 +409,9 @@ impl Generator {
         }
 
         // Handle primitive method calls
-        if let Some(result) =
-            self.try_generate_primitive_method_call(&object_ty, field, &arguments, call_line, call_col)?
-        {
+        if let Some(result) = self.try_generate_primitive_method_call(
+            &object_ty, field, &arguments, call_line, call_col,
+        )? {
             return Ok(result);
         }
 
@@ -537,8 +539,7 @@ impl Generator {
         let symbol_id = type_symbol_id
             .unwrap_or_else(|| panic!("Generating method call for type failed: {:?}", object_ty));
 
-        let (method_symbol_id, function_def) =
-            self.resolve_method(symbol_id, field)?;
+        let (method_symbol_id, function_def) = self.resolve_method(symbol_id, field)?;
 
         // For instance methods the first parameter is the receiver (self) which we've already pushed.
         let param_names_full = &function_def.param_names;
@@ -586,15 +587,12 @@ impl Generator {
         field: &Identifier,
     ) -> SaResult<(SymbolId, crate::semantic::Function)> {
         let type_symbol = self.symbol_table.get_symbol(type_symbol_id).unwrap();
-        let method_symbol_id =
-            type_symbol
-                .children
-                .get(&field.name)
-                .cloned()
-                .ok_or(SemanticError::FunctionNotFound {
-                    name: field.name.clone(),
-                    pos: field.pos(),
-                })?;
+        let method_symbol_id = type_symbol.children.get(&field.name).cloned().ok_or(
+            SemanticError::FunctionNotFound {
+                name: field.name.clone(),
+                pos: field.pos(),
+            },
+        )?;
 
         let method_symbol = self.symbol_table.get_symbol(method_symbol_id).unwrap();
         let method_func_id = match method_symbol.kind {

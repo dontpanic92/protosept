@@ -16,12 +16,12 @@ impl Generator {
         line: usize,
         col: usize,
     ) -> SaResult<SymbolId> {
-        self.symbol_table
-            .find_symbol_in_scope(name)
-            .ok_or_else(|| SemanticError::FunctionNotFound {
+        self.symbol_table.find_symbol_in_scope(name).ok_or_else(|| {
+            SemanticError::FunctionNotFound {
                 name: name.to_string(),
                 pos: SourcePos::at(line, col),
-            })
+            }
+        })
     }
 
     /// Look up a type in scope, returning an error if not found

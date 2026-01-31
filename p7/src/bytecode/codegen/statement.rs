@@ -21,9 +21,7 @@ impl Generator {
                 expression,
             } => self.generate_let(is_mutable, identifier, type_annotation, expression),
             Statement::Expression(expression) => self.generate_expression(expression),
-            Statement::FunctionDeclaration(declaration) => {
-                self.generate_function_decl(declaration)
-            }
+            Statement::FunctionDeclaration(declaration) => self.generate_function_decl(declaration),
             Statement::Throw(expression) => self.generate_throw(expression),
             Statement::EnumDeclaration {
                 is_pub,
@@ -456,13 +454,13 @@ impl Generator {
         let parent_path = segments[..segments.len() - 1].join(".");
         let symbol_name = segments.last().unwrap().to_string();
 
-        let parent_source =
-            self.module_provider
-                .load_module(&parent_path)
-                .ok_or_else(|| SemanticError::ImportError {
-                    module_path: parent_path.clone(),
-                    pos: SourcePos { line: 0, col: 0 },
-                })?;
+        let parent_source = self
+            .module_provider
+            .load_module(&parent_path)
+            .ok_or_else(|| SemanticError::ImportError {
+                module_path: parent_path.clone(),
+                pos: SourcePos { line: 0, col: 0 },
+            })?;
 
         if !self.imported_modules.contains_key(&parent_path) {
             let imported_module = self.compile_module(&parent_path, parent_source)?;
@@ -472,9 +470,10 @@ impl Generator {
 
         let imported_parent = self.imported_modules.get(&parent_path).unwrap();
         // Symbols exported from parent: children of root
-        let root = imported_parent.symbols.get(0).ok_or_else(|| {
-            SemanticError::Other(format!("Invalid module root: {}", parent_path))
-        })?;
+        let root = imported_parent
+            .symbols
+            .get(0)
+            .ok_or_else(|| SemanticError::Other(format!("Invalid module root: {}", parent_path)))?;
         if let Some(sym_id) = root.children.get(&symbol_name) {
             if let Some(sym) = imported_parent.symbols.get(*sym_id as usize) {
                 let new_symbol = Symbol::new(

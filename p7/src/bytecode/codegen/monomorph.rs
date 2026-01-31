@@ -141,12 +141,7 @@ impl Generator {
         };
 
         // Validate number of type arguments matches type parameters
-        Self::validate_type_arg_count(
-            base_enum.type_parameters.len(),
-            type_args.len(),
-            line,
-            col,
-        )?;
+        Self::validate_type_arg_count(base_enum.type_parameters.len(), type_args.len(), line, col)?;
 
         // If the enum has no type parameters, just return it as-is
         if base_enum.type_parameters.is_empty() {
@@ -260,12 +255,7 @@ impl Generator {
         let base_func = self.symbol_table.get_function(base_func_id).clone();
 
         // Validate number of type arguments matches type parameters
-        Self::validate_type_arg_count(
-            base_func.type_parameters.len(),
-            type_args.len(),
-            line,
-            col,
-        )?;
+        Self::validate_type_arg_count(base_func.type_parameters.len(), type_args.len(), line, col)?;
 
         // If the function has no type parameters, just return it as-is
         if base_func.type_parameters.is_empty() {
