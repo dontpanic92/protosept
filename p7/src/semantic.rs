@@ -386,6 +386,24 @@ impl SymbolTable {
         self.symbols.get(symbol_id as usize)
     }
 
+    /// Find the symbol representing a type_id within this symbol table, matching qualified name to avoid collisions.
+    pub fn find_symbol_for_type(&self, type_id: TypeId) -> Option<SymbolId> {
+        let type_def = self.types.get(type_id as usize)?;
+        let target_qualified_name = match type_def {
+            TypeDefinition::Struct(s) => &s.qualified_name,
+            TypeDefinition::Enum(e) => &e.qualified_name,
+            TypeDefinition::Proto(p) => &p.qualified_name,
+        };
+        self.symbols.iter().enumerate().find_map(|(i, s)| {
+            if let SymbolKind::Type(tid) = s.kind {
+                if tid == type_id && &s.qualified_name == target_qualified_name {
+                    return Some(i as SymbolId);
+                }
+            }
+            None
+        })
+    }
+
     pub fn to_primitive_type(name: &str) -> Option<Type> {
         match name {
             "int" => Some(Type::Primitive(PrimitiveType::Int)),

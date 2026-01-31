@@ -896,49 +896,26 @@ impl Generator {
             // Resolve the type symbol for method lookup
             // For primitive types like string, look up the primitive type symbol
             // For struct types, look up the struct symbol
-            let type_symbol_id = if let Type::Reference(boxed) = &object_ty {
-                match boxed.as_ref() {
-                    Type::Struct(id) => {
-                        // Find the struct symbol corresponding to the TypeId
-                        self.symbol_table
-                            .symbols
-                            .iter()
-                            .enumerate()
-                            .find(|(_, s)| match &s.kind {
-                                SymbolKind::Type(type_id) => {
-                                    matches!(self.symbol_table.types.get(*type_id as usize), Some(TypeDefinition::Struct(_))) && *type_id == *id
-                                }
-                                _ => false,
-                            })
-                            .map(|(i, _)| i as u32)
-                    }
+            let type_symbol_id = match &object_ty {
+                Type::Reference(inner) => match inner.as_ref() {
+                    Type::Struct(id) => self.symbol_table.find_symbol_for_type(*id),
                     _ => None,
+                },
+                Type::Struct(id) => self.symbol_table.find_symbol_for_type(*id),
+                Type::Primitive(prim_ty) => {
+                    let ty = self
+                        .handle_primitive_method_call(prim_ty, field, &arguments, call_line, call_col);
+                    return ty;
                 }
-            } else if let Type::Struct(id) = &object_ty {
-                // Find the struct symbol corresponding to the TypeId
-                self.symbol_table
-                    .symbols
-                    .iter()
-                    .enumerate()
-                    .find(|(_, s)| match &s.kind {
-                        SymbolKind::Type(type_id) => {
-                            matches!(self.symbol_table.types.get(*type_id as usize), Some(TypeDefinition::Struct(_))) && *type_id == *id
-                        }
-                        _ => false,
-                    })
-                    .map(|(i, _)| i as u32)
-            } else if let Type::Primitive(prim_ty) = &object_ty {
-                let ty = self
-                    .handle_primitive_method_call(prim_ty, field, &arguments, call_line, call_col);
-                return ty;
-            } else {
-                None
+                _ => None,
             };
 
-            let symbol_id = type_symbol_id.expect(&format!(
-                "Generating method call for type failed: {:?}",
-                object_ty
-            ));
+            let symbol_id = type_symbol_id.unwrap_or_else(|| {
+                panic!(
+                    "Generating method call for type failed: {:?}",
+                    object_ty
+                )
+            });
 
             let type_symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
             let method_symbol_id = type_symbol.children.get(&field.name).cloned().ok_or(
