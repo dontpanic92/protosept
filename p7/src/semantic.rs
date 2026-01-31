@@ -24,7 +24,7 @@ pub type ModuleId = u32;
 pub enum SymbolKind {
     Constant(Constant),
     Function { func_id: FunctionId, address: u32 },
-    Type(TypeId),  // Unified for Struct, Enum, Proto
+    Type(TypeId), // Unified for Struct, Enum, Proto
     Module(ModuleId),
 }
 
@@ -354,7 +354,11 @@ impl SymbolTable {
     }
 
     pub fn new() -> Self {
-        let root = Symbol::new("$root".to_string(), "$root".to_string(), SymbolKind::Module(0));
+        let root = Symbol::new(
+            "$root".to_string(),
+            "$root".to_string(),
+            SymbolKind::Module(0),
+        );
 
         let mut module_path_to_id = HashMap::new();
         module_path_to_id.insert("$root".to_string(), 0);
@@ -498,7 +502,10 @@ impl SymbolTable {
             return *id;
         }
         let id = self.modules.len() as ModuleId;
-        self.modules.push(ModuleInfo { path: path.clone(), root_symbol_id });
+        self.modules.push(ModuleInfo {
+            path: path.clone(),
+            root_symbol_id,
+        });
         self.module_path_to_id.insert(path, id);
         id
     }

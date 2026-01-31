@@ -1,10 +1,8 @@
-use core::panic;
-
 use crate::errors::SemanticError;
 use crate::errors::SourcePos;
 use crate::{
-    ast::{Expression, Identifier, Pattern, Statement},
-    semantic::{PrimitiveType, Symbol, SymbolKind, Type, TypeId},
+    ast::{Expression, Identifier, Pattern},
+    semantic::{PrimitiveType, Type},
 };
 
 use super::codegen::{Generator, SaResult};

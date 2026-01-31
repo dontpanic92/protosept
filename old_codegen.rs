@@ -39,8 +39,6 @@ pub struct Generator {
         Vec<(u32, FunctionId, Vec<Statement>, Vec<String>, Vec<Type>)>, // (symbol_id, func_id, body, param_names, params)
     pub(super) module_provider: Box<dyn crate::ModuleProvider>,
     pub(super) imported_modules: std::collections::HashMap<String, Module>,
-    pub(super) compiling_modules: std::collections::HashSet<String>,
-    pub(super) current_module_path: String,
     // Track which variables have been moved (by their index in local scope)
     pub(super) moved_variables: std::collections::HashSet<u32>,
     // Stack of loop contexts for nested loops
@@ -53,13 +51,6 @@ pub struct Generator {
 }
 
 impl Generator {
-    /// Resolve a symbol exported from an imported module by name
-    fn resolve_module_member<'a>(&'a self, module_path: &str, member: &str) -> Option<&'a crate::semantic::Symbol> {
-        let module = self.imported_modules.get(module_path)?;
-        let root = module.symbols.get(0)?;
-        let child_id = root.children.get(member)?;
-        module.symbols.get(*child_id as usize)
-    }
     pub fn new(module_provider: Box<dyn crate::ModuleProvider>) -> Self {
         Generator {
             builder: ByteCodeBuilder::new(),
@@ -68,8 +59,6 @@ impl Generator {
             pending_monomorphizations: Vec::new(),
             module_provider,
             imported_modules: std::collections::HashMap::new(),
-            compiling_modules: std::collections::HashSet::new(),
-            current_module_path: "$root".to_string(),
             moved_variables: std::collections::HashSet::new(),
             loop_context_stack: Vec::new(),
             string_constants: Vec::new(),
@@ -150,7 +139,7 @@ impl Generator {
 
         // Load the builtin module
         if let Some(source) = self.module_provider.load_module(MODULE_PATH) {
-            match self.compile_module(MODULE_PATH, source) {
+            match self.compile_module(source) {
                 Ok(module) => {
                     // Store the compiled module
                     self.imported_modules
@@ -169,13 +158,7 @@ impl Generator {
     }
 
     /// Helper method to compile an imported module
-    pub(super) fn compile_module(&mut self, module_path: &str, source: String) -> SaResult<Module> {
-        // Cycle detection
-        if self.compiling_modules.contains(module_path) {
-            return Err(SemanticError::Other(format!("Cyclic import detected: {}", module_path)));
-        }
-        self.compiling_modules.insert(module_path.to_string());
-
+    pub(super) fn compile_module(&self, source: String) -> SaResult<Module> {
         // Parse the module source
         let mut lexer = crate::lexer::Lexer::new(source);
         let mut tokens = vec![];
@@ -194,7 +177,6 @@ impl Generator {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("DEBUG compile_module: parse error = {:?}", e);
-                self.compiling_modules.remove(module_path);
                 return Err(SemanticError::Other(format!(
                     "Parse error in imported module: {:?}",
                     e
@@ -203,39 +185,26 @@ impl Generator {
         };
 
         // Create a new generator for the imported module with a cloned provider
-        let mut module_gen = Generator::new_for_module(self.module_provider.clone_boxed(), module_path.to_string());
+        let mut module_gen = Generator::new_for_module(self.module_provider.clone_boxed());
         let result = module_gen.generate(statements);
-        self.compiling_modules.remove(module_path);
         result
     }
 
     /// Create a new generator for compiling imported modules (skips builtin preload to avoid recursion)
-    fn new_for_module(module_provider: Box<dyn crate::ModuleProvider>, module_path: String) -> Self {
-        let mut generator = Generator {
+    fn new_for_module(module_provider: Box<dyn crate::ModuleProvider>) -> Self {
+        Generator {
             builder: ByteCodeBuilder::new(),
             symbol_table: SymbolTable::new(),
             local_scope: None,
             pending_monomorphizations: Vec::new(),
             module_provider,
             imported_modules: std::collections::HashMap::new(),
-            compiling_modules: std::collections::HashSet::new(),
-            current_module_path: module_path.clone(),
             moved_variables: std::collections::HashSet::new(),
             loop_context_stack: Vec::new(),
             string_constants: Vec::new(),
             current_self_type: None,
             is_compiling_builtin: true, // Skip builtin preload to avoid infinite recursion
-        };
-        // Override root module metadata with this module_path
-        if let Some(root) = generator.symbol_table.symbols.get_mut(0) {
-            root.name = module_path.clone();
-            root.qualified_name = module_path.clone();
-            root.kind = crate::semantic::SymbolKind::Module(0);
         }
-        if let Some(root_info) = generator.symbol_table.modules.get_mut(0) {
-            root_info.path = module_path.clone();
-        }
-        generator
     }
 
     pub(super) fn generate_block(
@@ -722,33 +691,7 @@ impl Generator {
                 }
             }
 
-            // Case 2: Module member call like `module.func(...)` (not yet supported for cross-module calls)
-            if let Expression::Identifier(ident) = object.as_ref() {
-                if let Some(sym_id) = self.symbol_table.find_symbol_in_scope(&ident.name) {
-                    if let Some(sym) = self.symbol_table.get_symbol(sym_id) {
-                        if let SymbolKind::Module(module_id) = sym.kind {
-                            if let Some(module_info) = self.symbol_table.get_module(module_id) {
-                                if self.resolve_module_member(&module_info.path, &field.name).is_some() {
-                                    return Err(SemanticError::Other(format!(
-                                        "Cross-module calls not supported yet: {}.{}",
-                                        module_info.path, field.name
-                                    )));
-                                } else {
-                                    return Err(SemanticError::FunctionNotFound {
-                                        name: format!("{}.{}", ident.name, field.name),
-                                        pos: Some(SourcePos {
-                                            line: field.line,
-                                            col: field.col,
-                                        }),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Case 3: Static method call like `Type.method(...)` (object is identifier referring to a type)
+            // Case 2: Static method call like `Type.method(...)` (object is identifier referring to a type)
             if let Expression::Identifier(ident) = object.as_ref() {
                 if let Some(ty) = self.symbol_table.find_type_in_scope(&ident.name) {
                     if let Type::Struct(_type_id) = ty {

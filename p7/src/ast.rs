@@ -54,10 +54,10 @@ pub struct Attribute {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Effect {
-    Simple(Identifier),              // e.g., throws, suspend
+    Simple(Identifier), // e.g., throws, suspend
     Parameterized {
-        name: Identifier,            // e.g., throws
-        type_param: Type,            // e.g., <ErrorType>
+        name: Identifier, // e.g., throws
+        type_param: Type, // e.g., <ErrorType>
     },
 }
 
@@ -160,32 +160,32 @@ pub enum Expression {
     Ref(Box<Expression>),
 
     BlockValue(Box<Expression>),
-    
+
     // Type cast expression (e.g., expr as box<Proto>)
     Cast {
         expression: Box<Expression>,
         target_type: Type,
     },
-    
+
     // Loop expression (infinite loop)
     Loop {
         body: Box<Expression>,
         pos: (usize, usize),
     },
-    
+
     // While expression (conditional loop)
     While {
         condition: Box<Expression>,
         body: Box<Expression>,
         pos: (usize, usize),
     },
-    
+
     // Break expression (with optional value for future use)
     Break {
         value: Option<Box<Expression>>,
         pos: (usize, usize),
     },
-    
+
     // Continue expression
     Continue {
         pos: (usize, usize),
@@ -282,7 +282,10 @@ impl Expression {
                     .join(", ");
                 format!("{}<{}>", base.name, args)
             }
-            Expression::Cast { expression, target_type } => {
+            Expression::Cast {
+                expression,
+                target_type,
+            } => {
                 format!("{} as {}", expression.get_name(), target_type.get_name())
             }
             Expression::Loop { .. } => "loop".to_string(),

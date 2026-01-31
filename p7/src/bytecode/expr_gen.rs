@@ -1,11 +1,11 @@
+use crate::errors::SemanticError;
 use crate::errors::SourcePos;
 use crate::{
-    ast::{Expression},
+    ast::Expression,
     bytecode::Instruction,
     lexer::TokenType,
     semantic::{PrimitiveType, Type, TypeDefinition},
 };
-use crate::errors::SemanticError;
 
 use super::codegen::{Generator, LoopContext, SaResult};
 
@@ -22,11 +22,11 @@ impl Generator {
                         return Ok(self_type.clone());
                     } else {
                         return Err(SemanticError::Other(
-                            "Self can only be used inside methods".to_string()
+                            "Self can only be used inside methods".to_string(),
                         ));
                     }
                 }
-                
+
                 if let Some(var_id) = self
                     .local_scope
                     .as_mut()
@@ -85,14 +85,15 @@ impl Generator {
             }
             Expression::StringLiteral(value) => {
                 // Add string to the constant pool if not already present
-                let string_index = if let Some(idx) = self.string_constants.iter().position(|s| s == &value) {
-                    idx as u32
-                } else {
-                    let idx = self.string_constants.len() as u32;
-                    self.string_constants.push(value.clone());
-                    idx
-                };
-                
+                let string_index =
+                    if let Some(idx) = self.string_constants.iter().position(|s| s == &value) {
+                        idx as u32
+                    } else {
+                        let idx = self.string_constants.len() as u32;
+                        self.string_constants.push(value.clone());
+                        idx
+                    };
+
                 // Emit instruction to load string constant
                 self.builder.lds(string_index);
                 Ok(Type::Primitive(PrimitiveType::String))
@@ -125,12 +126,12 @@ impl Generator {
                                     self.builder.box_deref();
                                     Ok(*inner)
                                 }
-                                _ => {
-                                    Err(SemanticError::Other(format!(
-                                        "Cannot dereference box<{}> - only primitive types are supported at line {} column {}",
-                                        inner.to_string(), operator.line, operator.col
-                                    )))
-                                }
+                                _ => Err(SemanticError::Other(format!(
+                                    "Cannot dereference box<{}> - only primitive types are supported at line {} column {}",
+                                    inner.to_string(),
+                                    operator.line,
+                                    operator.col
+                                ))),
                             }
                         } else {
                             Err(SemanticError::TypeMismatch {
@@ -149,7 +150,7 @@ impl Generator {
             Expression::Ref(expr) => {
                 // `ref(place)` produces a `ref<T>` typed value (view).
                 // The place expression must be an addressable location.
-                
+
                 // Special case: ref(*b) where b is a box
                 // According to spec, ref(*b) is allowed for ANY T, including non-Copy types
                 if let Expression::Unary { operator, right } = expr.as_ref() {
@@ -163,17 +164,15 @@ impl Generator {
                         }
                     }
                 }
-                
+
                 // Default case: evaluate the expression and wrap in Reference
                 let ty = self.generate_expression((*expr).clone())?;
-                
+
                 // Check that we're not creating a ref of ref
                 if matches!(ty, Type::Reference(_)) {
-                    return Err(SemanticError::Other(format!(
-                        "Cannot take ref of ref"
-                    )));
+                    return Err(SemanticError::Other(format!("Cannot take ref of ref")));
                 }
-                
+
                 Ok(Type::Reference(Box::new(ty)))
             }
             Expression::Binary {
@@ -195,8 +194,9 @@ impl Generator {
                                 .unwrap()
                                 .find_variable(&identifier.name)
                             {
-                                let lhs_ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
-                                
+                                let lhs_ty =
+                                    self.local_scope.as_ref().unwrap().get_variable_type(var_id);
+
                                 // `ref` is read-only: disallow assignment to ref locals.
                                 if matches!(lhs_ty, Type::Reference(_)) {
                                     return Err(SemanticError::Other(format!(
@@ -204,20 +204,32 @@ impl Generator {
                                         identifier.name
                                     )));
                                 }
-                                
+
                                 // Check if variable is mutable (var vs let)
-                                if !self.local_scope.as_ref().unwrap().is_variable_mutable(var_id) {
+                                if !self
+                                    .local_scope
+                                    .as_ref()
+                                    .unwrap()
+                                    .is_variable_mutable(var_id)
+                                {
                                     return Err(SemanticError::Other(format!(
                                         "Cannot assign to immutable variable '{}' (use 'var' instead of 'let')",
                                         identifier.name
                                     )));
                                 }
-                                
+
                                 // Check type compatibility
                                 if !self.types_compatible(&rhs_ty, &lhs_ty) {
                                     return Err(SemanticError::TypeMismatch {
-                                        lhs: format!("variable '{}' has type {}", identifier.name, lhs_ty.to_string()),
-                                        rhs: format!("assigned value has type {}", rhs_ty.to_string()),
+                                        lhs: format!(
+                                            "variable '{}' has type {}",
+                                            identifier.name,
+                                            lhs_ty.to_string()
+                                        ),
+                                        rhs: format!(
+                                            "assigned value has type {}",
+                                            rhs_ty.to_string()
+                                        ),
                                         pos: Some(SourcePos {
                                             line: identifier.line,
                                             col: identifier.col,
@@ -233,8 +245,9 @@ impl Generator {
                                 .unwrap()
                                 .find_param(&identifier.name)
                             {
-                                let lhs_ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
-                                
+                                let lhs_ty =
+                                    self.local_scope.as_ref().unwrap().get_param_type(param_id);
+
                                 // `ref` is read-only: disallow assignment to ref parameters.
                                 if matches!(lhs_ty, Type::Reference(_)) {
                                     return Err(SemanticError::Other(format!(
@@ -242,7 +255,7 @@ impl Generator {
                                         identifier.name
                                     )));
                                 }
-                                
+
                                 // Parameters are immutable
                                 return Err(SemanticError::Other(format!(
                                     "Cannot assign to immutable parameter '{}' (parameters are always immutable)",
@@ -311,15 +324,22 @@ impl Generator {
                                     // Check type compatibility
                                     if !self.types_compatible(&rhs_ty, ftype) {
                                         return Err(SemanticError::TypeMismatch {
-                                            lhs: format!("field '{}' has type {}", field.name, ftype.to_string()),
-                                            rhs: format!("assigned value has type {}", rhs_ty.to_string()),
+                                            lhs: format!(
+                                                "field '{}' has type {}",
+                                                field.name,
+                                                ftype.to_string()
+                                            ),
+                                            rhs: format!(
+                                                "assigned value has type {}",
+                                                rhs_ty.to_string()
+                                            ),
                                             pos: Some(SourcePos {
                                                 line: field.line,
                                                 col: field.col,
                                             }),
                                         });
                                     }
-                                    
+
                                     // Stack is now [object][value], as required by stfield
                                     self.builder.stfield(idx as u32);
                                     return Ok(Type::Primitive(PrimitiveType::Unit));
@@ -330,10 +350,7 @@ impl Generator {
                                             object.get_name(),
                                             struct_def.qualified_name
                                         ),
-                                        rhs: format!(
-                                            "Unknown field '.{}' on struct",
-                                            field.name
-                                        ),
+                                        rhs: format!("Unknown field '.{}' on struct", field.name),
                                         pos: Some(SourcePos {
                                             line: field.line,
                                             col: field.col,
@@ -463,51 +480,53 @@ impl Generator {
             Expression::FunctionCall(call) => self.generate_function_call(call),
             Expression::FieldAccess { object, field } => {
                 let object_name = object.get_name();
-                
+
                 // First, check if object is a GenericInstantiation (e.g., Option<int>.Some)
-                let (object_ty, is_static_access) = if let Expression::GenericInstantiation { base, type_args } = object.as_ref() {
-                    // This is a generic type access like Option<int>.Some
-                    // Try to find the base type
-                    if let Some(_base_ty) = self.symbol_table.find_type_in_scope(&base.name) {
-                        // Resolve the generic type to its monomorphized version
-                        let parsed_type = crate::ast::Type::Generic {
-                            base: base.clone(),
-                            type_args: type_args.clone(),
-                        };
-                        let concrete_ty = self.get_semantic_type(&parsed_type)?;
-                        (concrete_ty, true) // It's a static access on a generic type
-                    } else {
-                        return Err(SemanticError::TypeNotFound {
-                            name: base.name.clone(),
-                            pos: Some(SourcePos {
-                                line: base.line,
-                                col: base.col,
-                            }),
-                        });
-                    }
-                } else {
-                    // Check if object is a type identifier (for static access)
-                    let (object_ty, is_static_access) =
-                        if let Expression::Identifier(ref identifier) = *object {
-                            if let Some(ty) = self.symbol_table.find_type_in_scope(&identifier.name) {
-                                (ty, true) // It's a type (static) access
-                            } else {
-                                // Not a type, so it must be a variable/expression
-                                (self.generate_expression(*object)?, false)
-                            }
+                let (object_ty, is_static_access) =
+                    if let Expression::GenericInstantiation { base, type_args } = object.as_ref() {
+                        // This is a generic type access like Option<int>.Some
+                        // Try to find the base type
+                        if let Some(_base_ty) = self.symbol_table.find_type_in_scope(&base.name) {
+                            // Resolve the generic type to its monomorphized version
+                            let parsed_type = crate::ast::Type::Generic {
+                                base: base.clone(),
+                                type_args: type_args.clone(),
+                            };
+                            let concrete_ty = self.get_semantic_type(&parsed_type)?;
+                            (concrete_ty, true) // It's a static access on a generic type
                         } else {
-                            // Not an identifier, so definitely an expression
-                            (self.generate_expression(*object)?, false)
-                        };
-                    (object_ty, is_static_access)
-                };
+                            return Err(SemanticError::TypeNotFound {
+                                name: base.name.clone(),
+                                pos: Some(SourcePos {
+                                    line: base.line,
+                                    col: base.col,
+                                }),
+                            });
+                        }
+                    } else {
+                        // Check if object is a type identifier (for static access)
+                        let (object_ty, is_static_access) =
+                            if let Expression::Identifier(ref identifier) = *object {
+                                if let Some(ty) =
+                                    self.symbol_table.find_type_in_scope(&identifier.name)
+                                {
+                                    (ty, true) // It's a type (static) access
+                                } else {
+                                    // Not a type, so it must be a variable/expression
+                                    (self.generate_expression(*object)?, false)
+                                }
+                            } else {
+                                // Not an identifier, so definitely an expression
+                                (self.generate_expression(*object)?, false)
+                            };
+                        (object_ty, is_static_access)
+                    };
 
                 let object_ty = match object_ty {
                     Type::Reference(inner) => *inner,
-                    Type::BoxType(inner) => *inner,  // Auto-deref boxes for field access
+                    Type::BoxType(inner) => *inner, // Auto-deref boxes for field access
                     other => other,
                 };
-
 
                 match object_ty {
                     Type::Enum(type_id) => {
@@ -515,10 +534,12 @@ impl Generator {
                         if let TypeDefinition::Enum(enum_def) = udt {
                             if is_static_access {
                                 // Find the variant by name
-                                let variant_opt = enum_def.variants.iter()
+                                let variant_opt = enum_def
+                                    .variants
+                                    .iter()
                                     .enumerate()
                                     .find(|(_, (name, _))| name == &field.name);
-                                
+
                                 if let Some((variant_index, (_, field_types))) = variant_opt {
                                     // Check if this is a unit variant (no fields)
                                     if field_types.is_empty() {
@@ -531,7 +552,10 @@ impl Generator {
                                         // If we reach here, it means someone wrote EnumName.Variant without calling it
                                         return Err(SemanticError::TypeMismatch {
                                             lhs: format!("Enum '{}'", enum_def.qualified_name),
-                                            rhs: format!("Payload variant '{}' requires arguments", field.name),
+                                            rhs: format!(
+                                                "Payload variant '{}' requires arguments",
+                                                field.name
+                                            ),
                                             pos: Some(SourcePos {
                                                 line: field.line,
                                                 col: field.col,
@@ -677,12 +701,15 @@ impl Generator {
                 let ty = self.generate_expression(*expression)?;
                 Ok(ty)
             }
-            Expression::Cast { expression, target_type } => {
+            Expression::Cast {
+                expression,
+                target_type,
+            } => {
                 // Handle cast expressions: expr as box<Proto> or expr as ref<Proto>
                 let (line, col) = expression.get_pos();
                 let expr_ty = self.generate_expression(*expression)?;
                 let target_ty = self.get_semantic_type(&target_type)?;
-                
+
                 // Support both box<T> -> box<P> and ref<T> -> ref<P> casts
                 match (&expr_ty, &target_ty) {
                     (Type::BoxType(inner_ty), Type::BoxType(target_inner_ty)) => {
@@ -690,14 +717,19 @@ impl Generator {
                         match (inner_ty.as_ref(), target_inner_ty.as_ref()) {
                             (Type::Struct(struct_id), Type::Proto(proto_id)) => {
                                 // Verify that the struct satisfies the proto
-                                let struct_def = match &self.symbol_table.types[*struct_id as usize] {
+                                let struct_def = match &self.symbol_table.types[*struct_id as usize]
+                                {
                                     TypeDefinition::Struct(s) => s,
-                                    _ => return Err(SemanticError::Other("Expected struct type".to_string())),
+                                    _ => {
+                                        return Err(SemanticError::Other(
+                                            "Expected struct type".to_string(),
+                                        ));
+                                    }
                                 };
-                                
+
                                 // Check if struct conforms to proto (either declared or structural)
                                 let conforms = struct_def.conforming_to.contains(proto_id);
-                                
+
                                 if !conforms {
                                     // Check structural conformance
                                     self.check_struct_conformance(
@@ -707,22 +739,28 @@ impl Generator {
                                         col,
                                     )?;
                                 }
-                                
+
                                 // Generate BoxToProto instruction
-                                self.builder.add_instruction(Instruction::BoxToProto(*struct_id, *proto_id));
-                                
+                                self.builder.add_instruction(Instruction::BoxToProto(
+                                    *struct_id, *proto_id,
+                                ));
+
                                 return Ok(target_ty);
                             }
                             (Type::Enum(enum_id), Type::Proto(proto_id)) => {
                                 // Verify that the enum satisfies the proto
                                 let enum_def = match &self.symbol_table.types[*enum_id as usize] {
                                     TypeDefinition::Enum(e) => e,
-                                    _ => return Err(SemanticError::Other("Expected enum type".to_string())),
+                                    _ => {
+                                        return Err(SemanticError::Other(
+                                            "Expected enum type".to_string(),
+                                        ));
+                                    }
                                 };
-                                
+
                                 // Check if enum conforms to proto (either declared or structural)
                                 let conforms = enum_def.conforming_to.contains(proto_id);
-                                
+
                                 if !conforms {
                                     // Check structural conformance
                                     self.check_struct_conformance(
@@ -732,16 +770,20 @@ impl Generator {
                                         col,
                                     )?;
                                 }
-                                
+
                                 // Generate BoxToProto instruction
-                                self.builder.add_instruction(Instruction::BoxToProto(*enum_id, *proto_id));
-                                
+                                self.builder
+                                    .add_instruction(Instruction::BoxToProto(*enum_id, *proto_id));
+
                                 return Ok(target_ty);
                             }
                             _ => {
                                 return Err(SemanticError::TypeMismatch {
                                     lhs: format!("box<{}>", self.type_to_string(&**inner_ty)),
-                                    rhs: format!("box<{}>", self.type_to_string(&**target_inner_ty)),
+                                    rhs: format!(
+                                        "box<{}>",
+                                        self.type_to_string(&**target_inner_ty)
+                                    ),
                                     pos: Some(SourcePos { line, col }),
                                 });
                             }
@@ -752,14 +794,19 @@ impl Generator {
                         match (inner_ty.as_ref(), target_inner_ty.as_ref()) {
                             (Type::Struct(struct_id), Type::Proto(proto_id)) => {
                                 // Verify that the struct satisfies the proto
-                                let struct_def = match &self.symbol_table.types[*struct_id as usize] {
+                                let struct_def = match &self.symbol_table.types[*struct_id as usize]
+                                {
                                     TypeDefinition::Struct(s) => s,
-                                    _ => return Err(SemanticError::Other("Expected struct type".to_string())),
+                                    _ => {
+                                        return Err(SemanticError::Other(
+                                            "Expected struct type".to_string(),
+                                        ));
+                                    }
                                 };
-                                
+
                                 // Check if struct conforms to proto (either declared or structural)
                                 let conforms = struct_def.conforming_to.contains(proto_id);
-                                
+
                                 if !conforms {
                                     // Check structural conformance
                                     self.check_struct_conformance(
@@ -769,22 +816,28 @@ impl Generator {
                                         col,
                                     )?;
                                 }
-                                
+
                                 // Generate RefToProto instruction
-                                self.builder.add_instruction(Instruction::RefToProto(*struct_id, *proto_id));
-                                
+                                self.builder.add_instruction(Instruction::RefToProto(
+                                    *struct_id, *proto_id,
+                                ));
+
                                 return Ok(target_ty);
                             }
                             (Type::Enum(enum_id), Type::Proto(proto_id)) => {
                                 // Verify that the enum satisfies the proto
                                 let enum_def = match &self.symbol_table.types[*enum_id as usize] {
                                     TypeDefinition::Enum(e) => e,
-                                    _ => return Err(SemanticError::Other("Expected enum type".to_string())),
+                                    _ => {
+                                        return Err(SemanticError::Other(
+                                            "Expected enum type".to_string(),
+                                        ));
+                                    }
                                 };
-                                
+
                                 // Check if enum conforms to proto (either declared or structural)
                                 let conforms = enum_def.conforming_to.contains(proto_id);
-                                
+
                                 if !conforms {
                                     // Check structural conformance
                                     self.check_struct_conformance(
@@ -794,16 +847,20 @@ impl Generator {
                                         col,
                                     )?;
                                 }
-                                
+
                                 // Generate RefToProto instruction
-                                self.builder.add_instruction(Instruction::RefToProto(*enum_id, *proto_id));
-                                
+                                self.builder
+                                    .add_instruction(Instruction::RefToProto(*enum_id, *proto_id));
+
                                 return Ok(target_ty);
                             }
                             _ => {
                                 return Err(SemanticError::TypeMismatch {
                                     lhs: format!("ref<{}>", self.type_to_string(&**inner_ty)),
-                                    rhs: format!("ref<{}>", self.type_to_string(&**target_inner_ty)),
+                                    rhs: format!(
+                                        "ref<{}>",
+                                        self.type_to_string(&**target_inner_ty)
+                                    ),
                                     pos: Some(SourcePos { line, col }),
                                 });
                             }
@@ -838,35 +895,39 @@ impl Generator {
                 //   loop_start:
                 //     <body>
                 //     jmp loop_start
-                
+
                 let loop_start = self.builder.next_address();
-                
+
                 // Push new loop context onto stack
                 self.loop_context_stack.push(LoopContext {
                     break_patches: Vec::new(),
                     continue_target: loop_start,
                 });
-                
+
                 self.generate_expression(*body)?;
-                
+
                 // Jump back to start of loop
                 self.builder.jmp(loop_start);
-                
+
                 // Get the end address for break statements to jump to
                 let loop_end = self.builder.next_address();
-                
+
                 // Pop loop context and patch all break statements
                 if let Some(ctx) = self.loop_context_stack.pop() {
                     for break_addr in &ctx.break_patches {
                         self.builder.patch_jump_address(*break_addr, loop_end);
                     }
                 }
-                
+
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
-            Expression::While { condition, body, pos } => {
+            Expression::While {
+                condition,
+                body,
+                pos,
+            } => {
                 // while condition { body }
-                // 
+                //
                 // According to spec §9.5, while semantically desugars to:
                 //   loop { if condition { body } else { break; } }
                 //
@@ -878,15 +939,15 @@ impl Generator {
                 //     <body>
                 //     jmp loop_start
                 //   loop_end:
-                
+
                 let loop_start = self.builder.next_address();
-                
+
                 // Push new loop context onto stack
                 self.loop_context_stack.push(LoopContext {
                     break_patches: Vec::new(),
                     continue_target: loop_start,
                 });
-                
+
                 // Evaluate condition
                 let condition_type = self.generate_expression(*condition)?;
                 if condition_type != Type::Primitive(PrimitiveType::Bool) {
@@ -899,44 +960,45 @@ impl Generator {
                         }),
                     });
                 }
-                
+
                 // If condition is false (not true), jump to end
                 self.builder.not();
                 let exit_jump_placeholder = self.builder.next_address();
                 self.builder.jif(0);
-                
+
                 // Generate body
                 self.generate_expression(*body)?;
-                
+
                 // Jump back to start of loop
                 self.builder.jmp(loop_start);
-                
+
                 // Get the end address
                 let loop_end = self.builder.next_address();
-                
+
                 // Patch the exit jump
-                self.builder.patch_jump_address(exit_jump_placeholder, loop_end);
-                
+                self.builder
+                    .patch_jump_address(exit_jump_placeholder, loop_end);
+
                 // Pop loop context and patch all break statements
                 if let Some(ctx) = self.loop_context_stack.pop() {
                     for break_addr in &ctx.break_patches {
                         self.builder.patch_jump_address(*break_addr, loop_end);
                     }
                 }
-                
+
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
             Expression::Break { value, pos } => {
                 // break or break expr;
                 // For now, we only support break without a value (break;)
                 // which exits the current loop
-                
+
                 if value.is_some() {
                     return Err(SemanticError::Other(
                         "break with value is not yet supported".to_string(),
                     ));
                 }
-                
+
                 // Check if we're in a loop
                 if self.loop_context_stack.is_empty() {
                     return Err(SemanticError::Other(format!(
@@ -944,22 +1006,22 @@ impl Generator {
                         pos.0, pos.1
                     )));
                 }
-                
+
                 // Record this break location to patch later
                 let break_jump_addr = self.builder.next_address();
                 self.builder.jmp(0); // Will be patched to loop end
-                
+
                 // Add to the current loop context's break patches
                 if let Some(ctx) = self.loop_context_stack.last_mut() {
                     ctx.break_patches.push(break_jump_addr);
                 }
-                
+
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
             Expression::Continue { pos } => {
                 // continue;
                 // Jumps to the start of the current loop (re-evaluate condition for while)
-                
+
                 // Check if we're in a loop and get the continue target
                 let continue_target = if let Some(ctx) = self.loop_context_stack.last() {
                     ctx.continue_target
@@ -969,10 +1031,10 @@ impl Generator {
                         pos.0, pos.1
                     )));
                 };
-                
+
                 // Jump to loop start
                 self.builder.jmp(continue_target);
-                
+
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
         }

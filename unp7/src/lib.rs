@@ -152,14 +152,15 @@ fn collect_functions(module: &Module) -> Vec<FunctionMeta> {
 
     for (symbol_id, symbol) in module.symbols.iter().enumerate() {
         if let SymbolKind::Function { func_id, address } = symbol.kind {
-            let (param_names, param_types, return_type) = match module.functions.get(func_id as usize) {
-                Some(func) => (
-                    func.param_names.clone(),
-                    func.params.clone(),
-                    Some(func.return_type.clone()),
-                ),
-                _ => (Vec::new(), Vec::new(), None),
-            };
+            let (param_names, param_types, return_type) =
+                match module.functions.get(func_id as usize) {
+                    Some(func) => (
+                        func.param_names.clone(),
+                        func.params.clone(),
+                        Some(func.return_type.clone()),
+                    ),
+                    _ => (Vec::new(), Vec::new(), None),
+                };
 
             functions.push(FunctionMeta {
                 symbol_id: symbol_id as u32,
@@ -248,11 +249,20 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
         Instruction::NewStruct(count) => format!("{}  newstruct {}", offset_hex, count),
         Instruction::BoxAlloc => format!("{}  box_alloc", offset_hex),
         Instruction::BoxDeref => format!("{}  box_deref", offset_hex),
-        Instruction::BoxToProto(struct_id, proto_id) => format!("{}  box_to_proto {} {}", offset_hex, struct_id, proto_id),
-        Instruction::CallProtoMethod(proto_id, method_hash) => format!("{}  call_proto_method {} {:#x}", offset_hex, proto_id, method_hash),
-        Instruction::RefToProto(struct_id, proto_id) => format!("{}  ref_to_proto {} {}", offset_hex, struct_id, proto_id),
+        Instruction::BoxToProto(struct_id, proto_id) => {
+            format!("{}  box_to_proto {} {}", offset_hex, struct_id, proto_id)
+        }
+        Instruction::CallProtoMethod(proto_id, method_hash) => format!(
+            "{}  call_proto_method {} {:#x}",
+            offset_hex, proto_id, method_hash
+        ),
+        Instruction::RefToProto(struct_id, proto_id) => {
+            format!("{}  ref_to_proto {} {}", offset_hex, struct_id, proto_id)
+        }
         Instruction::Lds(string_index) => format!("{}  lds {}", offset_hex, string_index),
-        Instruction::InvokeHost(string_index) => format!("{}  invoke_host {}", offset_hex, string_index),
+        Instruction::InvokeHost(string_index) => {
+            format!("{}  invoke_host {}", offset_hex, string_index)
+        }
     }
 }
 

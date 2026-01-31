@@ -1,0 +1,21 @@
+import test.test;
+
+struct Counter(val: int) {
+    fn inc(self, by: int = 1) -> Counter {
+        Counter(self.val + by)
+    }
+
+    fn get(self) -> int {
+        self.val
+    }
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_method_default() -> int {
+    Counter(2).inc().get()
+}
+
+@test(expected_type = "int", expected_value = "10")
+fn test_method_positional_arg() -> int {
+    Counter(2).inc(8).get()
+}

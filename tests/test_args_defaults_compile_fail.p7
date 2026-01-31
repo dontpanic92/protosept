@@ -1,0 +1,10 @@
+// compile_fail
+
+fn f(a: int, b: int = 5) -> int {
+    a + b
+}
+
+fn bad() -> int {
+    // mixing named and positional should fail
+    f(1, b: 2, 3)
+}

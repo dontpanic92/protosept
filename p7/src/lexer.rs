@@ -221,7 +221,7 @@ impl Lexer {
 
         let mut result = String::new();
         self.read_char(); // Skip opening "
-        
+
         while let Some(c) = self.peek_char() {
             if c == '"' {
                 break;
@@ -266,7 +266,7 @@ impl Lexer {
                             ));
                         }
                         self.read_char(); // Skip '{'
-                        
+
                         let mut hex_digits = String::new();
                         while let Some(c) = self.peek_char() {
                             if c == '}' {
@@ -281,26 +281,26 @@ impl Lexer {
                             hex_digits.push(c);
                             self.read_char();
                         }
-                        
+
                         if self.peek_char() != Some('}') {
                             return Err(LexerError::UnterminatedString((self.line, self.col)));
                         }
                         self.read_char(); // Skip '}'
-                        
+
                         if hex_digits.is_empty() || hex_digits.len() > MAX_UNICODE_ESCAPE_DIGITS {
                             return Err(LexerError::InvalidUnicodeEscape(
                                 format!("\\u{{{}}}", hex_digits),
                                 (self.line, self.col),
                             ));
                         }
-                        
+
                         let code_point = u32::from_str_radix(&hex_digits, 16).map_err(|_| {
                             LexerError::InvalidUnicodeEscape(
                                 format!("\\u{{{}}}", hex_digits),
                                 (self.line, self.col),
                             )
                         })?;
-                        
+
                         // Check if it's a valid Unicode scalar (not a surrogate)
                         let ch = char::from_u32(code_point).ok_or_else(|| {
                             LexerError::InvalidUnicodeEscape(
@@ -308,7 +308,7 @@ impl Lexer {
                                 (self.line, self.col),
                             )
                         })?;
-                        
+
                         result.push(ch);
                     }
                     Some(other) => {
@@ -326,7 +326,7 @@ impl Lexer {
                 self.read_char();
             }
         }
-        
+
         if self.peek_char() != Some('"') {
             return Err(LexerError::UnterminatedString((self.line, self.col)));
         }

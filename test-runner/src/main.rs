@@ -3,11 +3,11 @@
 //!   test-file: optional path or file name (with or without .p7) under `tests/`.
 
 use p7::{
+    InMemoryModuleProvider,
     ast::{Attribute, Expression},
     errors::Proto7Error,
     interpreter::context::Data as P7Value,
     semantic::SymbolKind,
-    InMemoryModuleProvider,
 };
 use std::{env, fs, path::PathBuf};
 
@@ -213,7 +213,8 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
     }
 
     // Compile the p7 code with the module provider
-    let module = match p7::compile_with_provider(content.clone(), Box::new(module_provider.clone())) {
+    let module = match p7::compile_with_provider(content.clone(), Box::new(module_provider.clone()))
+    {
         Ok(m) => m,
         Err(e) => {
             return Ok(vec![(
@@ -236,7 +237,10 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
     let mut results = Vec::new();
     for test_case in test_cases {
         // Clone module for each test
-        let test_module = match p7::compile_with_provider(content.as_str().to_string(), Box::new(module_provider.clone())) {
+        let test_module = match p7::compile_with_provider(
+            content.as_str().to_string(),
+            Box::new(module_provider.clone()),
+        ) {
             Ok(m) => m,
             Err(e) => {
                 results.push((
@@ -268,7 +272,9 @@ fn main() -> std::io::Result<()> {
 
     let args: Vec<String> = env::args().skip(1).collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!("Usage: test-runner [test-file]\n  test-file: optional path or file name (with or without .p7) under 'tests/'");
+        println!(
+            "Usage: test-runner [test-file]\n  test-file: optional path or file name (with or without .p7) under 'tests/'"
+        );
         return Ok(());
     }
 

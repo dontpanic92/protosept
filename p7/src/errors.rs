@@ -88,7 +88,10 @@ impl fmt::Display for ParseError {
                 expected,
                 found,
                 pos,
-            } => format_error_with_pos!(&format!("Expected token: {}, found: {}", expected, found), pos),
+            } => format_error_with_pos!(
+                &format!("Expected token: {}, found: {}", expected, found),
+                pos
+            ),
             ParseError::UnexpectedEof { pos } => {
                 format_error_with_pos!("Unexpected end of file", pos)
             }
