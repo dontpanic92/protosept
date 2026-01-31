@@ -3,7 +3,7 @@ use crate::errors::SemanticError;
 use crate::errors::SourcePos;
 use crate::semantic::{PrimitiveType, SymbolKind, Type, TypeDefinition, TypeId};
 
-use super::codegen::{Generator, SaResult};
+use super::{Generator, SaResult};
 
 impl Generator {
     pub(super) fn types_compatible(&self, actual: &Type, expected: &Type) -> bool {

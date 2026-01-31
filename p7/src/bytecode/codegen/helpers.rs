@@ -5,7 +5,7 @@ use crate::{
     semantic::{PrimitiveType, Type},
 };
 
-use super::codegen::{Generator, SaResult};
+use super::{Generator, SaResult};
 
 impl Generator {
     /// Helper to add a string constant to the pool and return its index

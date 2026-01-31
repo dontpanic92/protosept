@@ -8,7 +8,7 @@ use crate::{
     },
 };
 
-use super::codegen::{Generator, SYNTHETIC_COL, SYNTHETIC_LINE, SaResult};
+use super::{Generator, SYNTHETIC_COL, SYNTHETIC_LINE, SaResult};
 
 impl Generator {
     /// Monomorphize a generic struct with concrete type arguments

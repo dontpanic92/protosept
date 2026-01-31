@@ -43,6 +43,10 @@ mod tests {
         fn load_module(&self, _module_path: &str) -> Option<String> {
             None
         }
+        
+        fn clone_boxed(&self) -> Box<dyn crate::ModuleProvider> {
+            Box::new(DummyProvider)
+        }
     }
 
     fn mk_gen() -> Generator {

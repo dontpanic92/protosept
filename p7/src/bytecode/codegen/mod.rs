@@ -18,6 +18,11 @@ mod call;
 mod enums;
 mod patterns;
 mod structs;
+mod expr_gen;
+mod stmt_gen;
+mod helpers;
+mod monomorph;
+mod type_check;
 
 use crate::errors::SemanticError;
 

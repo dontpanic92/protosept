@@ -5,7 +5,7 @@ use crate::{
     semantic::{Enum, PrimitiveType, Proto, Struct, Symbol, SymbolKind, Type, TypeDefinition},
 };
 
-use super::codegen::{Generator, SaResult};
+use super::{Generator, SaResult};
 
 impl Generator {
     pub(super) fn generate_statement(&mut self, statement: Statement) -> SaResult<Type> {

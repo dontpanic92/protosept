@@ -7,7 +7,7 @@ use crate::{
     semantic::{PrimitiveType, Type, TypeDefinition},
 };
 
-use super::codegen::{Generator, LoopContext, SaResult};
+use super::{Generator, LoopContext, SaResult};
 
 impl Generator {
     pub(super) fn generate_expression(&mut self, expression: Expression) -> SaResult<Type> {

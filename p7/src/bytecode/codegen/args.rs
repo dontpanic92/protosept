@@ -219,12 +219,15 @@ impl Generator {
 mod tests {
     use super::*;
     use crate::ast::{Expression, Identifier};
-    use crate::semantic::{PrimitiveType, Type};
 
     struct DummyProvider;
     impl crate::ModuleProvider for DummyProvider {
         fn load_module(&self, _module_path: &str) -> Option<String> {
             None
+        }
+
+        fn clone_boxed(&self) -> Box<dyn crate::ModuleProvider> {
+            Box::new(DummyProvider)
         }
     }
 

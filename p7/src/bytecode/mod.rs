@@ -1,10 +1,5 @@
 pub mod builder;
 pub mod codegen;
-mod expr_gen;
-mod helpers;
-mod monomorph;
-mod stmt_gen;
-mod type_check;
 
 use binrw::{BinRead, binrw};
 
