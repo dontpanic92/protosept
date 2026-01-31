@@ -1,3 +1,10 @@
+use crate::{
+    ast::Expression,
+    bytecode::codegen::SaResult,
+    errors::SemanticError,
+    semantic::{PrimitiveType, Type},
+};
+
 use super::Generator;
 
 #[derive(Clone)]
@@ -7,59 +14,106 @@ pub(crate) struct LoopContext {
 }
 
 impl Generator {
-    pub(super) fn push_loop_context(&mut self, continue_target: u32) {
+    pub(super) fn generate_loop(&mut self, body: Expression) -> SaResult<Type> {
+        let loop_start = self.builder.next_address();
+
         self.loop_context_stack.push(LoopContext {
             break_patches: Vec::new(),
-            continue_target,
+            continue_target: loop_start,
         });
+
+        self.generate_expression(body)?;
+
+        self.builder.jmp(loop_start);
+
+        self.finalize_loop_context();
+
+        Ok(Type::Primitive(PrimitiveType::Unit))
     }
 
-    pub(super) fn pop_loop_context_and_patch_breaks(&mut self, loop_end: u32) {
+    pub(super) fn generate_while(
+        &mut self,
+        condition: Expression,
+        body: Expression,
+        pos: (usize, usize),
+    ) -> SaResult<Type> {
+        let loop_start = self.builder.next_address();
+
+        self.loop_context_stack.push(LoopContext {
+            break_patches: Vec::new(),
+            continue_target: loop_start,
+        });
+
+        let condition_type = self.generate_expression(condition)?;
+        self.expect_bool_type(&condition_type, pos.0, pos.1)?;
+
+        self.builder.not();
+        let exit_jump_placeholder = self.builder.next_address();
+        self.builder.jif(0);
+
+        self.generate_expression(body)?;
+
+        self.builder.jmp(loop_start);
+
+        let loop_end = self.builder.next_address();
+        self.builder
+            .patch_jump_address(exit_jump_placeholder, loop_end);
+
+        self.finalize_loop_context();
+
+        Ok(Type::Primitive(PrimitiveType::Unit))
+    }
+
+    pub(super) fn generate_break(
+        &mut self,
+        value: Option<Box<Expression>>,
+        pos: (usize, usize),
+    ) -> SaResult<Type> {
+        if value.is_some() {
+            return Err(SemanticError::Other(
+                "break with value is not yet supported".to_string(),
+            ));
+        }
+
+        if self.loop_context_stack.is_empty() {
+            return Err(SemanticError::Other(format!(
+                "break statement outside of loop at line {} column {}",
+                pos.0, pos.1
+            )));
+        }
+
+        let break_jump_addr = self.builder.next_address();
+        self.builder.jmp(0);
+
+        if let Some(ctx) = self.loop_context_stack.last_mut() {
+            ctx.break_patches.push(break_jump_addr);
+        }
+
+        Ok(Type::Primitive(PrimitiveType::Unit))
+    }
+
+    pub(super) fn generate_continue(&mut self, pos: (usize, usize)) -> SaResult<Type> {
+        let continue_target = if let Some(ctx) = self.loop_context_stack.last() {
+            ctx.continue_target
+        } else {
+            return Err(SemanticError::Other(format!(
+                "continue statement outside of loop at line {} column {}",
+                pos.0, pos.1
+            )));
+        };
+
+        self.builder.jmp(continue_target);
+
+        Ok(Type::Primitive(PrimitiveType::Unit))
+    }
+
+    /// Patches break statements and cleans up loop context
+    fn finalize_loop_context(&mut self) {
+        let loop_end = self.builder.next_address();
         if let Some(ctx) = self.loop_context_stack.pop() {
             for break_addr in &ctx.break_patches {
                 self.builder.patch_jump_address(*break_addr, loop_end);
             }
         }
-    }
-
-    pub(super) fn record_break(&mut self, break_jump_addr: u32) {
-        if let Some(ctx) = self.loop_context_stack.last_mut() {
-            ctx.break_patches.push(break_jump_addr);
-        }
-    }
-
-    pub(super) fn current_continue_target(&self) -> Option<u32> {
-        self.loop_context_stack
-            .last()
-            .map(|ctx| ctx.continue_target)
-    }
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct DummyProvider;
-    impl crate::ModuleProvider for DummyProvider {
-        fn load_module(&self, _module_path: &str) -> Option<String> {
-            None
-        }
-        
-        fn clone_boxed(&self) -> Box<dyn crate::ModuleProvider> {
-            Box::new(DummyProvider)
-        }
-    }
-
-    fn mk_gen() -> Generator {
-        Generator::new(Box::new(DummyProvider))
-    }
-
-    #[test]
-    fn manages_loop_context_stack() {
-        let mut g = mk_gen();
-        g.push_loop_context(42);
-        assert_eq!(g.loop_context_stack.len(), 1);
-        g.record_break(10);
-        g.pop_loop_context_and_patch_breaks(100);
-        assert!(g.loop_context_stack.is_empty());
     }
 }
