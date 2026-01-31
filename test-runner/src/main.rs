@@ -11,7 +11,7 @@ use p7::{
 };
 use std::{env, fs, path::PathBuf};
 
-// Define the test struct module source that will be provided in-memory
+// Define the test modules that will be provided in-memory
 const TEST_MODULE_SOURCE: &str = r#"
 // Test attribute struct for marking test functions
 pub struct test(
@@ -23,6 +23,20 @@ pub struct test(
 pub struct test2(
     pub some_field: string,
 );
+"#;
+
+// Parent module with symbol `bar`
+const FOO_MODULE_SOURCE: &str = r#"
+pub fn bar() -> int {
+    return 7;
+}
+"#;
+
+// Child module `foo.bar_mod`
+const FOO_BAR_MOD_SOURCE: &str = r#"
+pub fn value() -> int {
+    return 5;
+}
 "#;
 
 #[derive(Debug)]
@@ -177,6 +191,8 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
     // The module is registered as "test" which contains symbols like "test" and "test2"
     let mut module_provider = InMemoryModuleProvider::new();
     module_provider.add_module("test".to_string(), TEST_MODULE_SOURCE.to_string());
+    module_provider.add_module("foo".to_string(), FOO_MODULE_SOURCE.to_string());
+    module_provider.add_module("foo.bar_mod".to_string(), FOO_BAR_MOD_SOURCE.to_string());
 
     // Compile-fail tests: add `// compile_fail` anywhere in the file.
     if content

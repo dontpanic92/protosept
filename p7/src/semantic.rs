@@ -17,12 +17,15 @@ pub type TypeId = u32;
 /// Unique identifier for symbols in the symbol table
 pub type SymbolId = u32;
 
+/// Unique identifier for modules in the symbol table
+pub type ModuleId = u32;
+
 #[derive(Debug, Clone)]
 pub enum SymbolKind {
     Constant(Constant),
     Function { func_id: FunctionId, address: u32 },
     Type(TypeId),  // Unified for Struct, Enum, Proto
-    Module,
+    Module(ModuleId),
 }
 
 impl SymbolKind {
@@ -314,10 +317,18 @@ pub enum TypeDefinition {
     Proto(Proto),
 }
 
+pub struct ModuleInfo {
+    pub path: String,
+    pub root_symbol_id: SymbolId,
+}
+
 pub struct SymbolTable {
     pub symbols: Vec<Symbol>,
     pub functions: Vec<Function>,
     pub types: Vec<TypeDefinition>,
+
+    pub modules: Vec<ModuleInfo>,
+    pub module_path_to_id: HashMap<String, ModuleId>,
 
     pub symbol_chain: Vec<SymbolId>,
 
@@ -343,12 +354,20 @@ impl SymbolTable {
     }
 
     pub fn new() -> Self {
-        let root = Symbol::new("$root".to_string(), "$root".to_string(), SymbolKind::Module);
+        let root = Symbol::new("$root".to_string(), "$root".to_string(), SymbolKind::Module(0));
+
+        let mut module_path_to_id = HashMap::new();
+        module_path_to_id.insert("$root".to_string(), 0);
 
         SymbolTable {
             symbols: vec![root],
             functions: Vec::new(),
             types: Vec::new(),
+            modules: vec![ModuleInfo {
+                path: "$root".to_string(),
+                root_symbol_id: 0,
+            }],
+            module_path_to_id,
             symbol_chain: vec![0],
             monomorphization_cache: HashMap::new(),
             function_monomorphization_cache: HashMap::new(),
@@ -365,6 +384,19 @@ impl SymbolTable {
             .children
             .insert(symbol_name, symbol_id);
         self.symbol_chain.push(symbol_id);
+    }
+
+    /// Insert a symbol into the current scope without pushing it onto the symbol_chain
+    pub fn insert_symbol(&mut self, symbol: Symbol) -> SymbolId {
+        let current_id = *self.symbol_chain.last().unwrap();
+        let symbol_id = self.symbols.len() as SymbolId;
+        let symbol_name = symbol.name.clone();
+        self.symbols.push(symbol);
+
+        self.symbols[current_id as usize]
+            .children
+            .insert(symbol_name, symbol_id);
+        symbol_id
     }
 
     pub fn find_symbol_in_scope(&self, name: &str) -> Option<SymbolId> {
@@ -451,6 +483,24 @@ impl SymbolTable {
             }
             _ => None,
         }
+    }
+
+    pub fn find_module_id(&self, path: &str) -> Option<ModuleId> {
+        self.module_path_to_id.get(path).cloned()
+    }
+
+    pub fn get_module(&self, module_id: ModuleId) -> Option<&ModuleInfo> {
+        self.modules.get(module_id as usize)
+    }
+
+    pub fn register_module(&mut self, path: String, root_symbol_id: SymbolId) -> ModuleId {
+        if let Some(id) = self.module_path_to_id.get(&path) {
+            return *id;
+        }
+        let id = self.modules.len() as ModuleId;
+        self.modules.push(ModuleInfo { path: path.clone(), root_symbol_id });
+        self.module_path_to_id.insert(path, id);
+        id
     }
 
     pub fn pop_symbol(&mut self) {

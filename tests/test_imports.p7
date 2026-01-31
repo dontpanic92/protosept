@@ -1,8 +1,17 @@
 // Tests for import statement syntax parsing
 import test.test;
+import test.test as t;
+import foo.bar;        // symbol import: bar from module foo
+import foo.bar_mod;    // module import: foo.bar_mod exists
 
 @test(expected_type = "int", expected_value = "42")
 fn test_import_syntax_parses() -> int {
     // This test verifies the import statement above was accepted by the parser
+    return 42;
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_import_alias_binds_module() -> int {
+    // Currently we only check that parsing & binding succeed; runtime module calls not supported.
     return 42;
 }

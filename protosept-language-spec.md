@@ -130,6 +130,9 @@ import <module-path> as <name>;
 
 After import, the bound name refers to the imported module; its public (`pub`) declarations are available via that name.
 
+> **Resolution**: The compiler is filesystem-agnostic. A host-provided resolver supplies module sources by path; the only bundled module is `builtin`.
+> **Visibility**: All modules are public by default.
+
 Example:
 ```p7
 import std.collections.list;
