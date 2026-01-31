@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use binrw::BinRead;
 use p7::bytecode::{Instruction, Module};
-use p7::semantic::{SymbolKind, Type, TypeDefinition};
+use p7::semantic::{SymbolKind, Type};
 
 #[derive(Debug)]
 struct InstEntry {
