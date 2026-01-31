@@ -502,8 +502,16 @@ let y = p.1;  // y has type string, value "test"
 Decimal digits with optional `_`: `0`, `42`, `1_000_000`
 
 ### 4.2 Float literals
-Decimal with `.` and optional `_`: `1.0`, `3.1415`, `1_000.5`  
-[[TODO]] exponent notation.
+Decimal with `.` and optional `_`: `1.0`, `3.1415`, `1_000.5`
+
+**Exponent notation:**
+Float literals may include an exponent suffix using `e` or `E`, followed by an optional sign (`+` or `-`) and one or more decimal digits.
+
+Syntax: `<mantissa>e[+|-]<exponent>` or `<mantissa>E[+|-]<exponent>`
+
+- The mantissa MUST contain a decimal point (i.e., `1e10` is ERROR; use `1.0e10`).
+- The exponent digits may include `_` separators: `1.0e1_000`.
+- The exponent represents a power of 10: `1.5e3` equals `1500.0`.
 
 ### 4.3 String literals
 Double-quoted strings: `"hello"`
@@ -596,8 +604,6 @@ Protosept supports two forms of mutation:
    - Value structs and value arrays are immutable.
 
 The distinction ensures that shared/observable mutation is always expressed via `box<T>`, while `var` provides convenient local reassignment for loop counters, accumulators, and similar use cases.
-
-[[TODO]] finalize exact `*b = ...` syntax and boxed-array mutation APIs (see §7.4, §3.3.3).
 
 #### Example: `var` in a loop accumulator
 
@@ -765,7 +771,7 @@ Operations (surface syntax v1):
 - **Construction (Explicit Allocation):** Allocation is always explicit.
   - Canonical: `box(expr)` allocates a new boxed cell containing `expr`.
   - Shorthand: `^expr`
-  - **Desugaring**: `box(expr)` desugars to `box<T>.new(expr)` where `T` is the type of `expr`. `box<T>.new` is an intrinsic method declared in the prelude. [[TODO]] specify prelude location/definition of `box<T>.new` (§23).
+  - **Desugaring**: `box(expr)` desugars to `box<T>.new(expr)` where `T` is the type of `expr`. `box<T>.new` is an intrinsic method declared in the prelude.
 
 - Read / deref: `*b`
   - `*b` is an **addressable location** (place expression) referring to the boxed contents.
@@ -1111,7 +1117,7 @@ Statement forms:
 - `continue;`
 - assignment statement (§10.2)
 - `yield;` (Fiber extension only; §21)
-- declarations where allowed [[TODO]] (recommended: declarations only at top-level in v1)
+- declarations where allowed.
 
 ### 10.1 Returns
 
@@ -1390,9 +1396,22 @@ Construct a struct by calling the struct name:
 **Tuple struct:**
 - `Pair(10, 20)` – positional arguments only
 
-[[TODO]] rule for mixing positional and named args (recommended: disallow in v1).
+#### 12.3.1 Argument style restriction
 
-#### 12.3.1 Construction visibility restriction
+**Mixing positional and named arguments is not allowed.** A call must use either all positional arguments or all named arguments.
+
+```p7
+// OK: all positional
+Point(1, 2)
+
+// OK: all named
+Point(x = 1, y = 2)
+
+// ERROR: mixed positional and named
+Point(1, y = 2)
+```
+
+#### 12.3.2 Construction visibility restriction
 
 Construction `S(...)` is allowed **only if all fields of `S` are visible** at the construction site.
 
@@ -1704,7 +1723,22 @@ In a function without a `throws` effect:
 In a function with a `throws` or `throws<E>` effect:
 - either propagate or handle form is allowed.
 
-[[TODO]] finalize propagation compatibility rules for `throws<E>` (exact-match vs subtyping). Recommended for v1: exact match.
+### 14.4 Propagation compatibility rules for typed throws
+
+When using the propagate form (`try expr`), the callee's throw effect must be compatible with the caller's throw effect:
+
+| Callee effect | Caller effect | Propagation allowed? |
+|---------------|---------------|----------------------|
+| `throws<E>`   | `throws<E>`   | YES (exact match)    |
+| `throws<E>`   | `throws<F>`   | ERROR (type mismatch)|
+| `throws<E>`   | `throws`      | YES (untyped absorbs typed) |
+| `throws`      | `throws<E>`   | ERROR (cannot narrow)|
+| `throws`      | `throws`      | YES                  |
+
+Rules:
+- **Exact match**: A `throws<E>` callee may propagate in a `throws<E>` caller only when `E` is the same type.
+- **Typed to untyped**: A `throws<E>` callee may propagate in an untyped `throws` caller. The typed exception becomes an untyped exception.
+- **Untyped to typed forbidden**: A `throws` callee may NOT propagate in a `throws<E>` caller. The caller cannot guarantee that only `E` is thrown.
 
 ---
 
@@ -1803,7 +1837,7 @@ Host may register functions callable by p7.
 
 Interop requirements:
 - `?T` maps to/from host null.
-- `ref<T>` MUST NOT cross the boundary as a persistent value (may be disallowed entirely; [[TODO]] define).
+- `ref<T>` MUST NOT cross the boundary.
 - `box<T>` is the primary mechanism for passing identity/mutable objects across the boundary.
 - `box<P>` (proto boxes) is the mechanism for dynamic dispatch across the boundary (§18).
 
@@ -1854,7 +1888,7 @@ Proto methods may declare receivers as defined in §11.4:
 - `self: box<Self>` (or shorthand `box self`) – boxed receiver
 
 v1 restrictions:
-- Proto methods MUST NOT mention `Self` in parameter or return types beyond the receiver. [[TODO]] future extension.
+- Proto methods MUST NOT mention `Self` in parameter or return types beyond the receiver.
 - Overloads in protos: ERROR in v1 (recommended).
 
 ### 18.4 Proto handles
@@ -1903,7 +1937,7 @@ let p: box<Printable> = v;
 
 Conversion does not allocate a new `T`. It reinterprets the existing handle with a dispatch table for `P`.
 
-[[TODO]] finalize cast syntax and coercion sites.
+**Coercion rule:** If `P` is declared in `T`'s conformance list (via `struct[P, ...]` or `enum[P, ...]`), then implicit coercion is allowed at assignment, argument passing, and return sites (see §18.6). Otherwise, an explicit `as box<P>` cast is required.
 
 #### 18.5.1 Converting `ref<T>` to `ref<P>` (borrowed upcast)
 
@@ -1915,12 +1949,9 @@ let r: ref<SomeStruct> = ref(v);
 let p: ref<Printable> = r as ref<Printable>;
 ```
 
-**Implicit coercion:**
-- Recommended to allow implicit `ref<T> -> ref<P>` coercions at the same sites as `box<T> -> box<P>` coercions (assignment, argument passing, return).
-- Only when `T` declares `[P]` conformance via `struct[...]` or `enum[...]` (see §18.6).
-- Such coercions are subject to the restriction that only `ref self` methods can be called on `ref<P>` (§18.4.1).
+**Coercion rule:** If `P` is declared in `T`'s conformance list (via `struct[P, ...]` or `enum[P, ...]`), then implicit coercion is allowed at assignment, argument passing, and return sites (see §18.6). Otherwise, an explicit `as ref<P>` cast is required.
 
-[[TODO]] finalize cast syntax and coercion sites.
+Only `ref self` methods can be called on `ref<P>` (see §18.4.1).
 
 
 ### 18.6 Declaring proto conformances on structs and enums
@@ -1954,7 +1985,7 @@ Rules:
 
 The conformance list does not inject members; it only checks and enables implicit behaviors.
 
-[[TODO]] decide whether duplicate conformances are ERROR (recommended: yes).
+**Duplicate conformances:** Listing the same proto more than once in a struct's conformance list is a compile-time ERROR.
 
 ### 18.7 Dynamic dispatch
 
@@ -2006,11 +2037,9 @@ Properties:
 - inert by default; semantics only when explicitly specified by this spec or an extension
 - preserved in compiled artifact in a host-visible form
 
-### 19.1 Attachment sites (v1)
-An attribute list may appear immediately before a top-level:
-- `fn`, `struct`, `enum`, `type`
-
-[[TODO]] attributes for `proto`, fields, variants, params, locals.
+### 19.1 Attachment sites
+An attribute list may appear immediately before:
+- `fn`, `struct`, `enum`
 
 ### 19.2 Syntax
 
@@ -2425,11 +2454,10 @@ If both extensions enabled:
 
 1) String concatenation spelling, slicing APIs
 2) Boxed array mutation API surface and semantics (§3.3.3)
-3) Coercion sites and cast spelling for `box<T> -> box<P>` (§18.5)
-4) Enablement mechanisms for extensions (§21, §22)
-5) Host ABI: concrete API surfaces for calling, fibers, threads (§17, §21.4, §22)
-6) Specify prelude location/definition of `box<T>.new` intrinsic method (§7.4)
-7) Specify representation/ABI attribute like `@repr(transparent)` for structs (especially for newtype/FFI)
+3) Enablement mechanisms for extensions (§21, §22)
+4) Host ABI: concrete API surfaces for calling, fibers, threads (§17, §21.4, §22)
+5) Specify prelude location/definition of `box<T>.new` intrinsic method (§7.4)
+6) Specify representation/ABI attribute like `@repr(transparent)` for structs (especially for newtype/FFI)
 
 ---
 End.
