@@ -1,5 +1,5 @@
 use crate::errors::SourcePos;
-use crate::semantic::{PrimitiveType, Type, TypeId, UserDefinedType};
+use crate::semantic::{PrimitiveType, SymbolKind, Type, TypeDefinition, TypeId};
 use crate::errors::SemanticError;
 use crate::ast::Type as ParsedType;
 
@@ -117,15 +117,15 @@ impl Generator {
     ) -> SaResult<()> {
         // Get the type definition (struct or enum)
         let (type_name, qualified_name) = match &self.symbol_table.types[type_id as usize] {
-            UserDefinedType::Struct(s) => ("Struct", s.qualified_name.clone()),
-            UserDefinedType::Enum(e) => ("Enum", e.qualified_name.clone()),
-            _ => return Err(SemanticError::Other("Expected struct or enum type".to_string())),
+            TypeDefinition::Struct(s) => ("Struct", s.qualified_name.clone()),
+            TypeDefinition::Enum(e) => ("Enum", e.qualified_name.clone()),
+            TypeDefinition::Proto(_) => return Err(SemanticError::Other("Expected struct or enum type".to_string())),
         };
         
         // For each protocol the type claims to conform to
         for &proto_id in conforming_to {
             let proto = match &self.symbol_table.types[proto_id as usize] {
-                UserDefinedType::Proto(p) => p,
+                TypeDefinition::Proto(p) => p,
                 _ => return Err(SemanticError::Other("Expected proto type".to_string())),
             };
             
@@ -240,9 +240,9 @@ impl Generator {
     pub(super) fn find_type_method(&self, type_id: TypeId, method_name: &str) -> Option<(Vec<Type>, Option<Type>)> {
         // Search for a function with the qualified name type_name.method_name
         let qualified_name = match &self.symbol_table.types[type_id as usize] {
-            UserDefinedType::Struct(s) => s.qualified_name.clone(),
-            UserDefinedType::Enum(e) => e.qualified_name.clone(),
-            _ => return None,
+            TypeDefinition::Struct(s) => s.qualified_name.clone(),
+            TypeDefinition::Enum(e) => e.qualified_name.clone(),
+            TypeDefinition::Proto(_) => return None,
         };
         
         let qualified_method_name = format!("{}.{}", qualified_name, method_name);
@@ -250,18 +250,17 @@ impl Generator {
         // Look through all symbols to find the method
         for symbol in &self.symbol_table.symbols {
             if symbol.qualified_name == qualified_method_name {
-                if let crate::semantic::SymbolKind::Function { type_id, .. } = symbol.kind {
-                    // Get the function from the UserDefinedType
-                    if let UserDefinedType::Function(func) = &self.symbol_table.types[type_id as usize] {
-                        // Proto methods have return_type as Option<Type>, but Function has return_type as Type
-                        // Convert Type::Primitive(Unit) to None for consistency
-                        let return_type = if func.return_type == Type::Primitive(PrimitiveType::Unit) {
-                            None
-                        } else {
-                            Some(func.return_type.clone())
-                        };
-                        return Some((func.params.clone(), return_type));
-                    }
+                if let SymbolKind::Function { func_id, .. } = symbol.kind {
+                    // Get the function from the functions table
+                    let func = self.symbol_table.get_function(func_id);
+                    // Proto methods have return_type as Option<Type>, but Function has return_type as Type
+                    // Convert Type::Primitive(Unit) to None for consistency
+                    let return_type = if func.return_type == Type::Primitive(PrimitiveType::Unit) {
+                        None
+                    } else {
+                        Some(func.return_type.clone())
+                    };
+                    return Some((func.params.clone(), return_type));
                 }
             }
         }
@@ -290,34 +289,27 @@ impl Generator {
             Type::Array(inner) => format!("array<{}>", self.type_to_string(inner)),
             Type::Reference(inner) => format!("ref {}", self.type_to_string(inner)),
             Type::Struct(id) => {
-                if let UserDefinedType::Struct(s) = &self.symbol_table.types[*id as usize] {
+                if let TypeDefinition::Struct(s) = &self.symbol_table.types[*id as usize] {
                     s.qualified_name.clone()
                 } else {
                     format!("struct#{}", id)
                 }
             }
             Type::Enum(id) => {
-                if let UserDefinedType::Enum(e) = &self.symbol_table.types[*id as usize] {
+                if let TypeDefinition::Enum(e) = &self.symbol_table.types[*id as usize] {
                     e.qualified_name.clone()
                 } else {
                     format!("enum#{}", id)
                 }
             }
             Type::Proto(id) => {
-                if let UserDefinedType::Proto(p) = &self.symbol_table.types[*id as usize] {
+                if let TypeDefinition::Proto(p) = &self.symbol_table.types[*id as usize] {
                     p.qualified_name.clone()
                 } else {
                     format!("proto#{}", id)
                 }
             }
             Type::BoxType(inner) => format!("box<{}>", self.type_to_string(inner)),
-            Type::Function(id) => {
-                if let UserDefinedType::Function(f) = &self.symbol_table.types[*id as usize] {
-                    f.qualified_name.clone()
-                } else {
-                    format!("function#{}", id)
-                }
-            }
         }
     }
 }

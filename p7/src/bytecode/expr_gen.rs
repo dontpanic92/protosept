@@ -3,7 +3,7 @@ use crate::{
     ast::{Expression},
     bytecode::Instruction,
     lexer::TokenType,
-    semantic::{PrimitiveType, Type, UserDefinedType},
+    semantic::{PrimitiveType, Type, TypeDefinition},
 };
 use crate::errors::SemanticError;
 
@@ -301,7 +301,7 @@ impl Generator {
                             };
 
                             let udt = self.symbol_table.get_udt(struct_type_id);
-                            if let UserDefinedType::Struct(struct_def) = udt {
+                            if let TypeDefinition::Struct(struct_def) = udt {
                                 if let Some((idx, (_fname, ftype))) = struct_def
                                     .fields
                                     .iter()
@@ -512,7 +512,7 @@ impl Generator {
                 match object_ty {
                     Type::Enum(type_id) => {
                         let udt = self.symbol_table.get_udt(type_id);
-                        if let UserDefinedType::Enum(enum_def) = udt {
+                        if let TypeDefinition::Enum(enum_def) = udt {
                             if is_static_access {
                                 // Find the variant by name
                                 let variant_opt = enum_def.variants.iter()
@@ -568,7 +568,7 @@ impl Generator {
                     }
                     Type::Struct(type_id) => {
                         let udt = self.symbol_table.get_udt(type_id);
-                        if let UserDefinedType::Struct(struct_def) = udt {
+                        if let TypeDefinition::Struct(struct_def) = udt {
                             if is_static_access {
                                 // Static field access on Structs not yet supported.
                                 return Err(SemanticError::TypeMismatch {
@@ -691,7 +691,7 @@ impl Generator {
                             (Type::Struct(struct_id), Type::Proto(proto_id)) => {
                                 // Verify that the struct satisfies the proto
                                 let struct_def = match &self.symbol_table.types[*struct_id as usize] {
-                                    UserDefinedType::Struct(s) => s,
+                                    TypeDefinition::Struct(s) => s,
                                     _ => return Err(SemanticError::Other("Expected struct type".to_string())),
                                 };
                                 
@@ -716,7 +716,7 @@ impl Generator {
                             (Type::Enum(enum_id), Type::Proto(proto_id)) => {
                                 // Verify that the enum satisfies the proto
                                 let enum_def = match &self.symbol_table.types[*enum_id as usize] {
-                                    UserDefinedType::Enum(e) => e,
+                                    TypeDefinition::Enum(e) => e,
                                     _ => return Err(SemanticError::Other("Expected enum type".to_string())),
                                 };
                                 
@@ -753,7 +753,7 @@ impl Generator {
                             (Type::Struct(struct_id), Type::Proto(proto_id)) => {
                                 // Verify that the struct satisfies the proto
                                 let struct_def = match &self.symbol_table.types[*struct_id as usize] {
-                                    UserDefinedType::Struct(s) => s,
+                                    TypeDefinition::Struct(s) => s,
                                     _ => return Err(SemanticError::Other("Expected struct type".to_string())),
                                 };
                                 
@@ -778,7 +778,7 @@ impl Generator {
                             (Type::Enum(enum_id), Type::Proto(proto_id)) => {
                                 // Verify that the enum satisfies the proto
                                 let enum_def = match &self.symbol_table.types[*enum_id as usize] {
-                                    UserDefinedType::Enum(e) => e,
+                                    TypeDefinition::Enum(e) => e,
                                     _ => return Err(SemanticError::Other("Expected enum type".to_string())),
                                 };
                                 

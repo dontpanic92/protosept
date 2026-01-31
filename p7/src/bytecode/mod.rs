@@ -185,7 +185,8 @@ pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {
 pub struct Module {
     pub instructions: Vec<u8>,
     pub symbols: Vec<Symbol>,
-    pub types: Vec<crate::semantic::UserDefinedType>,
+    pub functions: Vec<crate::semantic::Function>,
+    pub types: Vec<crate::semantic::TypeDefinition>,
     pub string_constants: Vec<String>,
 }
 

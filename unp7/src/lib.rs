@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use binrw::BinRead;
 use p7::bytecode::{Instruction, Module};
-use p7::semantic::{SymbolKind, Type, UserDefinedType};
+use p7::semantic::{SymbolKind, Type};
 
 #[derive(Debug)]
 struct InstEntry {
@@ -22,7 +22,7 @@ struct FunctionMeta {
     symbol_id: u32,
     qualified_name: String,
     address: u32,
-    type_id: u32,
+    func_id: u32,
     param_names: Vec<String>,
     param_types: Vec<Type>,
     return_type: Option<Type>,
@@ -81,7 +81,7 @@ pub fn disassemble_module(module: &Module) -> String {
                 .unwrap_or_else(|| "unknown".to_string())
         ));
         output.push_str(&format!("  symbol_id: {}\n", func.symbol_id));
-        output.push_str(&format!("  type_id: {}\n", func.type_id));
+        output.push_str(&format!("  func_id: {}\n", func.func_id));
         output.push_str(&format!("  size: {}\n", end.saturating_sub(start)));
         output.push_str("  ---\n");
 
@@ -151,9 +151,9 @@ fn collect_functions(module: &Module) -> Vec<FunctionMeta> {
     let mut functions = Vec::new();
 
     for (symbol_id, symbol) in module.symbols.iter().enumerate() {
-        if let SymbolKind::Function { type_id, address } = symbol.kind {
-            let (param_names, param_types, return_type) = match module.types.get(type_id as usize) {
-                Some(UserDefinedType::Function(func)) => (
+        if let SymbolKind::Function { func_id, address } = symbol.kind {
+            let (param_names, param_types, return_type) = match module.functions.get(func_id as usize) {
+                Some(func) => (
                     func.param_names.clone(),
                     func.params.clone(),
                     Some(func.return_type.clone()),
@@ -165,7 +165,7 @@ fn collect_functions(module: &Module) -> Vec<FunctionMeta> {
                 symbol_id: symbol_id as u32,
                 qualified_name: symbol.qualified_name.clone(),
                 address,
-                type_id,
+                func_id,
                 param_names,
                 param_types,
                 return_type,
@@ -275,6 +275,7 @@ mod tests {
         let module = Module {
             instructions: builder.get_bytecode(),
             symbols: Vec::new(),
+            functions: Vec::new(),
             types: Vec::new(),
             string_constants: Vec::new(),
         };

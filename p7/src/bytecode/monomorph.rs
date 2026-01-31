@@ -1,7 +1,7 @@
 use crate::errors::SourcePos;
 use crate::{
     ast::{Identifier, Type as ParsedType},
-    semantic::{Enum, Function, PrimitiveType, Struct, Symbol, SymbolKind, Type, TypeId, UserDefinedType},
+    semantic::{Enum, Function, FunctionId, PrimitiveType, Struct, Symbol, SymbolKind, Type, TypeDefinition, TypeId},
 };
 use crate::errors::SemanticError;
 
@@ -24,8 +24,8 @@ impl Generator {
         }
         
         // Get the base generic struct definition
-        let base_struct = match self.symbol_table.get_udt(base_type_id) {
-            UserDefinedType::Struct(s) => s.clone(),
+        let base_struct = match self.symbol_table.get_type(base_type_id) {
+            TypeDefinition::Struct(s) => s.clone(),
             _ => {
                 return Err(SemanticError::TypeMismatch {
                     lhs: "struct".to_string(),
@@ -97,10 +97,11 @@ impl Generator {
             generic_field_types: None,
             monomorphization: Some((base_type_id, type_args.clone())),
             conforming_to: base_struct.conforming_to.clone(),
+            methods: base_struct.methods.clone(), // Copy methods from base
         };
         
         // Add to type table
-        let new_type_id = self.symbol_table.add_udt(UserDefinedType::Struct(monomorphized_struct));
+        let new_type_id = self.symbol_table.add_type(TypeDefinition::Struct(monomorphized_struct));
         
         // Cache it
         self.symbol_table.monomorphization_cache.insert(cache_key, new_type_id);
@@ -123,8 +124,8 @@ impl Generator {
         }
         
         // Get the base generic enum definition
-        let base_enum = match self.symbol_table.get_udt(base_type_id) {
-            UserDefinedType::Enum(e) => e.clone(),
+        let base_enum = match self.symbol_table.get_type(base_type_id) {
+            TypeDefinition::Enum(e) => e.clone(),
             _ => {
                 return Err(SemanticError::TypeMismatch {
                     lhs: "enum".to_string(),
@@ -201,10 +202,11 @@ impl Generator {
             generic_variant_types: None,
             monomorphization: Some((base_type_id, type_args.clone())),
             conforming_to: base_enum.conforming_to.clone(),
+            methods: base_enum.methods.clone(), // Copy methods from base
         };
         
         // Add to type table
-        let new_type_id = self.symbol_table.add_udt(UserDefinedType::Enum(monomorphized_enum));
+        let new_type_id = self.symbol_table.add_type(TypeDefinition::Enum(monomorphized_enum));
         
         // Cache it
         self.symbol_table.monomorphization_cache.insert(cache_key, new_type_id);
@@ -215,32 +217,23 @@ impl Generator {
     /// Monomorphize a generic function with concrete type arguments
     pub(super) fn monomorphize_function(
         &mut self,
-        base_type_id: TypeId,
+        base_func_id: FunctionId,
         type_args: Vec<Type>,
         base_name: &str,
         line: usize,
         col: usize,
-    ) -> SaResult<(u32, TypeId, u32)> {  // Returns (address, type_id, symbol_id)
+    ) -> SaResult<(u32, FunctionId, u32)> {  // Returns (address, func_id, symbol_id)
         // Check cache first
-        let cache_key = (base_type_id, type_args.clone());
-        if let Some(&cached_type_id) = self.symbol_table.monomorphization_cache.get(&cache_key) {
+        let cache_key = (base_func_id, type_args.clone());
+        if let Some(&cached_func_id) = self.symbol_table.function_monomorphization_cache.get(&cache_key) {
             // Find the address of the cached function
-            let cached_func = match self.symbol_table.get_udt(cached_type_id) {
-                UserDefinedType::Function(f) => f,
-                _ => {
-                    return Err(SemanticError::TypeMismatch {
-                        lhs: "function".to_string(),
-                        rhs: "non-function".to_string(),
-                        pos: Some(SourcePos { line, col }),
-                    });
-                }
-            };
+            let cached_func = self.symbol_table.get_function(cached_func_id);
             
             // Find the symbol with this function's qualified name
             for (idx, symbol) in self.symbol_table.symbols.iter().enumerate() {
                 if symbol.qualified_name == cached_func.qualified_name {
-                    if let SymbolKind::Function { address, type_id } = symbol.kind {
-                        return Ok((address, type_id, idx as u32));
+                    if let SymbolKind::Function { address, func_id } = symbol.kind {
+                        return Ok((address, func_id, idx as u32));
                     }
                 }
             }
@@ -253,16 +246,7 @@ impl Generator {
         }
         
         // Get the base generic function definition
-        let base_func = match self.symbol_table.get_udt(base_type_id) {
-            UserDefinedType::Function(f) => f.clone(),
-            _ => {
-                return Err(SemanticError::TypeMismatch {
-                    lhs: "function".to_string(),
-                    rhs: "non-function".to_string(),
-                    pos: Some(SourcePos { line, col }),
-                });
-            }
-        };
+        let base_func = self.symbol_table.get_function(base_func_id).clone();
         
         // Validate number of type arguments matches type parameters
         if base_func.type_parameters.len() != type_args.len() {
@@ -278,8 +262,8 @@ impl Generator {
             // Find the address and symbol_id of the base function
             for (idx, symbol) in self.symbol_table.symbols.iter().enumerate() {
                 if symbol.qualified_name == base_func.qualified_name {
-                    if let SymbolKind::Function { address, type_id } = symbol.kind {
-                        return Ok((address, type_id, idx as u32));
+                    if let SymbolKind::Function { address, func_id } = symbol.kind {
+                        return Ok((address, func_id, idx as u32));
                     }
                 }
             }
@@ -361,14 +345,14 @@ impl Generator {
             generic_param_types: None,
             generic_return_type: None,
             generic_body: None,
-            monomorphization: Some((base_type_id, type_args.clone())),
+            monomorphization: Some((base_func_id, type_args.clone())),
         };
         
-        // Add to type table
-        let new_type_id = self.symbol_table.add_udt(UserDefinedType::Function(monomorphized_func.clone()));
+        // Add to function table
+        let new_func_id = self.symbol_table.add_function(monomorphized_func.clone());
         
         // Cache it
-        self.symbol_table.monomorphization_cache.insert(cache_key, new_type_id);
+        self.symbol_table.function_monomorphization_cache.insert(cache_key, new_func_id);
         
         // Create symbol for the monomorphized function with placeholder address
         // We'll generate the actual bytecode later to avoid inline generation
@@ -376,7 +360,7 @@ impl Generator {
             base_name.to_string(),
             monomorphized_name.clone(),
             SymbolKind::Function {
-                type_id: new_type_id,
+                func_id: new_func_id,
                 address: 0xFFFFFFFF, // Placeholder - will be updated when bytecode is generated
             },
         );
@@ -387,7 +371,7 @@ impl Generator {
         // Queue this monomorphization for later bytecode generation
         self.pending_monomorphizations.push((
             symbol_id,
-            new_type_id,
+            new_func_id,
             body.clone(),
             monomorphized_func.param_names.clone(),
             monomorphized_params.clone(),
@@ -397,7 +381,7 @@ impl Generator {
         // Just return the symbol_id so the caller can emit a call instruction
         self.symbol_table.pop_symbol();
         
-        Ok((0xFFFFFFFF, new_type_id, symbol_id))
+        Ok((0xFFFFFFFF, new_func_id, symbol_id))
     }
     
     /// Convert a semantic Type to a ParsedType (for substitution purposes)
@@ -434,42 +418,42 @@ impl Generator {
                     type_args: vec![self.type_to_parsed_type(inner)],
                 }
             }
-            Type::Struct(type_id) => {
-                // Get the struct name from the symbol table
-                let udt = self.symbol_table.get_udt(*type_id);
-                if let UserDefinedType::Struct(s) = udt {
-                    ParsedType::Identifier(Identifier {
-                        name: s.qualified_name.clone(),
-                        line: SYNTHETIC_LINE,
-                        col: SYNTHETIC_COL,
-                    })
-                } else {
-                    // Fallback
-                    ParsedType::Identifier(Identifier {
-                        name: format!("struct_{}", type_id),
-                        line: SYNTHETIC_LINE,
-                        col: SYNTHETIC_COL,
-                    })
+                Type::Struct(type_id) => {
+                    // Get the struct name from the symbol table
+                    let type_def = self.symbol_table.get_type(*type_id);
+                    if let TypeDefinition::Struct(s) = type_def {
+                        ParsedType::Identifier(Identifier {
+                            name: s.qualified_name.clone(),
+                            line: SYNTHETIC_LINE,
+                            col: SYNTHETIC_COL,
+                        })
+                    } else {
+                        // Fallback
+                        ParsedType::Identifier(Identifier {
+                            name: format!("struct_{}", type_id),
+                            line: SYNTHETIC_LINE,
+                            col: SYNTHETIC_COL,
+                        })
+                    }
                 }
-            }
-            Type::Enum(type_id) => {
-                // Get the enum name from the symbol table
-                let udt = self.symbol_table.get_udt(*type_id);
-                if let UserDefinedType::Enum(e) = udt {
-                    ParsedType::Identifier(Identifier {
-                        name: e.qualified_name.clone(),
-                        line: SYNTHETIC_LINE,
-                        col: SYNTHETIC_COL,
-                    })
-                } else {
-                    // Fallback
-                    ParsedType::Identifier(Identifier {
-                        name: format!("enum_{}", type_id),
-                        line: SYNTHETIC_LINE,
-                        col: SYNTHETIC_COL,
-                    })
+                Type::Enum(type_id) => {
+                    // Get the enum name from the symbol table
+                    let type_def = self.symbol_table.get_type(*type_id);
+                    if let TypeDefinition::Enum(e) = type_def {
+                        ParsedType::Identifier(Identifier {
+                            name: e.qualified_name.clone(),
+                            line: SYNTHETIC_LINE,
+                            col: SYNTHETIC_COL,
+                        })
+                    } else {
+                        // Fallback
+                        ParsedType::Identifier(Identifier {
+                            name: format!("enum_{}", type_id),
+                            line: SYNTHETIC_LINE,
+                            col: SYNTHETIC_COL,
+                        })
+                    }
                 }
-            }
             _ => {
                 // For other types, create a simple identifier
                 ParsedType::Identifier(Identifier {

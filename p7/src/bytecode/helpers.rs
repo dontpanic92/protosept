@@ -4,7 +4,7 @@ use crate::errors::SemanticError;
 use crate::errors::SourcePos;
 use crate::{
     ast::{Expression, Identifier, Pattern, Statement},
-    semantic::{PrimitiveType, Symbol, SymbolKind, Type, TypeId, UserDefinedType},
+    semantic::{PrimitiveType, Symbol, SymbolKind, Type, TypeId},
 };
 
 use super::codegen::{Generator, SaResult};
@@ -54,19 +54,14 @@ impl Generator {
 
                 let method_id = *method.unwrap().1;
                 let method_symbol = builtin.symbols.get(method_id as usize).unwrap();
-                let method_ty = method_symbol.get_type_id().unwrap();
-                let function_udt = match builtin.types.get(method_ty as usize).unwrap() {
-                    UserDefinedType::Function(udt) => udt.clone(),
-                    _ => {
-                        panic!("???");
-                    }
-                };
+                let func_id = method_symbol.get_func_id().unwrap();
+                let function_def = builtin.functions.get(func_id as usize).unwrap().clone();
 
                 let intrinsic_name =
-                    Self::extract_intrinsic_name(&function_udt.attributes).unwrap();
+                    Self::extract_intrinsic_name(&function_def.attributes).unwrap();
 
-                let param_names: Vec<String> = function_udt.param_names.clone();
-                let param_defaults: Vec<Option<Expression>> = function_udt.param_defaults.clone();
+                let param_names: Vec<String> = function_def.param_names.clone();
+                let param_defaults: Vec<Option<Expression>> = function_def.param_defaults.clone();
 
                 // Use shared argument processing logic
                 let ordered_exprs = self.process_arguments(
@@ -81,13 +76,13 @@ impl Generator {
                 // receivers already on stack
                 self.push_typed_argument_list(
                     ordered_exprs,
-                    &function_udt.params[1..],
+                    &function_def.params[1..],
                     call_line,
                     call_col,
                 )?;
                 let string_id = self.add_string_constant(intrinsic_name.clone());
                 self.builder.call_host_function(string_id);
-                Ok(function_udt.return_type.clone())
+                Ok(function_def.return_type.clone())
             }
             _ => {
                 return Err(SemanticError::FunctionNotFound {

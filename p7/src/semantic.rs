@@ -8,13 +8,20 @@ pub enum Constant {
     Boolean(bool),
 }
 
+/// Unique identifier for functions in the symbol table
+pub type FunctionId = u32;
+
+/// Unique identifier for types (Struct, Enum, Proto) in the symbol table
+pub type TypeId = u32;
+
+/// Unique identifier for symbols in the symbol table
+pub type SymbolId = u32;
+
 #[derive(Debug, Clone)]
 pub enum SymbolKind {
     Constant(Constant),
-    Function { type_id: TypeId, address: u32 },
-    Enum(TypeId),
-    Struct(TypeId),
-    Proto(TypeId),
+    Function { func_id: FunctionId, address: u32 },
+    Type(TypeId),  // Unified for Struct, Enum, Proto
     Module,
 }
 
@@ -25,25 +32,29 @@ impl SymbolKind {
 
     pub fn discriminant_of_function() -> std::mem::Discriminant<SymbolKind> {
         std::mem::discriminant(&SymbolKind::Function {
-            type_id: 0,
+            func_id: 0,
             address: 0,
         })
     }
 
-    pub fn discriminant_of_enum() -> std::mem::Discriminant<SymbolKind> {
-        std::mem::discriminant(&SymbolKind::Enum(0))
+    pub fn discriminant_of_type() -> std::mem::Discriminant<SymbolKind> {
+        std::mem::discriminant(&SymbolKind::Type(0))
     }
 
+    // Deprecated: use discriminant_of_type() instead
+    // Kept for backward compatibility during refactoring
     pub fn discriminant_of_struct() -> std::mem::Discriminant<SymbolKind> {
-        std::mem::discriminant(&SymbolKind::Struct(0))
+        std::mem::discriminant(&SymbolKind::Type(0))
+    }
+
+    pub fn discriminant_of_enum() -> std::mem::Discriminant<SymbolKind> {
+        std::mem::discriminant(&SymbolKind::Type(0))
     }
 
     pub fn discriminant_of_proto() -> std::mem::Discriminant<SymbolKind> {
-        std::mem::discriminant(&SymbolKind::Proto(0))
+        std::mem::discriminant(&SymbolKind::Type(0))
     }
 }
-
-pub type SymbolId = u32;
 
 #[derive(Debug, Clone)]
 pub struct Symbol {
@@ -70,12 +81,16 @@ impl Symbol {
         }
     }
 
+    pub fn get_func_id(&self) -> Option<FunctionId> {
+        match &self.kind {
+            SymbolKind::Function { func_id, .. } => Some(*func_id),
+            _ => None,
+        }
+    }
+
     pub fn get_type_id(&self) -> Option<TypeId> {
         match &self.kind {
-            SymbolKind::Function { type_id, .. } => Some(*type_id),
-            SymbolKind::Enum(type_id) => Some(*type_id),
-            SymbolKind::Struct(type_id) => Some(*type_id),
-            SymbolKind::Proto(type_id) => Some(*type_id),
+            SymbolKind::Type(type_id) => Some(*type_id),
             _ => None,
         }
     }
@@ -100,8 +115,8 @@ pub struct Function {
     pub generic_return_type: Option<crate::ast::Type>,
     // For generic functions: stores the function body AST for monomorphization
     pub generic_body: Option<Vec<crate::ast::Statement>>,
-    // For monomorphized functions: stores the base generic function's TypeId and concrete type arguments
-    pub monomorphization: Option<(TypeId, Vec<Type>)>,
+    // For monomorphized functions: stores the base generic function's FunctionId and concrete type arguments
+    pub monomorphization: Option<(FunctionId, Vec<Type>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +132,8 @@ pub struct Enum {
     pub monomorphization: Option<(TypeId, Vec<Type>)>,
     // Protocol conformances
     pub conforming_to: Vec<TypeId>,
+    // Associated methods
+    pub methods: Vec<FunctionId>,
 }
 
 #[derive(Debug, Clone)]
@@ -133,6 +150,8 @@ pub struct Struct {
     pub monomorphization: Option<(TypeId, Vec<Type>)>,
     // Protocol conformances
     pub conforming_to: Vec<TypeId>,
+    // Associated methods
+    pub methods: Vec<FunctionId>,
 }
 
 #[derive(Debug, Clone)]
@@ -152,15 +171,12 @@ pub enum PrimitiveType {
     Unit,
 }
 
-pub type TypeId = u32;
-
 #[derive(Debug)]
 pub enum Type {
     Primitive(PrimitiveType),
     Reference(Box<Type>),
     Array(Box<Type>),
     BoxType(Box<Type>),
-    Function(TypeId),
     Enum(TypeId),
     Struct(TypeId),
     Proto(TypeId),
@@ -184,10 +200,10 @@ impl Type {
             Type::Reference(_) | Type::BoxType(_) => true,
             // User-defined structs: check for Copy proto conformance
             Type::Struct(type_id) => {
-                if let UserDefinedType::Struct(s) = symbol_table.get_udt(*type_id) {
+                if let TypeDefinition::Struct(s) = symbol_table.get_type(*type_id) {
                     // Check if struct conforms to Copy proto
                     s.conforming_to.iter().any(|proto_id| {
-                        if let Some(UserDefinedType::Proto(proto)) =
+                        if let Some(TypeDefinition::Proto(proto)) =
                             symbol_table.types.get(*proto_id as usize)
                         {
                             proto.qualified_name.ends_with(".Copy")
@@ -201,13 +217,24 @@ impl Type {
                 }
             }
             // User-defined enums: check for Copy proto conformance
-            // Note: Enums don't have conforming_to field yet, so they can't be copy-treated
-            Type::Enum(_type_id) => {
-                // TODO: When enum conformance is implemented, check for Copy proto
-                false
+            Type::Enum(type_id) => {
+                if let TypeDefinition::Enum(e) = symbol_table.get_type(*type_id) {
+                    e.conforming_to.iter().any(|proto_id| {
+                        if let Some(TypeDefinition::Proto(proto)) =
+                            symbol_table.types.get(*proto_id as usize)
+                        {
+                            proto.qualified_name.ends_with(".Copy")
+                                || proto.qualified_name == "Copy"
+                        } else {
+                            false
+                        }
+                    })
+                } else {
+                    false
+                }
             }
-            // Arrays, Functions, and Protos: not copy-treated by default in v1
-            Type::Array(_) | Type::Function(_) | Type::Proto(_) => false,
+            // Arrays and Protos: not copy-treated by default in v1
+            Type::Array(_) | Type::Proto(_) => false,
         }
     }
 }
@@ -219,7 +246,6 @@ impl Clone for Type {
             Type::Reference(r) => Type::Reference(r.clone()),
             Type::Array(a) => Type::Array(a.clone()),
             Type::BoxType(b) => Type::BoxType(b.clone()),
-            Type::Function(f) => Type::Function(*f),
             Type::Enum(e) => Type::Enum(*e),
             Type::Struct(s) => Type::Struct(*s),
             Type::Proto(p) => Type::Proto(*p),
@@ -234,7 +260,6 @@ impl PartialEq for Type {
             (Type::Reference(a), Type::Reference(b)) => *a == *b,
             (Type::Array(a), Type::Array(b)) => *a == *b,
             (Type::BoxType(a), Type::BoxType(b)) => *a == *b,
-            (Type::Function(a), Type::Function(b)) => *a == *b,
             (Type::Enum(a), Type::Enum(b)) => *a == *b,
             (Type::Struct(a), Type::Struct(b)) => *a == *b,
             (Type::Proto(a), Type::Proto(b)) => *a == *b,
@@ -253,7 +278,6 @@ impl std::hash::Hash for Type {
             Type::Reference(r) => r.hash(state),
             Type::Array(a) => a.hash(state),
             Type::BoxType(b) => b.hash(state),
-            Type::Function(f) => f.hash(state),
             Type::Enum(e) => e.hash(state),
             Type::Struct(s) => s.hash(state),
             Type::Proto(p) => p.hash(state),
@@ -275,7 +299,6 @@ impl ToString for Type {
             Type::Reference(r) => format!("ref<{}>", r.to_string()),
             Type::Array(a) => format!("[{}]", a.to_string()),
             Type::BoxType(b) => format!("box<{}>", b.to_string()),
-            Type::Function(f) => format!("function({})", f.to_string()),
             Type::Enum(e) => format!("enum({})", e.to_string()),
             Type::Struct(s) => format!("struct({})", s.to_string()),
             Type::Proto(p) => format!("proto({})", p.to_string()),
@@ -283,9 +306,9 @@ impl ToString for Type {
     }
 }
 
+/// Type definitions (structs, enums, protocols) - does NOT include functions
 #[derive(Debug, Clone)]
-pub enum UserDefinedType {
-    Function(Function),
+pub enum TypeDefinition {
     Enum(Enum),
     Struct(Struct),
     Proto(Proto),
@@ -293,12 +316,15 @@ pub enum UserDefinedType {
 
 pub struct SymbolTable {
     pub symbols: Vec<Symbol>,
-    pub types: Vec<UserDefinedType>,
+    pub functions: Vec<Function>,
+    pub types: Vec<TypeDefinition>,
 
     pub symbol_chain: Vec<SymbolId>,
 
     // Cache for monomorphized types: (base_type_id, type_args) -> monomorphized_type_id
     pub monomorphization_cache: HashMap<(TypeId, Vec<Type>), TypeId>,
+    // Cache for monomorphized functions: (base_func_id, type_args) -> monomorphized_func_id
+    pub function_monomorphization_cache: HashMap<(FunctionId, Vec<Type>), FunctionId>,
 }
 
 impl SymbolTable {
@@ -315,14 +341,17 @@ impl SymbolTable {
         }
         None
     }
+
     pub fn new() -> Self {
         let root = Symbol::new("$root".to_string(), "$root".to_string(), SymbolKind::Module);
 
         SymbolTable {
             symbols: vec![root],
+            functions: Vec::new(),
             types: Vec::new(),
             symbol_chain: vec![0],
             monomorphization_cache: HashMap::new(),
+            function_monomorphization_cache: HashMap::new(),
         }
     }
 
@@ -357,6 +386,24 @@ impl SymbolTable {
         self.symbols.get(symbol_id as usize)
     }
 
+    /// Find the symbol representing a type_id within this symbol table, matching qualified name to avoid collisions.
+    pub fn find_symbol_for_type(&self, type_id: TypeId) -> Option<SymbolId> {
+        let type_def = self.types.get(type_id as usize)?;
+        let target_qualified_name = match type_def {
+            TypeDefinition::Struct(s) => &s.qualified_name,
+            TypeDefinition::Enum(e) => &e.qualified_name,
+            TypeDefinition::Proto(p) => &p.qualified_name,
+        };
+        self.symbols.iter().enumerate().find_map(|(i, s)| {
+            if let SymbolKind::Type(tid) = s.kind {
+                if tid == type_id && &s.qualified_name == target_qualified_name {
+                    return Some(i as SymbolId);
+                }
+            }
+            None
+        })
+    }
+
     pub fn to_primitive_type(name: &str) -> Option<Type> {
         match name {
             "int" => Some(Type::Primitive(PrimitiveType::Int)),
@@ -371,13 +418,17 @@ impl SymbolTable {
     pub fn find_type_in_scope(&self, name: &str) -> Option<Type> {
         // Special handling: inside a struct's scope, `Self` refers to the enclosing type.
         if name == "Self" {
-            if let Some(enclose_struct) =
-                self.find_nearest_symbol_id_by_kind(SymbolKind::discriminant_of_struct())
+            if let Some(enclose_type) =
+                self.find_nearest_symbol_id_by_kind(SymbolKind::discriminant_of_type())
             {
-                let strukt = self.get_symbol(*enclose_struct).unwrap();
-                match strukt.kind {
-                    SymbolKind::Struct(id) => return Some(Type::Struct(id)),
-                    _ => {}
+                let type_symbol = self.get_symbol(*enclose_type).unwrap();
+                if let SymbolKind::Type(id) = type_symbol.kind {
+                    // Determine the actual type kind
+                    return match &self.types[id as usize] {
+                        TypeDefinition::Struct(_) => Some(Type::Struct(id)),
+                        TypeDefinition::Enum(_) => Some(Type::Enum(id)),
+                        TypeDefinition::Proto(_) => Some(Type::Proto(id)),
+                    };
                 }
             }
         }
@@ -389,11 +440,15 @@ impl SymbolTable {
 
         let symbol_id = self.find_symbol_in_scope(name)?;
         let symbol = self.get_symbol(symbol_id)?;
-        match symbol.kind {
-            SymbolKind::Enum(id) => Some(Type::Enum(id)),
-            SymbolKind::Struct(id) => Some(Type::Struct(id)),
-            SymbolKind::Proto(id) => Some(Type::Proto(id)),
-            SymbolKind::Function { type_id, .. } => Some(Type::Function(type_id)),
+        match &symbol.kind {
+            SymbolKind::Type(id) => {
+                // Determine the actual type kind
+                match &self.types[*id as usize] {
+                    TypeDefinition::Struct(_) => Some(Type::Struct(*id)),
+                    TypeDefinition::Enum(_) => Some(Type::Enum(*id)),
+                    TypeDefinition::Proto(_) => Some(Type::Proto(*id)),
+                }
+            }
             _ => None,
         }
     }
@@ -416,14 +471,45 @@ impl SymbolTable {
             + &name
     }
 
-    pub fn add_udt(&mut self, udt: UserDefinedType) -> TypeId {
+    // Function management
+    pub fn add_function(&mut self, func: Function) -> FunctionId {
+        let func_id = self.functions.len() as FunctionId;
+        self.functions.push(func);
+        func_id
+    }
+
+    pub fn get_function(&self, func_id: FunctionId) -> &Function {
+        &self.functions[func_id as usize]
+    }
+
+    pub fn get_function_mut(&mut self, func_id: FunctionId) -> &mut Function {
+        &mut self.functions[func_id as usize]
+    }
+
+    // Type management
+    pub fn add_type(&mut self, ty: TypeDefinition) -> TypeId {
         let type_id = self.types.len() as TypeId;
-        self.types.push(udt);
+        self.types.push(ty);
         type_id
     }
 
-    pub fn get_udt(&self, type_id: TypeId) -> &UserDefinedType {
+    pub fn get_type(&self, type_id: TypeId) -> &TypeDefinition {
         &self.types[type_id as usize]
+    }
+
+    pub fn get_type_mut(&mut self, type_id: TypeId) -> &mut TypeDefinition {
+        &mut self.types[type_id as usize]
+    }
+
+    // Backward compatibility methods
+    #[deprecated(note = "Use add_type() or add_function() instead")]
+    pub fn add_udt(&mut self, udt: TypeDefinition) -> TypeId {
+        self.add_type(udt)
+    }
+
+    #[deprecated(note = "Use get_type() instead")]
+    pub fn get_udt(&self, type_id: TypeId) -> &TypeDefinition {
+        self.get_type(type_id)
     }
 
     pub fn get_current_symbol(&self) -> Option<&Symbol> {
@@ -436,6 +522,20 @@ impl SymbolTable {
         self.symbol_chain
             .last()
             .and_then(|id| self.symbols.get_mut(*id as usize))
+    }
+
+    /// Add a method to a struct's method list
+    pub fn add_method_to_struct(&mut self, struct_type_id: TypeId, func_id: FunctionId) {
+        if let TypeDefinition::Struct(s) = &mut self.types[struct_type_id as usize] {
+            s.methods.push(func_id);
+        }
+    }
+
+    /// Add a method to an enum's method list
+    pub fn add_method_to_enum(&mut self, enum_type_id: TypeId, func_id: FunctionId) {
+        if let TypeDefinition::Enum(e) = &mut self.types[enum_type_id as usize] {
+            e.methods.push(func_id);
+        }
     }
 }
 
