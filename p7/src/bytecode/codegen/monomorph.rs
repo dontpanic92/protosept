@@ -33,19 +33,18 @@ impl Generator {
                 return Err(SemanticError::TypeMismatch {
                     lhs: "struct".to_string(),
                     rhs: "non-struct".to_string(),
-                    pos: Some(SourcePos { line, col }),
+                    pos: SourcePos::at(line, col),
                 });
             }
         };
 
         // Validate number of type arguments matches type parameters
-        if base_struct.type_parameters.len() != type_args.len() {
-            return Err(SemanticError::TypeMismatch {
-                lhs: format!("{} type parameters", base_struct.type_parameters.len()),
-                rhs: format!("{} type arguments", type_args.len()),
-                pos: Some(SourcePos { line, col }),
-            });
-        }
+        Self::validate_type_arg_count(
+            base_struct.type_parameters.len(),
+            type_args.len(),
+            line,
+            col,
+        )?;
 
         // If the struct has no type parameters, just return it as-is
         if base_struct.type_parameters.is_empty() {
@@ -57,7 +56,7 @@ impl Generator {
             SemanticError::TypeMismatch {
                 lhs: "generic struct".to_string(),
                 rhs: "missing generic field types".to_string(),
-                pos: Some(SourcePos { line, col }),
+                pos: SourcePos::at(line, col),
             }
         })?;
 
@@ -136,19 +135,18 @@ impl Generator {
                 return Err(SemanticError::TypeMismatch {
                     lhs: "enum".to_string(),
                     rhs: "non-enum".to_string(),
-                    pos: Some(SourcePos { line, col }),
+                    pos: SourcePos::at(line, col),
                 });
             }
         };
 
         // Validate number of type arguments matches type parameters
-        if base_enum.type_parameters.len() != type_args.len() {
-            return Err(SemanticError::TypeMismatch {
-                lhs: format!("{} type parameters", base_enum.type_parameters.len()),
-                rhs: format!("{} type arguments", type_args.len()),
-                pos: Some(SourcePos { line, col }),
-            });
-        }
+        Self::validate_type_arg_count(
+            base_enum.type_parameters.len(),
+            type_args.len(),
+            line,
+            col,
+        )?;
 
         // If the enum has no type parameters, just return it as-is
         if base_enum.type_parameters.is_empty() {
@@ -160,7 +158,7 @@ impl Generator {
             SemanticError::TypeMismatch {
                 lhs: "generic enum".to_string(),
                 rhs: "missing generic variant types".to_string(),
-                pos: Some(SourcePos { line, col }),
+                pos: SourcePos::at(line, col),
             }
         })?;
 
@@ -254,7 +252,7 @@ impl Generator {
             return Err(SemanticError::TypeMismatch {
                 lhs: "function symbol".to_string(),
                 rhs: "not found".to_string(),
-                pos: Some(SourcePos { line, col }),
+                pos: SourcePos::at(line, col),
             });
         }
 
@@ -262,13 +260,12 @@ impl Generator {
         let base_func = self.symbol_table.get_function(base_func_id).clone();
 
         // Validate number of type arguments matches type parameters
-        if base_func.type_parameters.len() != type_args.len() {
-            return Err(SemanticError::TypeMismatch {
-                lhs: format!("{} type parameters", base_func.type_parameters.len()),
-                rhs: format!("{} type arguments", type_args.len()),
-                pos: Some(SourcePos { line, col }),
-            });
-        }
+        Self::validate_type_arg_count(
+            base_func.type_parameters.len(),
+            type_args.len(),
+            line,
+            col,
+        )?;
 
         // If the function has no type parameters, just return it as-is
         if base_func.type_parameters.is_empty() {
@@ -283,7 +280,7 @@ impl Generator {
             return Err(SemanticError::TypeMismatch {
                 lhs: "function symbol".to_string(),
                 rhs: "not found".to_string(),
-                pos: Some(SourcePos { line, col }),
+                pos: SourcePos::at(line, col),
             });
         }
 
@@ -295,7 +292,7 @@ impl Generator {
                 .ok_or_else(|| SemanticError::TypeMismatch {
                     lhs: "generic function".to_string(),
                     rhs: "missing generic parameter types".to_string(),
-                    pos: Some(SourcePos { line, col }),
+                    pos: SourcePos::at(line, col),
                 })?;
 
         let parsed_return_type = base_func.generic_return_type.as_ref();
@@ -306,7 +303,7 @@ impl Generator {
             .ok_or_else(|| SemanticError::TypeMismatch {
                 lhs: "generic function".to_string(),
                 rhs: "missing generic body".to_string(),
-                pos: Some(SourcePos { line, col }),
+                pos: SourcePos::at(line, col),
             })?;
 
         // Build type parameter substitution map for parsed types

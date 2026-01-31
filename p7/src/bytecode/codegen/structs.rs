@@ -1,5 +1,6 @@
 use crate::ast::{Expression, FunctionCall};
-use crate::errors::{SemanticError, SourcePos};
+use crate::errors::SemanticError;
+use crate::errors::SourcePos;
 use crate::semantic::{Type, TypeDefinition, TypeId};
 
 use super::{Generator, SaResult};
@@ -19,10 +20,7 @@ impl Generator {
                 return Err(SemanticError::TypeMismatch {
                     lhs: "Struct".to_string(),
                     rhs: "Non-struct type".to_string(),
-                    pos: Some(SourcePos {
-                        line: call_line,
-                        col: call_col,
-                    }),
+                    pos: SourcePos::at(call_line, call_col),
                 });
             }
         };

@@ -1,5 +1,6 @@
 use crate::ast::{Expression, Identifier};
-use crate::errors::{SemanticError, SourcePos};
+use crate::errors::SemanticError;
+use crate::errors::SourcePos;
 use crate::semantic::Type;
 
 use super::{Generator, SaResult};
@@ -47,10 +48,7 @@ impl Generator {
         if has_named && has_positional {
             return Err(SemanticError::MixedNamedAndPositional {
                 name: call_name.to_string(),
-                pos: Some(SourcePos {
-                    line: call_line,
-                    col: call_col,
-                }),
+                pos: SourcePos::at(call_line, call_col),
             });
         }
 
@@ -75,10 +73,7 @@ impl Generator {
                     return Err(SemanticError::TypeMismatch {
                         lhs: param_name.clone(),
                         rhs: "missing required argument".to_string(),
-                        pos: Some(SourcePos {
-                            line: call_line,
-                            col: call_col,
-                        }),
+                        pos: SourcePos::at(call_line, call_col),
                     });
                 }
             }
@@ -95,10 +90,7 @@ impl Generator {
                 return Err(SemanticError::TypeMismatch {
                     lhs: format!("expected {} args", param_names.len()),
                     rhs: format!("{} provided", arguments.len()),
-                    pos: Some(SourcePos {
-                        line: call_line,
-                        col: call_col,
-                    }),
+                    pos: SourcePos::at(call_line, call_col),
                 });
             }
 
@@ -114,10 +106,7 @@ impl Generator {
                     return Err(SemanticError::TypeMismatch {
                         lhs: param_names[i].clone(),
                         rhs: "missing required argument".to_string(),
-                        pos: Some(SourcePos {
-                            line: call_line,
-                            col: call_col,
-                        }),
+                        pos: SourcePos::at(call_line, call_col),
                     });
                 }
             }
@@ -137,10 +126,7 @@ impl Generator {
             return Err(SemanticError::TypeMismatch {
                 lhs: format!("{} args expected", param_types.len()),
                 rhs: format!("{} provided", arguments.len()),
-                pos: Some(SourcePos {
-                    line: call_line,
-                    col: call_col,
-                }),
+                pos: SourcePos::at(call_line, call_col),
             });
         }
 
@@ -161,10 +147,7 @@ impl Generator {
                         return Err(SemanticError::TypeMismatch {
                             lhs: arg_ty.to_string(),
                             rhs: param_ty.to_string(),
-                            pos: Some(SourcePos {
-                                line: call_line,
-                                col: call_col,
-                            }),
+                            pos: SourcePos::at(call_line, call_col),
                         });
                     }
                 }
@@ -172,10 +155,7 @@ impl Generator {
                     return Err(SemanticError::TypeMismatch {
                         lhs: arg_ty.to_string(),
                         rhs: param_ty.to_string(),
-                        pos: Some(SourcePos {
-                            line: call_line,
-                            col: call_col,
-                        }),
+                        pos: SourcePos::at(call_line, call_col),
                     });
                 }
                 (_, Type::Reference(_)) => {
@@ -183,10 +163,7 @@ impl Generator {
                     return Err(SemanticError::TypeMismatch {
                         lhs: arg_ty.to_string(),
                         rhs: param_ty.to_string(),
-                        pos: Some(SourcePos {
-                            line: call_line,
-                            col: call_col,
-                        }),
+                        pos: SourcePos::at(call_line, call_col),
                     });
                 }
                 _ => {
@@ -195,10 +172,7 @@ impl Generator {
                         return Err(SemanticError::TypeMismatch {
                             lhs: format!("argument type {}", arg_ty.to_string()),
                             rhs: format!("parameter type {}", param_ty.to_string()),
-                            pos: Some(SourcePos {
-                                line: call_line,
-                                col: call_col,
-                            }),
+                            pos: SourcePos::at(call_line, call_col),
                         });
                     }
                 }

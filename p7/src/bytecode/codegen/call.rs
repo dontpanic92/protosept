@@ -58,15 +58,7 @@ impl Generator {
         call_line: usize,
         call_col: usize,
     ) -> SaResult<Type> {
-        let symbol_id = self.symbol_table.find_symbol_in_scope(&base.name).ok_or(
-            SemanticError::FunctionNotFound {
-                name: base.name.clone(),
-                pos: Some(SourcePos {
-                    line: base.line,
-                    col: base.col,
-                }),
-            },
-        )?;
+        let symbol_id = self.require_symbol_in_scope(&base.name, base.line, base.col)?;
 
         let symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
         let symbol_kind = symbol.kind.clone();
@@ -95,10 +87,7 @@ impl Generator {
             _ => Err(SemanticError::TypeMismatch {
                 lhs: "function or struct".to_string(),
                 rhs: format!("symbol kind: {:?}", symbol.kind),
-                pos: Some(SourcePos {
-                    line: base.line,
-                    col: base.col,
-                }),
+                pos: base.pos(),
             }),
         }
     }
@@ -111,10 +100,7 @@ impl Generator {
         type_args: &[crate::ast::Type],
         arguments: CallArgs,
     ) -> SaResult<Type> {
-        let mut resolved_type_args = Vec::new();
-        for arg in type_args {
-            resolved_type_args.push(self.get_semantic_type(arg)?);
-        }
+        let resolved_type_args = self.resolve_type_args(type_args)?;
 
         let (_addr, mono_func_id, symbol_id) = self.monomorphize_function(
             func_id,
@@ -177,10 +163,7 @@ impl Generator {
             Err(SemanticError::TypeMismatch {
                 lhs: "struct".to_string(),
                 rhs: ty.to_string(),
-                pos: Some(SourcePos {
-                    line: call_line,
-                    col: call_col,
-                }),
+                pos: SourcePos::at(call_line, call_col),
             })
         }
     }
@@ -207,10 +190,7 @@ impl Generator {
             Err(SemanticError::TypeMismatch {
                 lhs: "enum".to_string(),
                 rhs: ty.to_string(),
-                pos: Some(SourcePos {
-                    line: call_line,
-                    col: call_col,
-                }),
+                pos: SourcePos::at(call_line, call_col),
             })
         }
     }
@@ -320,10 +300,7 @@ impl Generator {
         } else {
             Ok(Some(SemanticError::FunctionNotFound {
                 name: format!("{}.{}", ident.name, field.name),
-                pos: Some(SourcePos {
-                    line: field.line,
-                    col: field.col,
-                }),
+                pos: field.pos(),
             }))
         }
     }
@@ -367,10 +344,7 @@ impl Generator {
             .find_symbol_in_scope(&ident.name)
             .ok_or(SemanticError::FunctionNotFound {
                 name: format!("{}.{}", ident.name, field.name),
-                pos: Some(SourcePos {
-                    line: field.line,
-                    col: field.col,
-                }),
+                pos: field.pos(),
             })?;
 
         let struct_symbol = self.symbol_table.get_symbol(struct_symbol_id).unwrap();
@@ -381,10 +355,7 @@ impl Generator {
                 .cloned()
                 .ok_or(SemanticError::FunctionNotFound {
                     name: format!("{}.{}", ident.name, field.name),
-                    pos: Some(SourcePos {
-                        line: field.line,
-                        col: field.col,
-                    }),
+                    pos: field.pos(),
                 })?;
 
         let method_symbol = self.symbol_table.get_symbol(method_symbol_id).unwrap();
@@ -393,10 +364,7 @@ impl Generator {
             _ => {
                 return Err(SemanticError::FunctionNotFound {
                     name: format!("{}.{}", ident.name, field.name),
-                    pos: Some(SourcePos {
-                        line: field.line,
-                        col: field.col,
-                    }),
+                    pos: field.pos(),
                 });
             }
         };
@@ -495,10 +463,7 @@ impl Generator {
             .map(|(_, params, ret)| (params.clone(), ret.clone()))
             .ok_or_else(|| SemanticError::FunctionNotFound {
                 name: format!("proto method {}", field.name),
-                pos: Some(SourcePos {
-                    line: field.line,
-                    col: field.col,
-                }),
+                pos: field.pos(),
             })?;
 
         // Process arguments (skip first param which is self)
@@ -584,10 +549,7 @@ impl Generator {
                 return Err(SemanticError::TypeMismatch {
                     lhs: "0 args expected".to_string(),
                     rhs: format!("{} provided", arguments.len()),
-                    pos: Some(SourcePos {
-                        line: call_line,
-                        col: call_col,
-                    }),
+                    pos: SourcePos::at(call_line, call_col),
                 });
             }
             self.builder.call(method_symbol_id);
@@ -631,10 +593,7 @@ impl Generator {
                 .cloned()
                 .ok_or(SemanticError::FunctionNotFound {
                     name: field.name.clone(),
-                    pos: Some(SourcePos {
-                        line: field.line,
-                        col: field.col,
-                    }),
+                    pos: field.pos(),
                 })?;
 
         let method_symbol = self.symbol_table.get_symbol(method_symbol_id).unwrap();
@@ -643,10 +602,7 @@ impl Generator {
             _ => {
                 return Err(SemanticError::FunctionNotFound {
                     name: field.name.clone(),
-                    pos: Some(SourcePos {
-                        line: field.line,
-                        col: field.col,
-                    }),
+                    pos: field.pos(),
                 });
             }
         };
@@ -771,10 +727,7 @@ impl Generator {
         let Some(symbol_id) = self.symbol_table.find_symbol_in_scope(&call_name) else {
             return Err(SemanticError::FunctionNotFound {
                 name: call_name,
-                pos: Some(SourcePos {
-                    line: call_line,
-                    col: call_col,
-                }),
+                pos: SourcePos::at(call_line, call_col),
             });
         };
 
@@ -805,10 +758,7 @@ impl Generator {
             _ => {
                 return Err(SemanticError::FunctionNotFound {
                     name: call_name.clone(),
-                    pos: Some(SourcePos {
-                        line: call_line,
-                        col: call_col,
-                    }),
+                    pos: SourcePos::at(call_line, call_col),
                 });
             }
         };

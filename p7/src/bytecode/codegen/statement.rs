@@ -96,10 +96,7 @@ impl Generator {
                 return Err(SemanticError::TypeMismatch {
                     lhs: format!("inferred type {}", inferred_ty.to_string()),
                     rhs: format!("annotated type {}", annotated_ty.to_string()),
-                    pos: Some(SourcePos {
-                        line: identifier.line,
-                        col: identifier.col,
-                    }),
+                    pos: identifier.pos(),
                 });
             }
 
@@ -116,10 +113,7 @@ impl Generator {
             .add_variable(identifier.name.clone(), final_ty, is_mutable)
             .map_err(|_| SemanticError::VariableOutsideFunction {
                 name: identifier.name.clone(),
-                pos: Some(SourcePos {
-                    line: identifier.line,
-                    col: identifier.col,
-                }),
+                pos: identifier.pos(),
             })?;
 
         self.builder.stvar(var_id);

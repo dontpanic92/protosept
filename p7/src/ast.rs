@@ -1,10 +1,28 @@
 use crate::lexer::Token;
 
+use crate::errors::SourcePos;
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Identifier {
     pub name: String,
     pub line: usize,
     pub col: usize,
+}
+
+impl Identifier {
+    /// Create a synthetic identifier with position (0, 0)
+    pub fn synthetic(name: impl Into<String>) -> Self {
+        Identifier {
+            name: name.into(),
+            line: 0,
+            col: 0,
+        }
+    }
+
+    /// Get the source position as Option<SourcePos>
+    pub fn pos(&self) -> Option<SourcePos> {
+        SourcePos::at(self.line, self.col)
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -310,5 +328,11 @@ impl Expression {
             Expression::Continue { pos, .. } => *pos,
             _ => (0, 0),
         }
+    }
+
+    /// Get the source position as Option<SourcePos>
+    pub fn source_pos(&self) -> Option<SourcePos> {
+        let (line, col) = self.get_pos();
+        SourcePos::at(line, col)
     }
 }
