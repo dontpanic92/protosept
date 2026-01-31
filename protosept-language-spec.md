@@ -196,6 +196,197 @@ helpers.public_helper();   // ok
 helpers.private_helper();  // ERROR
 ```
 
+### 1.2 Name resolution (v1)
+
+Name resolution determines which declaration a given identifier refers to. Protosept uses two distinct namespaces and employs lexical scoping with module-level imports.
+
+#### 1.2.1 Two namespaces
+
+Protosept maintains two separate namespaces:
+
+1. **Type namespace**: For types (structs, enums, protos, type parameters).
+2. **Value namespace**: For values (functions, variables, enum variants, struct/enum constructors).
+
+A name may simultaneously exist in both namespaces without conflict:
+
+```p7
+struct Point(x: int, y: int);
+let Point = 5;  // ok: `Point` is a type AND a value binding (though not idiomatic)
+```
+
+In type position (e.g., after `:`), only the type namespace is consulted. In expression position, only the value namespace is consulted.
+
+#### 1.2.2 Scopes
+
+Scopes form a nested hierarchy:
+
+1. **Module scope**: Top-level declarations in the current module.
+2. **Import scope**: Names introduced by `import` statements (effectively part of module scope).
+3. **Block scopes**: Introduced by `{ }`, `fn` bodies, `loop`, etc.
+
+Name lookup proceeds from the innermost scope outward until a binding is found or the search fails.
+
+#### 1.2.3 Imports introduce a module binding
+
+An `import` statement introduces a **value binding** for the imported module:
+
+```p7
+import std.collections.list;
+```
+
+This binds `list` as a **module value** in the importing module's scope. Module members are accessed via qualification: `list.new_list()`.
+
+- The import binding exists in the **value namespace**.
+- A module binding is a first-class value that supports member access via `.` for its public declarations.
+
+#### 1.2.4 Constructors are values (v1)
+
+Structs and enums introduce bindings in both namespaces:
+
+- **Type namespace**: The type name (e.g., `Point` as a type).
+- **Value namespace**: The constructor (e.g., `Point(...)` as a function-like value).
+
+Example:
+```p7
+struct Point(x: int, y: int);
+
+let p: Point = Point(1, 2);
+//     ^^^^^   ^^^^^^^^^^^^
+//     type    constructor (value)
+```
+
+Enum variants are **values only** (they exist only in the value namespace, not as types):
+
+```p7
+enum Status(
+  Pending,
+  Active: int,
+);
+
+let s1 = Status.Pending;        // value
+let s2 = Status.Active(42);     // value (constructor)
+let t: Status = s1;             // `Status` is the type
+```
+
+#### 1.2.5 Qualified names
+
+A **qualified name** uses `.` to access a member of a module, type, or value:
+
+- **Module qualification**: `moduleName.member`
+  ```p7
+  import myapp.util.helpers;
+  helpers.do_something();
+  ```
+
+- **Type-associated members** (e.g., enum variants, associated functions):
+  ```p7
+  Status.Pending
+  Status.Active(42)
+  ```
+
+Qualified names are resolved left-to-right: the left-hand side determines the context, and the right-hand side is resolved within that context.
+
+#### 1.2.6 Resolution in type position
+
+In type position (e.g., `let x: T`, `fn f() -> T`, field types), the compiler resolves names as follows:
+
+1. **Unqualified name** `T`:
+   - Search type namespace in current scope (including type parameters).
+   - If not found, search module scope for type declarations.
+   - If not found, ERROR: "unresolved type `T`".
+
+2. **Qualified name** `M.T`:
+   - Resolve `M` in the value namespace (must be a module).
+   - Search `M`'s type namespace for `T`.
+   - If not found or not visible, ERROR.
+
+Example:
+```p7
+import std.collections.list;
+
+fn process(items: list.List<int>) -> int {
+  //               ^^^^^^^^^^^^^^
+  //               `list` is a module, `List` is a type in that module
+  ...
+}
+```
+
+#### 1.2.7 Resolution in expression position
+
+In expression position, the compiler resolves names in the value namespace.
+
+##### 1.2.7.1 Call-head resolution (v1)
+
+When an identifier appears in call position `f(...)`, the compiler:
+
+1. Looks up `f` in the value namespace.
+2. If `f` is a constructor (struct or enum), it is invoked as a constructor.
+3. If `f` is a function, it is invoked as a function call.
+4. If `f` is not callable, ERROR: "`f` is not callable".
+
+Qualified calls follow the same pattern:
+
+```p7
+import myapp.util;
+
+util.helper();          // `util` is a module, `helper` is a function
+Status.Active(42);      // `Status` is a type (constructor), `Active` is a variant constructor
+```
+
+##### 1.2.7.2 Dotted resolution: module qualification vs member access
+
+The `.` operator is context-sensitive:
+
+- **Module qualification**: When the left-hand side is a module binding, `.` accesses module members.
+  ```p7
+  import myapp.services;
+  services.auth();  // `services` is a module
+  ```
+
+- **Member access**: When the left-hand side is a value, `.` accesses struct fields or invokes methods.
+  ```p7
+  let p = Point(1, 2);
+  p.x               // field access
+  p.distance()      // method call
+  ```
+
+The compiler determines which interpretation applies based on the type of the left-hand side.
+
+#### 1.2.8 Enum variant qualification (v1)
+
+Enum variants are always accessed via the enum type name:
+
+```p7
+enum Status(Pending, Active: int);
+
+let s = Status.Pending;      // ok
+let s = Pending;             // ERROR: unresolved name `Pending`
+```
+
+Rationale: This eliminates ambiguity when multiple enums define variants with the same name.
+
+#### 1.2.9 Generic parameter naming restriction (v1)
+
+Type parameters must not shadow type names from outer scopes:
+
+```p7
+struct Outer<T>(value: T);
+
+struct Inner<T>(         // ok: `T` is a new parameter
+  outer: Outer<T>,       // refers to `Inner`'s `T`
+);
+
+fn process<T>(x: T) {
+  struct Local<T>(v: T); // ERROR: type parameter `T` shadows outer `T`
+}
+```
+
+**Rule**: A type parameter name must not conflict with:
+- A type parameter in an enclosing scope (function or type declaration).
+- A type name declared in the module scope.
+
+This restriction prevents confusion about which `T` a reference refers to. If shadowing is needed, use a different name (e.g., `U`, `V`).
+
 ---
 
 ## 2. Lexical structure
@@ -590,6 +781,24 @@ let x = 10;
   x = 30;      // ok: x is var
 }
 x  // still 10; outer x is immutable
+```
+
+**Import shadowing restriction (v1)**
+
+A `let` or `var` binding must not shadow an import binding in the same scope.
+
+Example (ERROR):
+```p7
+import std.collections.list;
+let list = 5;  // ERROR: `list` shadows the import binding
+```
+
+Rationale: Import bindings are module-level and typically accessed throughout the module. Allowing local bindings to shadow them would make the imported module inaccessible within that scope, which is likely a programmer error. If the name is truly needed for a local variable, rename either the import (using `as`) or the variable.
+
+Permitted workaround:
+```p7
+import std.collections.list as mylist;
+let list = 5;  // ok: no shadowing
 ```
 
 ### 5.3 Mutation and identity
