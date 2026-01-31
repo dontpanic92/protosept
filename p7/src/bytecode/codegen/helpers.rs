@@ -1,13 +1,74 @@
+use crate::ast::Type as ParsedType;
 use crate::errors::SemanticError;
 use crate::errors::SourcePos;
 use crate::{
     ast::{Expression, Identifier, Pattern},
-    semantic::{PrimitiveType, Type},
+    semantic::{PrimitiveType, SymbolId, Type},
 };
 
 use super::{Generator, SaResult};
 
 impl Generator {
+    /// Look up a symbol in scope, returning an error if not found
+    pub(super) fn require_symbol_in_scope(
+        &self,
+        name: &str,
+        line: usize,
+        col: usize,
+    ) -> SaResult<SymbolId> {
+        self.symbol_table.find_symbol_in_scope(name).ok_or_else(|| {
+            SemanticError::FunctionNotFound {
+                name: name.to_string(),
+                pos: SourcePos::at(line, col),
+            }
+        })
+    }
+
+    /// Look up a type in scope, returning an error if not found
+    pub(super) fn require_type_in_scope(
+        &self,
+        name: &str,
+        line: usize,
+        col: usize,
+    ) -> SaResult<Type> {
+        self.symbol_table
+            .find_type_in_scope(name)
+            .ok_or_else(|| SemanticError::TypeNotFound {
+                name: name.to_string(),
+                pos: SourcePos::at(line, col),
+            })
+    }
+
+    /// Look up a type in scope from an Identifier, returning an error if not found
+    pub(super) fn require_type_from_identifier(&self, ident: &Identifier) -> SaResult<Type> {
+        self.require_type_in_scope(&ident.name, ident.line, ident.col)
+    }
+
+    /// Resolve a list of parsed type arguments to semantic types
+    pub(super) fn resolve_type_args(&mut self, type_args: &[ParsedType]) -> SaResult<Vec<Type>> {
+        type_args
+            .iter()
+            .map(|arg| self.get_semantic_type(arg))
+            .collect()
+    }
+
+    /// Validate that the number of type arguments matches the expected count
+    pub(super) fn validate_type_arg_count(
+        expected: usize,
+        actual: usize,
+        line: usize,
+        col: usize,
+    ) -> SaResult<()> {
+        if expected != actual {
+            return Err(SemanticError::TypeMismatch {
+                lhs: format!("{} type parameters", expected),
+                rhs: format!("{} type arguments", actual),
+                pos: SourcePos::at(line, col),
+            });
+        }
+        Ok(())
+    }
+
     /// Helper to add a string constant to the pool and return its index
     pub(super) fn add_string_constant(&mut self, s: String) -> u32 {
         if let Some(idx) = self
@@ -43,10 +104,7 @@ impl Generator {
                 if method.is_none() {
                     return Err(SemanticError::FunctionNotFound {
                         name: format!("string.{}", field.name),
-                        pos: Some(SourcePos {
-                            line: field.line,
-                            col: field.col,
-                        }),
+                        pos: field.pos(),
                     });
                 }
 
@@ -85,10 +143,7 @@ impl Generator {
             _ => {
                 return Err(SemanticError::FunctionNotFound {
                     name: format!("{:?}.{}", prim_ty, field.name),
-                    pos: Some(SourcePos {
-                        line: field.line,
-                        col: field.col,
-                    }),
+                    pos: field.pos(),
                 });
             }
         }
@@ -122,10 +177,7 @@ impl Generator {
                 .add_variable(name.name.clone(), value_type, false) // Pattern bindings are immutable
                 .map_err(|_| SemanticError::VariableOutsideFunction {
                     name: name.name.clone(),
-                    pos: Some(SourcePos {
-                        line: name.line,
-                        col: name.col,
-                    }),
+                    pos: name.pos(),
                 })?;
             self.builder.stvar(var_id);
         } else {
@@ -200,10 +252,7 @@ impl Generator {
             .find_type_in_scope(&proto_name.name)
             .ok_or_else(|| SemanticError::TypeNotFound {
                 name: proto_name.name.clone(),
-                pos: Some(SourcePos {
-                    line: proto_name.line,
-                    col: proto_name.col,
-                }),
+                pos: proto_name.pos(),
             })?;
 
         match proto_type {

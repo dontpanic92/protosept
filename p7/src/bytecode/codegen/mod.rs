@@ -16,12 +16,12 @@ mod control_flow;
 pub(crate) use control_flow::LoopContext;
 mod call;
 mod enums;
-mod patterns;
-mod structs;
-mod expr_gen;
-mod stmt_gen;
+mod expression;
 mod helpers;
 mod monomorph;
+mod patterns;
+mod statement;
+mod structs;
 mod type_check;
 
 use crate::errors::SemanticError;

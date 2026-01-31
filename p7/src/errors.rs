@@ -6,6 +6,13 @@ pub struct SourcePos {
     pub col: usize,
 }
 
+impl SourcePos {
+    /// Create an Option<SourcePos> from line and column numbers
+    pub fn at(line: usize, col: usize) -> Option<Self> {
+        Some(SourcePos { line, col })
+    }
+}
+
 impl fmt::Display for SourcePos {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "line {} column {}", self.line, self.col)

@@ -1,5 +1,5 @@
 use crate::ast::{Expression, Identifier};
-use crate::errors::{SemanticError, SourcePos};
+use crate::errors::SemanticError;
 use crate::semantic::{Type, TypeDefinition, TypeId};
 
 use super::{Generator, SaResult};
@@ -27,10 +27,7 @@ impl Generator {
                 return Err(SemanticError::TypeMismatch {
                     lhs: "Enum".to_string(),
                     rhs: "Non-enum type".to_string(),
-                    pos: Some(SourcePos {
-                        line: callee_expr.get_pos().0,
-                        col: callee_expr.get_pos().1,
-                    }),
+                    pos: callee_expr.source_pos(),
                 });
             }
         };
@@ -48,10 +45,7 @@ impl Generator {
             return Err(SemanticError::TypeMismatch {
                 lhs: format!("Enum '{}'", enum_def.qualified_name),
                 rhs: format!("Unknown variant '{}'", variant_name),
-                pos: Some(SourcePos {
-                    line: callee_expr.get_pos().0,
-                    col: callee_expr.get_pos().1,
-                }),
+                pos: callee_expr.source_pos(),
             });
         };
 
@@ -64,10 +58,7 @@ impl Generator {
                     variant_name
                 ),
                 rhs: format!("{} provided", arguments.len()),
-                pos: Some(SourcePos {
-                    line: callee_expr.get_pos().0,
-                    col: callee_expr.get_pos().1,
-                }),
+                pos: callee_expr.source_pos(),
             });
         }
 
@@ -77,10 +68,7 @@ impl Generator {
             return Err(SemanticError::TypeMismatch {
                 lhs: format!("Unit variant '{}'", variant_name),
                 rhs: "Cannot call unit variant with arguments".to_string(),
-                pos: Some(SourcePos {
-                    line: callee_expr.get_pos().0,
-                    col: callee_expr.get_pos().1,
-                }),
+                pos: callee_expr.source_pos(),
             });
         }
 
@@ -98,10 +86,7 @@ impl Generator {
                 return Err(SemanticError::TypeMismatch {
                     lhs: arg_type.to_string(),
                     rhs: expected_type.to_string(),
-                    pos: Some(SourcePos {
-                        line: callee_expr.get_pos().0,
-                        col: callee_expr.get_pos().1,
-                    }),
+                    pos: callee_expr.source_pos(),
                 });
             }
         }

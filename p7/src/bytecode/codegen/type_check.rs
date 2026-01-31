@@ -1,6 +1,5 @@
 use crate::ast::Type as ParsedType;
 use crate::errors::SemanticError;
-use crate::errors::SourcePos;
 use crate::semantic::{PrimitiveType, SymbolKind, Type, TypeDefinition, TypeId};
 
 use super::{Generator, SaResult};
@@ -40,10 +39,7 @@ impl Generator {
                 } else {
                     Err(SemanticError::TypeNotFound {
                         name: identifier.name.clone(),
-                        pos: Some(SourcePos {
-                            line: identifier.line,
-                            col: identifier.col,
-                        }),
+                        pos: identifier.pos(),
                     })
                 }
             }
@@ -73,23 +69,10 @@ impl Generator {
                 // Implement proper generic type resolution with monomorphization
 
                 // First, find the base generic type
-                let base_type = if let Some(ty) = self.symbol_table.find_type_in_scope(&base.name) {
-                    ty
-                } else {
-                    return Err(SemanticError::TypeNotFound {
-                        name: base.name.clone(),
-                        pos: Some(SourcePos {
-                            line: base.line,
-                            col: base.col,
-                        }),
-                    });
-                };
+                let base_type = self.require_type_from_identifier(base)?;
 
                 // Resolve all type arguments
-                let mut resolved_type_args = Vec::new();
-                for arg in type_args {
-                    resolved_type_args.push(self.get_semantic_type(arg)?);
-                }
+                let resolved_type_args = self.resolve_type_args(type_args)?;
 
                 // For now, only handle struct and enum monomorphization
                 match base_type {
