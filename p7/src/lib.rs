@@ -159,3 +159,12 @@ pub fn compile_and_run(
     let module = compile(contents.clone())?;
     run(module, entrypoint)
 }
+
+pub fn compile_and_run_with_provider(
+    contents: String,
+    entrypoint: &str,
+    provider: Box<dyn ModuleProvider>,
+) -> Result<interpreter::context::Data, Proto7Error> {
+    let module = compile_with_provider(contents, provider)?;
+    run(module, entrypoint)
+}
