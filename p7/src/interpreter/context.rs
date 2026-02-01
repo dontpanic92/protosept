@@ -206,8 +206,7 @@ impl Context {
     }
 
     pub fn load_module(&mut self, module: Module) {
-        // First, push the main module to ensure it's at index 0
-        let main_module_idx = self.modules.len();
+        // Push the main module first to ensure it's at index 0
         self.build_vtable(&module);
         
         // Extract imported modules before pushing the main module
@@ -218,12 +217,12 @@ impl Context {
         for (module_path, imported) in imported_modules {
             let imported_module_idx = self.modules.len();
             self.imported_modules.insert(module_path.clone(), imported_module_idx);
-            self.load_module_internal(imported.as_ref().clone());
+            self.load_module_internal(*imported);
         }
     }
 
-    /// Internal helper to load a module without registering it in imported_modules
-    /// (to avoid conflicts when loading the main module which is always at index 0)
+    /// Helper to load a module and recursively load its dependencies.
+    /// Registers each module in imported_modules if not already present.
     fn load_module_internal(&mut self, module: Module) {
         self.build_vtable(&module);
         
@@ -236,7 +235,7 @@ impl Context {
             if !self.imported_modules.contains_key(&module_path) {
                 let module_idx = self.modules.len();
                 self.imported_modules.insert(module_path.clone(), module_idx);
-                self.load_module_internal(imported.as_ref().clone());
+                self.load_module_internal(*imported);
             }
         }
     }

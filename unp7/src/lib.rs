@@ -291,6 +291,7 @@ mod tests {
             functions: Vec::new(),
             types: Vec::new(),
             string_constants: Vec::new(),
+            imported_modules: std::collections::HashMap::new(),
         };
 
         let output = disassemble_module(&module);

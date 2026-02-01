@@ -838,7 +838,16 @@ impl Generator {
         )?;
 
         self.push_typed_argument_list(ordered_exprs, &function_def.params, call_line, call_col)?;
-        self.builder.call(symbol_id);
+        
+        // Check if this is an intrinsic function
+        if let Some(intrinsic_name) = &function_def.intrinsic_name {
+            // For intrinsic functions, use InvokeHost instead of Call
+            let string_id = self.add_string_constant(intrinsic_name.clone());
+            self.builder.call_host_function(string_id);
+        } else {
+            // For regular functions, use Call
+            self.builder.call(symbol_id);
+        }
 
         Ok(function_def.return_type.clone())
     }
