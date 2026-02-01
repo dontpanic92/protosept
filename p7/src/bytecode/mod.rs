@@ -157,6 +157,12 @@ pub enum Instruction {
     // Parameters: string_index (index into Module.string_constants for function name)
     #[brw(magic = 38u8)]
     InvokeHost(u32),
+
+    // Call an external function from another module.
+    // Expects: [..., args] -> pops args, calls external function, pushes result
+    // Parameters: (module_path_idx, symbol_name_idx) where both are indices into Module.string_constants
+    #[brw(magic = 39u8)]
+    CallExternal(u32, u32),
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {
@@ -176,13 +182,14 @@ pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {
     insts
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Module {
     pub instructions: Vec<u8>,
     pub symbols: Vec<Symbol>,
     pub functions: Vec<crate::semantic::Function>,
     pub types: Vec<crate::semantic::TypeDefinition>,
     pub string_constants: Vec<String>,
+    pub imported_modules: std::collections::HashMap<String, Box<Module>>,
 }
 
 impl Module {

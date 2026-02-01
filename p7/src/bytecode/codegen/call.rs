@@ -367,12 +367,11 @@ impl Generator {
             let string_id = self.add_string_constant(intrinsic_name.clone());
             self.builder.call_host_function(string_id);
         } else {
-            // For non-intrinsic functions, we need to inline the function into the main module
-            // This requires importing the function's symbol and bytecode
-            return Err(SemanticError::Other(format!(
-                "Cross-module calls to non-intrinsic functions not yet supported: {}.{}",
-                module_path, field.name
-            )));
+            // For non-intrinsic functions, emit CallExternal instruction
+            // Store module path and function name in string constants for runtime resolution
+            let module_path_idx = self.add_string_constant(module_path.clone());
+            let symbol_name_idx = self.add_string_constant(field.name.clone());
+            self.builder.call_external(module_path_idx, symbol_name_idx);
         }
 
         Ok(Some(ret_type))

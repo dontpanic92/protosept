@@ -200,6 +200,12 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::InvokeHost(string_index));
     }
 
+    /// Call an external function from another module.
+    /// Both module_path_idx and symbol_name_idx are indices into the string constants table.
+    pub fn call_external(&mut self, module_path_idx: u32, symbol_name_idx: u32) {
+        self.add_instruction(Instruction::CallExternal(module_path_idx, symbol_name_idx));
+    }
+
     pub fn get_bytecode(&self) -> Vec<u8> {
         self.writer.get_ref().clone()
     }
