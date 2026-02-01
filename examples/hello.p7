@@ -1,4 +1,7 @@
+import std.io;
+
 fn main() -> int {
+    io.println("Hello world!");
     let x = 1 + 2;
     x * 10
 }

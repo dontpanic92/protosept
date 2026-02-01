@@ -1205,7 +1205,16 @@ impl Parser {
             None
         };
 
-        let body = self.parse_block()?;
+        // Check if this function has an @intrinsic attribute
+        let has_intrinsic = attributes.iter().any(|attr| attr.name.name == "intrinsic");
+
+        // For intrinsic functions, allow semicolon instead of body
+        let body = if has_intrinsic && self.peek_match(TokenType::Semicolon) {
+            self.consume(); // consume ';'
+            vec![] // Empty body for intrinsic functions
+        } else {
+            self.parse_block()?
+        };
 
         Ok(FunctionDeclaration {
             is_pub,
