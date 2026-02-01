@@ -1,0 +1,11 @@
+[package]
+name = "p7-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "p7"
+path = "src/main.rs"
+
+[dependencies]
+p7 = { path = "../p7" }

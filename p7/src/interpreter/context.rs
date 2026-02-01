@@ -138,6 +138,7 @@ pub struct StackFrame {
     pub locals: Vec<Data>,
     pub stack: Vec<Data>,
     pub pc: usize,
+    pub module_idx: usize, // Which module this frame is executing from
 }
 
 impl StackFrame {
@@ -147,6 +148,7 @@ impl StackFrame {
             locals: Vec::new(),
             stack: Vec::new(),
             pc: std::usize::MAX,
+            module_idx: 0, // Default to main module
         }
     }
 }
@@ -167,6 +169,8 @@ pub struct Context {
     vtable: HashMap<(u32, u32, u32), u32>,
     // Host function registry: function_name -> host function
     host_functions: HashMap<String, HostFunction>,
+    // Imported modules registry: module_path -> module_index in modules Vec
+    imported_modules: HashMap<String, usize>,
 }
 
 impl Context {
@@ -180,6 +184,7 @@ impl Context {
             gc_threshold: 100, // Run GC after every 100 allocations
             vtable: HashMap::new(),
             host_functions: HashMap::new(),
+            imported_modules: HashMap::new(),
         };
 
         // Register builtin host functions
@@ -191,6 +196,8 @@ impl Context {
     fn register_builtin_host_functions(&mut self) {
         self.host_functions
             .insert("string.len_bytes".to_string(), host_string_len_bytes);
+        self.host_functions
+            .insert("std.io.println".to_string(), host_std_io_println);
     }
 
     /// Register a custom host function
@@ -199,8 +206,38 @@ impl Context {
     }
 
     pub fn load_module(&mut self, module: Module) {
+        // Push the main module first to ensure it's at index 0
         self.build_vtable(&module);
+        
+        // Extract imported modules before pushing the main module
+        let imported_modules = module.imported_modules.clone();
         self.modules.push(module);
+        
+        // Now register and load all imported modules
+        for (module_path, imported) in imported_modules {
+            let imported_module_idx = self.modules.len();
+            self.imported_modules.insert(module_path.clone(), imported_module_idx);
+            self.load_module_internal(*imported);
+        }
+    }
+
+    /// Helper to load a module and recursively load its dependencies.
+    /// Registers each module in imported_modules if not already present.
+    fn load_module_internal(&mut self, module: Module) {
+        self.build_vtable(&module);
+        
+        // Extract imported modules before pushing this module
+        let imported_modules = module.imported_modules.clone();
+        self.modules.push(module);
+        
+        // Register imported modules of this module
+        for (module_path, imported) in imported_modules {
+            if !self.imported_modules.contains_key(&module_path) {
+                let module_idx = self.modules.len();
+                self.imported_modules.insert(module_path.clone(), module_idx);
+                self.load_module_internal(*imported);
+            }
+        }
     }
 
     /// Build vtable for dynamic dispatch by mapping (concrete_type_id, proto_id, method_name) -> symbol_id
@@ -291,9 +328,16 @@ impl Context {
             return Err(RuntimeError::EntryPointNotFound);
         }
 
-        while self.stack_frame()?.pc < self.modules[0].instructions.len() {
+        loop {
+            let module_idx = self.stack_frame()?.module_idx;
             let pc = self.stack_frame()?.pc;
-            let mut reader = Cursor::new(&self.modules[0].instructions[pc..]);
+            
+            // Check if we've reached the end of the current module's instructions
+            if pc >= self.modules[module_idx].instructions.len() {
+                break;
+            }
+            
+            let mut reader = Cursor::new(&self.modules[module_idx].instructions[pc..]);
             let instruction = Instruction::read(&mut reader).unwrap();
 
             self.stack_frame_mut()?.pc += reader.position() as usize;
@@ -302,7 +346,8 @@ impl Context {
                 Instruction::Ldi(val) => self.stack_frame_mut()?.stack.push(Data::Int(val)),
                 Instruction::Ldf(val) => self.stack_frame_mut()?.stack.push(Data::Float(val)),
                 Instruction::Lds(string_index) => {
-                    let string_const = self.modules[0]
+                    let module_idx = self.stack_frame()?.module_idx;
+                    let string_const = self.modules[module_idx]
                         .string_constants
                         .get(string_index as usize)
                         .ok_or_else(|| {
@@ -456,8 +501,9 @@ impl Context {
                     }
                 }
                 Instruction::Call(symbol_id) => {
+                    let module_idx = self.stack_frame()?.module_idx;
                     let (address, args_len) = {
-                        let symbol = self.modules[0]
+                        let symbol = self.modules[module_idx]
                             .symbols
                             .get(symbol_id as usize)
                             .ok_or(RuntimeError::FunctionNotFound)?;
@@ -469,7 +515,7 @@ impl Context {
                             _ => return Err(RuntimeError::FunctionNotFound),
                         };
 
-                        let function_type = self.modules[0]
+                        let function_type = self.modules[module_idx]
                             .functions
                             .get(func_id as usize)
                             .ok_or(RuntimeError::FunctionNotFound)?;
@@ -479,6 +525,7 @@ impl Context {
                     };
 
                     let mut new_frame = StackFrame::new();
+                    new_frame.module_idx = module_idx; // Stay in the same module
                     let stack = &mut self.stack_frame_mut()?.stack;
                     new_frame.params = stack.split_off(stack.len() - args_len);
                     new_frame.pc = address as usize;
@@ -734,7 +781,8 @@ impl Context {
 
                     // First, let's find the function signature to know how many args there are
                     // We'll need to look up the proto method to get param count
-                    let proto_type = self.modules[0]
+                    let module_idx = self.stack_frame()?.module_idx;
+                    let proto_type = self.modules[module_idx]
                         .types
                         .get(proto_id as usize)
                         .ok_or(RuntimeError::Other("Proto type not found".to_string()))?;
@@ -794,7 +842,7 @@ impl Context {
 
                     // Now call the method using the standard Call instruction logic
                     let (address, args_len) = {
-                        let symbol = self.modules[0]
+                        let symbol = self.modules[module_idx]
                             .symbols
                             .get(*method_symbol_id as usize)
                             .ok_or(RuntimeError::FunctionNotFound)?;
@@ -806,7 +854,7 @@ impl Context {
                             _ => return Err(RuntimeError::FunctionNotFound),
                         };
 
-                        let function_type = self.modules[0]
+                        let function_type = self.modules[module_idx]
                             .functions
                             .get(func_id as usize)
                             .ok_or(RuntimeError::FunctionNotFound)?;
@@ -816,6 +864,7 @@ impl Context {
                     };
 
                     let mut new_frame = StackFrame::new();
+                    new_frame.module_idx = module_idx; // Stay in the same module
                     let stack = &mut self.stack_frame_mut()?.stack;
                     new_frame.params = stack.split_off(stack.len() - args_len);
                     new_frame.pc = address as usize;
@@ -824,7 +873,8 @@ impl Context {
                 }
                 Instruction::InvokeHost(string_index) => {
                     // Look up the host function name from string constants
-                    let function_name = self.modules[0]
+                    let module_idx = self.stack_frame()?.module_idx;
+                    let function_name = self.modules[module_idx]
                         .string_constants
                         .get(string_index as usize)
                         .ok_or_else(|| {
@@ -841,6 +891,84 @@ impl Context {
 
                     // Call the host function
                     host_fn(self)?;
+                }
+                Instruction::CallExternal(module_path_idx, symbol_name_idx) => {
+                    // Look up the module path and symbol name from string constants
+                    let current_module_idx = self.stack_frame()?.module_idx;
+                    let module_path = self.modules[current_module_idx]
+                        .string_constants
+                        .get(module_path_idx as usize)
+                        .ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Invalid string constant index for module path: {}",
+                                module_path_idx
+                            ))
+                        })?
+                        .clone();
+
+                    let symbol_name = self.modules[current_module_idx]
+                        .string_constants
+                        .get(symbol_name_idx as usize)
+                        .ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Invalid string constant index for symbol name: {}",
+                                symbol_name_idx
+                            ))
+                        })?
+                        .clone();
+
+                    // Look up the module
+                    let target_module_idx = *self.imported_modules.get(&module_path).ok_or_else(|| {
+                        RuntimeError::Other(format!(
+                            "Module '{}' not found in imported modules",
+                            module_path
+                        ))
+                    })?;
+
+                    // Find the function symbol in the imported module
+                    let module = &self.modules[target_module_idx];
+                    let root_symbol = module.symbols.get(0).ok_or_else(|| {
+                        RuntimeError::Other(format!("Module '{}' has no root symbol", module_path))
+                    })?;
+
+                    let symbol_id = root_symbol.children.get(&symbol_name).ok_or_else(|| {
+                        RuntimeError::Other(format!(
+                            "Symbol '{}' not found in module '{}'",
+                            symbol_name, module_path
+                        ))
+                    })?;
+
+                    let symbol = module.symbols.get(*symbol_id as usize).ok_or_else(|| {
+                        RuntimeError::Other(format!("Invalid symbol id: {}", symbol_id))
+                    })?;
+
+                    // Extract function information
+                    let (func_id, address) = match &symbol.kind {
+                        crate::semantic::SymbolKind::Function { func_id, address } => {
+                            (*func_id, *address)
+                        }
+                        _ => {
+                            return Err(RuntimeError::Other(format!(
+                                "Symbol '{}' in module '{}' is not a function",
+                                symbol_name, module_path
+                            )));
+                        }
+                    };
+
+                    let function_def = module.functions.get(func_id as usize).ok_or_else(|| {
+                        RuntimeError::Other(format!("Function definition not found: {}", func_id))
+                    })?;
+
+                    let args_len = function_def.params.len();
+
+                    // Create new stack frame with arguments
+                    let mut new_frame = StackFrame::new();
+                    new_frame.module_idx = target_module_idx; // Execute in the context of the target module
+                    let stack = &mut self.stack_frame_mut()?.stack;
+                    new_frame.params = stack.split_off(stack.len() - args_len);
+                    new_frame.pc = address as usize;
+
+                    self.stack.push(new_frame);
                 }
             }
         }
@@ -1089,6 +1217,32 @@ fn host_string_len_bytes(ctx: &mut Context) -> ContextResult<()> {
         }
         _ => Err(RuntimeError::Other(format!(
             "string.len_bytes expected string, found {:?}",
+            string_val
+        ))),
+    }
+}
+
+/// Host function: std.io.println
+/// Expects: string argument on stack
+/// Returns: unit (pushes Int(0) as placeholder)
+fn host_std_io_println(ctx: &mut Context) -> ContextResult<()> {
+    let string_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::Other(
+            "std.io.println: missing string argument".to_string(),
+        ))?;
+
+    match string_val {
+        Data::String(s) => {
+            println!("{}", s);
+            // Push unit value (int 0) as return value
+            ctx.stack_frame_mut()?.stack.push(Data::Int(0));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(format!(
+            "std.io.println expected string, found {:?}",
             string_val
         ))),
     }
