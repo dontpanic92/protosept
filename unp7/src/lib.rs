@@ -263,6 +263,9 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
         Instruction::InvokeHost(string_index) => {
             format!("{}  invoke_host {}", offset_hex, string_index)
         }
+        Instruction::CallExternal(module_path_idx, symbol_name_idx) => {
+            format!("{}  call_external {} {}", offset_hex, module_path_idx, symbol_name_idx)
+        }
     }
 }
 
@@ -288,6 +291,7 @@ mod tests {
             functions: Vec::new(),
             types: Vec::new(),
             string_constants: Vec::new(),
+            imported_modules: std::collections::HashMap::new(),
         };
 
         let output = disassemble_module(&module);
