@@ -1,2 +1,6 @@
 @intrinsic(name="std.io.println")
-pub fn[throws] println(s: string) {}
+pub fn[throws] println(s: string);
+
+pub fn[throws] println2(s: string) {
+    println(s)
+}
