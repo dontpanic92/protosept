@@ -229,8 +229,10 @@ impl Generator {
 
         // Case 2: Module member call like `module.func(...)`
         if let Expression::Identifier(ident) = object.as_ref() {
-            if let Some(result) = self.try_generate_module_call(ident, field)? {
-                return Err(result);
+            if let Some(result) =
+                self.try_generate_module_call(ident, field, arguments.clone(), call_line, call_col)?
+            {
+                return Ok(result);
             }
         }
 
@@ -277,12 +279,17 @@ impl Generator {
         Ok(None)
     }
 
-    /// Tries to generate a module member call (returns error if found, as cross-module calls aren't supported)
+    /// Tries to generate a module member call (e.g., `io.println(...)`)
+    /// Returns Some(return_type) if successful, None if this is not a module call
     fn try_generate_module_call(
         &mut self,
         ident: &Identifier,
         field: &Identifier,
-    ) -> SaResult<Option<SemanticError>> {
+        arguments: CallArgs,
+        call_line: usize,
+        call_col: usize,
+    ) -> SaResult<Option<Type>> {
+        // Check if the identifier refers to a module
         let Some(sym_id) = self.symbol_table.find_symbol_in_scope(&ident.name) else {
             return Ok(None);
         };
@@ -296,20 +303,79 @@ impl Generator {
             return Ok(None);
         };
 
-        if self
-            .resolve_module_member(&module_info.path, &field.name)
-            .is_some()
-        {
-            Ok(Some(SemanticError::Other(format!(
-                "Cross-module calls not supported yet: {}.{}",
-                module_info.path, field.name
-            ))))
-        } else {
-            Ok(Some(SemanticError::FunctionNotFound {
+        let module_path = module_info.path.clone();
+
+        // Look up the member in the imported module
+        let Some(member_symbol) = self.resolve_module_member(&module_path, &field.name) else {
+            return Err(SemanticError::FunctionNotFound {
                 name: format!("{}.{}", ident.name, field.name),
                 pos: field.pos(),
-            }))
+            });
+        };
+
+        // Get the function ID from the symbol
+        let func_id = match &member_symbol.kind {
+            SymbolKind::Function { func_id, .. } => *func_id,
+            _ => {
+                return Err(SemanticError::FunctionNotFound {
+                    name: format!("{}.{}", ident.name, field.name),
+                    pos: field.pos(),
+                });
+            }
+        };
+
+        // Get the function definition from the imported module
+        let imported_module = self.imported_modules.get(&module_path).ok_or_else(|| {
+            SemanticError::Other(format!("Module '{}' not found in imported modules", module_path))
+        })?;
+
+        let function_def = imported_module
+            .functions
+            .get(func_id as usize)
+            .ok_or_else(|| {
+                SemanticError::FunctionNotFound {
+                    name: format!("{}.{}", ident.name, field.name),
+                    pos: field.pos(),
+                }
+            })?
+            .clone();
+
+        let ret_type = function_def.return_type.clone();
+
+        // Process arguments
+        let ordered_exprs = self.process_arguments(
+            &format!("{}.{}", module_path, field.name),
+            call_line,
+            call_col,
+            arguments,
+            &function_def.param_names,
+            &function_def.param_defaults,
+        )?;
+
+        // Generate argument evaluation with move tracking
+        for expr in ordered_exprs {
+            let move_info = self.compute_move_info(&expr);
+            self.generate_expression(expr)?;
+            if let Some(var_id) = move_info {
+                self.mark_variable_moved(var_id);
+            }
         }
+
+        // Check if this is an intrinsic function
+        if let Some(intrinsic_name) = &function_def.intrinsic_name {
+            // For intrinsic functions, use InvokeHost with the intrinsic name
+            let string_id = self.add_string_constant(intrinsic_name.clone());
+            self.builder.call_host_function(string_id);
+        } else {
+            // For non-intrinsic functions, we need to inline the function into the main module
+            // This requires importing the function's symbol and bytecode
+            return Err(SemanticError::Other(format!(
+                "Cross-module calls to non-intrinsic functions not yet supported: {}.{}",
+                module_path, field.name
+            )));
+        }
+
+        Ok(Some(ret_type))
     }
 
     /// Tries to generate a static method call or enum variant construction

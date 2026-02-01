@@ -191,6 +191,8 @@ impl Context {
     fn register_builtin_host_functions(&mut self) {
         self.host_functions
             .insert("string.len_bytes".to_string(), host_string_len_bytes);
+        self.host_functions
+            .insert("std.io.println".to_string(), host_std_io_println);
     }
 
     /// Register a custom host function
@@ -1089,6 +1091,32 @@ fn host_string_len_bytes(ctx: &mut Context) -> ContextResult<()> {
         }
         _ => Err(RuntimeError::Other(format!(
             "string.len_bytes expected string, found {:?}",
+            string_val
+        ))),
+    }
+}
+
+/// Host function: std.io.println
+/// Expects: string argument on stack
+/// Returns: unit (pushes Int(0) as placeholder)
+fn host_std_io_println(ctx: &mut Context) -> ContextResult<()> {
+    let string_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::Other(
+            "std.io.println: missing string argument".to_string(),
+        ))?;
+
+    match string_val {
+        Data::String(s) => {
+            println!("{}", s);
+            // Push unit value (int 0) as return value
+            ctx.stack_frame_mut()?.stack.push(Data::Int(0));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(format!(
+            "std.io.println expected string, found {:?}",
             string_val
         ))),
     }

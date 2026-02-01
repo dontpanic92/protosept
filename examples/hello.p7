@@ -1,7 +1,5 @@
 import std.io;
 
-fn main() -> int {
+fn main() {
     io.println("Hello world!");
-    let x = 1 + 2;
-    x * 10
 }
