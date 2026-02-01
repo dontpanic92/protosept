@@ -31,7 +31,7 @@ Normative keywords:
 - `x, y, z` are identifiers.
 - `null` denotes the null value (only inhabits nullable types).
 - **Slot**: a storage location introduced by `let`, `var`, or a parameter.
-- **Addressable location** (v1): a `let`-introduced slot, a parameter slot, or a field/sub-location of an addressable base where the language provides addressability (see §7.1, §7.2, §12.4). Note: `var` slots are NOT addressable locations in v1.
+- **Addressable location** (v1): a `let`-introduced slot, a parameter slot, or a field/sub-location of an addressable base where the language provides addressability (see §7.1, §7.2, §11.4). Note: `var` slots are NOT addressable locations in v1.
 - **Copy-treated**: implicit copy occurs at value-flow sites (§6.1). (Distinct from “Copy-eligible”.)
 
 
@@ -408,7 +408,7 @@ Identifiers start with `_` or a letter and continue with letters, digits, or `_`
 These identifiers have special meaning only in specific syntactic positions:
 - **Type position:** `ref<T>`, `box<T>`, `robox<T>` denote reference, boxed, and read-only boxed types.
 - **Expression position:** `ref(expr)` and `box(expr)` construct reference and boxed values. Note: `robox` has no expression-position form; `robox<T>` values are obtained via type ascription or coercion from `box<T>`.
-- **Method receiver position:** `ref self` desugars to `self: ref<Self>` and `box self` desugars to `self: box<Self>` (see §12.4). Note: `robox self` is not a valid receiver form.
+- **Method receiver position:** `ref self` desugars to `self: ref<Self>` and `box self` desugars to `self: box<Self>` (see §11.4). Note: `robox self` is not a valid receiver form.
 - In all other positions, `ref`, `box`, and `robox` are ordinary identifiers and may be used as variable names, parameter names, etc.
 
 **Contextual keywords** (not reserved; allowed as identifiers in most contexts):  
@@ -673,7 +673,7 @@ let y = p.1;  // y has type string, value "test"
 - `robox<T>` supports borrowing boxed contents with `ref(*rb)`.
 - Dereferencing `*rb` as a value is allowed only when `T` is Copy-eligible; otherwise ERROR (mirroring the `box<T>` rule).
 - Method-call behavior:
-  - Calling methods with `ref self` receivers on `robox<Self>` is allowed via auto-borrow to `ref(*rb)` (§12.3.1).
+  - Calling methods with `ref self` receivers on `robox<Self>` is allowed via auto-borrow to `ref(*rb)` (§11.3.1).
   - Calling `box self` methods on `robox<Self>` is ERROR.
 
 **Relationship to `box<T>`:**
@@ -997,13 +997,13 @@ Not Send-eligible:
 - `ref<T>`
 - Any type transitively containing `box<...>`, `robox<...>`, or `ref<...>`
 
-`Send` is primarily used by the Threading extension (§23), but is always available in the core language.
+`Send` is primarily used by the Threading extension (§22), but is always available in the core language.
 
 ---
 
-## 8. Borrowed views (`ref<T>`), boxes (`box<T>`), and read-only boxes (`robox<T>`)
+## 7. Borrowed views (`ref<T>`), boxes (`box<T>`), and read-only boxes (`robox<T>`)
 
-### 8.1 Meaning of ref<T> (Input: &T)
+### 7.1 Meaning of ref<T> (Input: &T)
 
 A value of type `ref<T>` is a read-only view of an addressable location holding a `T`.
 
@@ -1018,7 +1018,7 @@ A value of type `ref<T>` is a read-only view of an addressable location holding 
   - These operations access the referent location directly.
   - Only explicit dereference (`*r`) is restricted by the Copy-treated requirement.
 
-### 8.2 Taking views
+### 7.2 Taking views
 
 `ref(place)` produces a `ref<T>` when `place` is an addressable location of type `T`.
 
@@ -1026,9 +1026,9 @@ Requirements:
 - `place` MUST be an addressable location (see §0). Note that `var` slots are not addressable.
 
 In v1, borrowing is always explicit:
-- There is no implicit borrowing at call sites (except for method-call auto-borrow sugar; see §12.3.1).
+- There is no implicit borrowing at call sites (except for method-call auto-borrow sugar; see §11.3.1).
 
-### 8.3 Non-escapable rule (hard rule in v1)
+### 7.3 Non-escapable rule (hard rule in v1)
 
 Values of type `ref<T>` MUST NOT escape their scope.
 
@@ -1052,7 +1052,7 @@ let r = ref(x);
 let b = box(r);  // ERROR: cannot store ref<T> in box<...>
 ```
 
-### 8.4 Meaning of box<T> (Input: ^T)
+### 7.4 Meaning of box<T> (Input: ^T)
 
 A `box<T>` is an identity-bearing heap cell containing a `T`.
 
@@ -1081,13 +1081,13 @@ Operations (surface syntax v1):
   - Produces a `ref<T>` view of the boxed contents.
   - Permitted for **any** `T`, including non-Copy-treated types.
   - The resulting `ref<T>` follows all `ref<...>` rules (§7.1, §7.3).
-  - When `T` is an object proto `P`, `ref(*b)` yields `ref<P>` and is dynamically dispatched per §19.
+  - When `T` is an object proto `P`, `ref(*b)` yields `ref<P>` and is dynamically dispatched per §18.
 
 - Member auto-deref:
   - `b.field`, `b.method(...)` act as if on the inner `T`.
   - Field assignment is allowed for boxed structs: `b.field = expr` updates the inner field in place (requires `b: box<S>`).
 
-### 8.5 Meaning of robox<T>
+### 7.5 Meaning of robox<T>
 
 A `robox<T>` is a **read-only** identity-bearing heap cell containing a `T`.
 
@@ -1106,12 +1106,12 @@ Operations (surface syntax v1):
   - Produces a `ref<T>` view of the boxed contents.
   - Permitted for **any** `T`, including non-Copy-treated types.
   - The resulting `ref<T>` follows all `ref<...>` rules (§7.1, §7.3).
-  - When `T` is an object proto `P`, `ref(*rb)` yields `ref<P>` and is dynamically dispatched per §19.
+  - When `T` is an object proto `P`, `ref(*rb)` yields `ref<P>` and is dynamically dispatched per §18.
 
 - Member auto-deref:
   - `rb.field` reads the field (no assignment allowed).
   - `rb.field = expr` is **ERROR** when `rb: robox<S>`.
-  - `rb.method(...)` is allowed when the method has a `ref self` receiver (desugars to `Type.method(ref(*rb), ...)` per §12.3.1).
+  - `rb.method(...)` is allowed when the method has a `ref self` receiver (desugars to `Type.method(ref(*rb), ...)` per §11.3.1).
   - Calling methods with `box self` receivers on `robox<Self>` is ERROR.
 
 **Coercion from `box<T>` to `robox<T>`:**
@@ -1131,7 +1131,7 @@ The reverse coercion `robox<T> -> box<T>` is **not** allowed (ERROR).
 
 ---
 
-## 9. Runtime failures: traps vs throws
+## 8. Runtime failures: traps vs throws
 
 Protosept has two failure channels:
 
@@ -1142,7 +1142,7 @@ Protosept has two failure channels:
 
 2) **THROWs (typed errors)**: recoverable failures represented by enum values.
    - THROWN values can be handled or propagated using `try` (§14).
-   - The type system tracks which functions may throw via the `throws` or `throws<E>` effect (§12.2).
+   - The type system tracks which functions may throw via the `throws` or `throws<E>` effect (§11.2).
 
 Host-visible outcomes of calling a Protosept function are:
 - Returned(value)
@@ -1151,7 +1151,7 @@ Host-visible outcomes of calling a Protosept function are:
 
 ---
 
-## 10. Expressions
+## 9. Expressions
 
 Expressions include:
 - literals
@@ -1167,7 +1167,7 @@ Expressions include:
 
 `yield` is only available under the Fiber extension (§21).
 
-### 10.1 Block expressions
+### 9.1 Block expressions
 
 A block `{ ... }` contains statements.
 
@@ -1175,7 +1175,7 @@ Block value:
 - If the final statement is an expression statement without trailing `;`, the block evaluates to that expression’s value.
 - Otherwise it evaluates to `()` (unit).
 
-### 10.2 `if` expression and statement
+### 9.2 `if` expression and statement
 
 Two forms:
 
@@ -1207,7 +1207,7 @@ Rules:
 **Control flow**:
 - `break`, `continue`, `return`, and `throw` statements inside `if` blocks behave as usual according to their enclosing control structures or functions.
 
-### 10.3 Operators and precedence
+### 9.3 Operators and precedence
 Operator precedence (highest to lowest):
 
 1) Postfix / primary
@@ -1242,7 +1242,7 @@ Notes:
 - `if` without `else` is statement-only and does not participate in operator precedence.
 - Prefix `!x` (logical NOT) and postfix `x!` (force unwrap) are distinct by position.
 
-### 10.4 `loop` expressions
+### 9.4 `loop` expressions
 
 Two forms:
 
@@ -1279,7 +1279,7 @@ Type rule:
 Borrow interaction:
 - Each iteration’s `let` creates a fresh slot; any `ref` taken to that slot is confined by §7.3.
 
-### 10.5 `while` statement (v1)
+### 9.5 `while` statement (v1)
 
 Form:
 ```p7
@@ -1318,7 +1318,7 @@ This desugaring is normative; implementations MAY optimize but MUST preserve the
 
 ---
 
-### 10.6 `match` expression
+### 9.6 `match` expression
 
 `match` selects the first matching arm from an ordered list.
 
@@ -1392,7 +1392,7 @@ fn classify(x: int) -> int {
 
 ---
 
-## 11. Statements
+## 10. Statements
 
 Statement forms:
 - `let` binding: `let x = expr;`
@@ -1409,13 +1409,13 @@ Statement forms:
 - `yield;` (Fiber extension only; §21)
 - declarations where allowed.
 
-### 11.1 Returns
+### 10.1 Returns
 
 A function returns:
 - the argument of `return expr;`, or
 - the last expression value in the function body block if it is not terminated by `;`, otherwise `()`.
 
-### 11.2 Assignment statement
+### 10.2 Assignment statement
 
 Form:
 ```p7
@@ -1435,7 +1435,7 @@ Rules:
 - Assigning to a `let` slot (`x = expr` where `x` was introduced by `let`) is ERROR.
 - Assignment does not produce a value.
 
-### 11.3 `for` statement (v1)
+### 10.3 `for` statement (v1)
 
 Form:
 ```p7
@@ -1456,7 +1456,7 @@ Binding rule:
 
 ---
 
-## 12. Functions
+## 11. Functions
 
 ### 11.1 Declarations
 
@@ -1545,7 +1545,7 @@ Methods on structs, enums, and protos may declare a receiver parameter. The rece
 2. `self: ref<Self>` or shorthand `ref self` – borrowed receiver:
    - Type: `ref<Self>`.
    - Caller passes a read-only view of an addressable location.
-   - Method-call syntax automatically applies the auto-borrow sugar (§12.3.1).
+   - Method-call syntax automatically applies the auto-borrow sugar (§11.3.1).
 
 3. `self: box<Self>` or shorthand `box self` – boxed receiver:
    - Type: `box<Self>`.
@@ -1558,7 +1558,7 @@ Methods on structs, enums, and protos may declare a receiver parameter. The rece
 - The receiver is the first parameter; it is written before other parameters without a trailing comma.
 - No implicit boxing occurs to satisfy a receiver:
   - A method with `self: box<Self>` requires the caller to have `box<Self>`, not just `Self`.
-- For methods with `ref self` receivers, the auto-borrow sugar (§12.3.1) applies at method call sites for `box<Self>` and `robox<Self>` receivers.
+- For methods with `ref self` receivers, the auto-borrow sugar (§11.3.1) applies at method call sites for `box<Self>` and `robox<Self>` receivers.
 - Boxed receivers (`self: box<Self>`) pass the box handle, which is Copy-treated. This allows multiple method calls on the same box without moving the box itself.
 - Calling a method with a `box self` receiver on a `robox<Self>` value is ERROR (capability mismatch).
 
@@ -1576,7 +1576,7 @@ struct Counter(count: int) {
 let c = box(Counter(0));
 c.increment();   // ok: box handle is Copy-treated, box is not moved
 c.increment();   // ok: can call again
-let n = c.get(); // ok: desugars to Counter.get(ref(*c)) per §12.3.1
+let n = c.get(); // ok: desugars to Counter.get(ref(*c)) per §11.3.1
 
 let rc: robox<Counter> = c;
 // rc.increment(); // ERROR: increment requires box self, but rc is robox<Counter>
@@ -1585,7 +1585,7 @@ let m = rc.get();  // ok: get only requires ref self, desugars to Counter.get(re
 
 ---
 
-## 13. Structs
+## 12. Structs
 
 A struct is a product type with zero or more fields. Structs support two forms:
 
@@ -1594,7 +1594,7 @@ A struct is a product type with zero or more fields. Structs support two forms:
 
 A struct MUST declare its fields in a uniform manner: either all fields are named, or all fields are unnamed. Mixing named and unnamed fields in a single struct is ERROR.
 
-### 13.1 Record struct declaration
+### 12.1 Record struct declaration
 
 Record structs use named fields:
 
@@ -1647,7 +1647,7 @@ struct Pair(int, int);
 struct Bad(x: int, float);  // not allowed
 ```
 
-### 13.2 Tuple struct declaration
+### 12.2 Tuple struct declaration
 
 Tuple structs use unnamed fields:
 
@@ -1675,7 +1675,7 @@ let y = p.1;  // 20
 
 Field access is ERROR if the field is not visible at the access site (§12.1.1).
 
-### 13.3 Construction
+### 12.3 Construction
 
 Construct a struct by calling the struct name:
 
@@ -1733,7 +1733,7 @@ let val = id.value();     // OK
 // let x = id.0;          // ERROR: field not visible
 ```
 
-### 13.4 Field access and assignment
+### 12.4 Field access and assignment
 
 **Field reads:**
 - `s.x` (record struct) or `s.0` (tuple struct) is allowed when the field is visible at the access site.
@@ -1749,7 +1749,7 @@ let p = box(Point(1, 2));
 p.x = 10; // ok: p is boxed and x is visible
 ```
 
-### 13.5 Methods
+### 12.5 Methods
 
 A struct may include a method block:
 
@@ -1766,9 +1766,9 @@ struct Vec2(
 }
 ```
 
-Method receivers are defined in §12.4. Structs may use `self`, `ref self`, or `box self` receivers.
+Method receivers are defined in §11.4. Structs may use `self`, `ref self`, or `box self` receivers.
 
-### 13.6 Builtin structs: `@builtin()`
+### 12.6 Builtin structs: `@builtin()`
 
 A struct may be declared with the `@builtin()` attribute to indicate a compiler-defined, opaque nominal type:
 
@@ -1816,7 +1816,7 @@ struct FileHandle {
 
 ---
 
-## 14. Enums
+## 13. Enums
 
 ### 13.1 Declaration
 
@@ -1906,9 +1906,9 @@ These may be added in future versions.
 
 An enum may include a method block, using the same method syntax as structs.
 
-Method receivers are defined in §12.4. Enums may use `self`, `ref self`, or `box self` receivers.
+Method receivers are defined in §11.4. Enums may use `self`, `ref self`, or `box self` receivers.
 
-This enables enums to satisfy object protos structurally (§19).
+This enables enums to satisfy object protos structurally (§18).
 
 Example:
 ```p7
@@ -1922,19 +1922,19 @@ enum Option<T>(
 
 ---
 
-## 15. Error handling: `throw` and `try`
+## 14. Error handling: `throw` and `try`
 
-### 15.1 `throw`
+### 14.1 `throw`
 
 `throw expr;` aborts evaluation and transfers control to the nearest enclosing `try`.
 
 Rules:
 - `expr` MUST have an `enum` type.
-- `throw` is a **contextual keyword**: it is permitted only in functions with `throws` or `throws<E>` in their effect set (§12.2).
+- `throw` is a **contextual keyword**: it is permitted only in functions with `throws` or `throws<E>` in their effect set (§11.2).
 - In functions with `throws<E>`, the thrown enum type MUST be exactly `E`.
 - Outside a function with a `throws` effect, `throw` has no special meaning and may be used as an ordinary identifier.
 
-### 15.2 `try` (propagate and handle)
+### 14.2 `try` (propagate and handle)
 
 `try` is a **contextual keyword**: in expression position, it introduces a try-expression. Elsewhere, it may be used as an ordinary identifier.
 
@@ -2002,7 +2002,7 @@ Exhaustiveness:
 - The pattern-matching handler form MUST be exhaustive (same as `match`, §9.6.4).
 - Include a wildcard arm `_ => ...` to handle all error variants.
 
-### 15.3 Calling functions with `throws` effect (explicitness rule)
+### 14.3 Calling functions with `throws` effect (explicitness rule)
 
 If a call may throw (i.e., the callee has `throws` or `throws<E>` in its effect set), the call MUST appear inside a `try` form. Bare calls are ERROR, even within functions that themselves have a `throws` effect.
 
@@ -2013,7 +2013,7 @@ In a function without a `throws` effect:
 In a function with a `throws` or `throws<E>` effect:
 - either propagate or handle form is allowed.
 
-### 15.4 Propagation compatibility rules for typed throws
+### 14.4 Propagation compatibility rules for typed throws
 
 When using the propagate form (`try expr`), the callee's throw effect must be compatible with the caller's throw effect:
 
@@ -2032,18 +2032,18 @@ Rules:
 
 ---
 
-## 16. Standard conversions and checks
+## 15. Standard conversions and checks
 
-### 16.1 Numeric rules
+### 15.1 Numeric rules
 
-#### 16.1.1 Integer overflow
+#### 15.1.1 Integer overflow
 `int` arithmetic overflow TRAPs for fixed-width integer ops in v1.
 
 Prelude functions (placeholder names):
 - `wrapping_add(a: int, b: int) -> int`
 - `checked_add(a: int, b: int) -> ?int`
 
-#### 16.1.2 Numeric coercions
+#### 15.1.2 Numeric coercions
 - Implicit `int -> float` promotion may occur in arithmetic/comparison.
 - Other numeric conversions require explicit conversion. [[TODO]] specify syntax.
 - `float -> int` is available **only** via a checked prelude function:
@@ -2051,9 +2051,9 @@ Prelude functions (placeholder names):
   - Returns `null` if `x` is NaN, infinite, or outside the `int` range.
   - Otherwise returns the truncated-to-zero integer value.
 
-### 16.2 Nullability
+### 15.2 Nullability
 
-#### 16.2.1 Control-flow narrowing
+#### 15.2.1 Control-flow narrowing
 
 If `x: ?T` and `x` is a simple identifier:
 
@@ -2065,7 +2065,7 @@ Then:
 - In the then-branch, `x` is treated as type `T`.
 - In the else-branch, `x` is treated as `null`.
 
-#### 16.2.2 Null-coalescing
+#### 15.2.2 Null-coalescing
 
 `x ?? default_expr`:
 - If `x` is non-null, yields inner `T`.
@@ -2073,16 +2073,16 @@ Then:
 
 Rule: `default_expr` MUST have type `T`.
 
-#### 16.2.3 Force unwrap
+#### 15.2.3 Force unwrap
 
 `x!`:
 - Requires `x: ?T`.
 - If `x` is non-null, yields `T`.
 - If `x` is `null`, evaluation TRAPs.
 
-### 16.3 Heap handle coercions
+### 15.3 Heap handle coercions
 
-#### 16.3.1 `box<T>` to `robox<T>` capability-weakening
+#### 15.3.1 `box<T>` to `robox<T>` capability-weakening
 
 In **checking/expected-type contexts**, a `box<T>` value may implicitly coerce to `robox<T>`:
 
@@ -2099,7 +2099,7 @@ This coercion is safe because it removes capabilities (mutation) without adding 
 
 ---
 
-## 17. Memory/runtime model (informative)
+## 16. Memory/runtime model (informative)
 
 Protosept uses a GC runtime. Semantics are defined in terms of:
 - moves/copies
@@ -2110,9 +2110,9 @@ Implementation may represent values on stack or heap; this is not semantically o
 
 ---
 
-## 18. Host interop (v1 requirements)
+## 17. Host interop (v1 requirements)
 
-### 18.1 Calling into Protosept
+### 17.1 Calling into Protosept
 
 Host calls a named Protosept function with arguments and receives one of:
 - Returned(value)
@@ -2121,7 +2121,7 @@ Host calls a named Protosept function with arguments and receives one of:
 
 [[TODO]] specify concrete embedding API.
 
-### 18.2 Calling host functions from p7
+### 17.2 Calling host functions from p7
 
 Host may register functions callable by p7.
 
@@ -2129,14 +2129,14 @@ Interop requirements:
 - `?T` maps to/from host null.
 - `ref<T>` MUST NOT cross the boundary.
 - `box<T>` is the primary mechanism for passing identity/mutable objects across the boundary.
-- `box<P>` (proto boxes) is the mechanism for dynamic dispatch across the boundary (§19).
+- `box<P>` (proto boxes) is the mechanism for dynamic dispatch across the boundary (§18).
 
-### 18.3 Ownership rules
+### 17.3 Ownership rules
 
 - Passing a value type follows move/copy rules.
 - Passing `box<T>` or `ref<T>` passes/copies the handle/view per §6.
 
-### 18.4 Generics and interop
+### 17.4 Generics and interop
 
 Generics are compile-time only (monomorphization). Exported host entrypoints MUST be monomorphic.
 
@@ -2144,22 +2144,22 @@ Runtime polymorphism for interop is via proto boxes (`box<P>`).
 
 ---
 
-## 19. Protos (conformance interfaces + optional dynamic dispatch)
+## 18. Protos (conformance interfaces + optional dynamic dispatch)
 
-### 19.1 Overview
+### 18.1 Overview
 
 A `proto` defines a structural conformance interface: a set of required methods.
 
 A type `T` satisfies a proto `P` if `T` provides methods matching every required signature.
 
-### 19.2 Proto categories
+### 18.2 Proto categories
 
-- **Constraint protos**: compile-time only, no runtime dispatch (`StructuralCopy`, `Copy`, `Eq`, `Send`).
+- **Constraint protos**: compile-time only, no runtime dispatch (`Copy`, `Send`).
 - **Object protos**: compile-time conformance + runtime dynamic dispatch via `box<P>` and `ref<P>`.
 
 User-declared `proto` are object protos in v1.
 
-### 19.3 Proto declaration
+### 18.3 Proto declaration
 
 ```p7
 proto Printable {
@@ -2173,7 +2173,7 @@ proto Mutator {
 
 **Receiver requirements:**
 
-Proto methods may declare receivers as defined in §12.4:
+Proto methods may declare receivers as defined in §11.4:
 - `self: ref<Self>` (or shorthand `ref self`) – borrowed receiver
 - `self: box<Self>` (or shorthand `box self`) – boxed receiver
 
@@ -2189,7 +2189,7 @@ When a type `T` conforms to a proto `P`, `Self` in proto method signatures is bo
 v1 restrictions:
 - Overloads in protos: ERROR in v1 (recommended).
 
-### 19.3.1 Proto default implementations
+### 18.3.1 Proto default implementations
 
 Proto methods may provide default implementations:
 
@@ -2229,17 +2229,17 @@ let c = Counter(5);
 c.print_twice();  // calls inherited default, which calls Counter.print twice
 ```
 
-### 19.4 Proto handles
+### 18.4 Proto handles
 
 There is no plain runtime value of proto type `P`.
 
 Runtime proto handles are:
-- `box<P>` – owned proto handle (§19.5)
-- `ref<P>` – borrowed proto handle (§19.4.1)
+- `box<P>` – owned proto handle (§18.5)
+- `ref<P>` – borrowed proto handle (§18.4.1)
 
 Constraint protos MUST NOT appear as `box<P>` or `ref<P>`.
 
-#### 19.4.1 Borrowed proto handles: `ref<P>`
+#### 18.4.1 Borrowed proto handles: `ref<P>`
 
 **Well-formedness:**
 - `ref<P>` is well-formed only when `P` is an object proto.
@@ -2256,10 +2256,10 @@ Constraint protos MUST NOT appear as `box<P>` or `ref<P>`.
 
 **Method-call restriction:**
 - `ref<P>` can call only proto methods whose receiver is `ref self`.
-- Calling a proto method with a `box self` receiver on `ref<P>` is ERROR (see §19.7).
+- Calling a proto method with a `box self` receiver on `ref<P>` is ERROR (see §18.7).
 
 
-### 19.5 Converting `box<T>` to `box<P>`
+### 18.5 Converting `box<T>` to `box<P>`
 
 Two ways:
 
@@ -2268,16 +2268,16 @@ Two ways:
 let p: box<Printable> = v as box<Printable>;
 ```
 
-2) Implicit coercion (allowed only when `T` declares `[P]` conformance via `struct[...]` or `enum[...]`; see §19.6):
+2) Implicit coercion (allowed only when `T` declares `[P]` conformance via `struct[...]` or `enum[...]`; see §18.6):
 ```p7
 let p: box<Printable> = v;
 ```
 
 Conversion does not allocate a new `T`. It reinterprets the existing handle with a dispatch table for `P`.
 
-**Coercion rule:** If `P` is declared in `T`'s conformance list (via `struct[P, ...]` or `enum[P, ...]`), then implicit coercion is allowed at assignment, argument passing, and return sites (see §19.6). Otherwise, an explicit `as box<P>` cast is required.
+**Coercion rule:** If `P` is declared in `T`'s conformance list (via `struct[P, ...]` or `enum[P, ...]`), then implicit coercion is allowed at assignment, argument passing, and return sites (see §18.6). Otherwise, an explicit `as box<P>` cast is required.
 
-#### 19.5.1 Converting `ref<T>` to `ref<P>` (borrowed upcast)
+#### 18.5.1 Converting `ref<T>` to `ref<P>` (borrowed upcast)
 
 A `ref<T>` can be converted to `ref<P>` when `T` satisfies `P`.
 
@@ -2287,12 +2287,12 @@ let r: ref<SomeStruct> = ref(v);
 let p: ref<Printable> = r as ref<Printable>;
 ```
 
-**Coercion rule:** If `P` is declared in `T`'s conformance list (via `struct[P, ...]` or `enum[P, ...]`), then implicit coercion is allowed at assignment, argument passing, and return sites (see §19.6). Otherwise, an explicit `as ref<P>` cast is required.
+**Coercion rule:** If `P` is declared in `T`'s conformance list (via `struct[P, ...]` or `enum[P, ...]`), then implicit coercion is allowed at assignment, argument passing, and return sites (see §18.6). Otherwise, an explicit `as ref<P>` cast is required.
 
-Only `ref self` methods can be called on `ref<P>` (see §19.4.1).
+Only `ref self` methods can be called on `ref<P>` (see §18.4.1).
 
 
-### 19.6 Declaring proto conformances on structs and enums
+### 18.6 Declaring proto conformances on structs and enums
 
 A struct or enum may declare conformances in a bracket list:
 
@@ -2317,15 +2317,15 @@ Rules:
 - Each name in `struct[...]` or `enum[...]` MUST be the name of a proto.
 - The compiler MUST check structural satisfaction.
 - Listing a proto MAY enable implicit behaviors described by this spec:
-  - `Copy` and `Send` opt-in behavior (§6.4, §6.7).
-  - Implicit `box<T> -> box<P>` coercions for object protos (§19.5).
-  - Implicit `ref<T> -> ref<P>` coercions for object protos (§19.5.1).
+  - `Copy` and `Send` opt-in behavior (§6.3, §6.5).
+  - Implicit `box<T> -> box<P>` coercions for object protos (§18.5).
+  - Implicit `ref<T> -> ref<P>` coercions for object protos (§18.5.1).
 
 The conformance list does not inject members; it only checks and enables implicit behaviors.
 
 **Duplicate conformances:** Listing the same proto more than once in a struct's conformance list is a compile-time ERROR.
 
-### 19.7 Dynamic dispatch
+### 18.7 Dynamic dispatch
 
 Calling a proto method on `box<P>` or `ref<P>` performs dynamic dispatch:
 - The call dispatches to the implementation for the dynamic type of the underlying object.
@@ -2338,7 +2338,7 @@ For `box<P>`:
 
 For `ref<P>`:
 - For methods with `ref self` receivers: the borrowed proto handle is passed directly as a `ref<T>` view to the underlying object.
-- For methods with `box self` receivers: calling such methods on `ref<P>` is ERROR (see §19.4.1).
+- For methods with `box self` receivers: calling such methods on `ref<P>` is ERROR (see §18.4.1).
 
 Example:
 ```p7
@@ -2357,15 +2357,15 @@ b.mutate();  // dispatches to Counter.mutate; box handle is Copy-treated
 b.mutate();  // ok: can call again
 ```
 
-### 19.8 Downcasting / type tests
+### 18.8 Downcasting / type tests
 [[TODO]] runtime type tests and downcasts for proto boxes.
 
-### 19.9 Nullability
+### 18.9 Nullability
 `?box<P>` is a nullable proto handle; `box<P>` is non-null.
 
 ---
 
-## 20. Attributes (compile-time metadata)
+## 19. Attributes (compile-time metadata)
 
 Attributes are typed metadata values attached to declarations.
 
@@ -2375,11 +2375,11 @@ Properties:
 - inert by default; semantics only when explicitly specified by this spec or an extension
 - preserved in compiled artifact in a host-visible form
 
-### 20.1 Attachment sites
+### 19.1 Attachment sites
 An attribute list may appear immediately before:
 - `fn`, `struct`, `enum`
 
-### 20.2 Syntax
+### 19.2 Syntax
 
 `@AttrName(...)` where `AttrName` resolves to a `struct` name. Parentheses required: `@AttrName()`.
 
@@ -2392,10 +2392,10 @@ fn main() -> unit { ... }
 
 *   Note: The `@` symbol is exclusively for attributes. Heap boxing uses the `box` keyword or the `^` sigil to avoid ambiguity.
 
-### 20.3 Values are typed struct constructors
+### 19.3 Values are typed struct constructors
 Attribute arguments follow struct construction rules (required fields provided, defaults allowed, names must match).
 
-### 20.4 Const restrictions (v1)
+### 19.4 Const restrictions (v1)
 
 Attribute constructor arguments MUST be compile-time constants. Permitted field types:
 - primitives, `string`, enums
@@ -2403,16 +2403,16 @@ Attribute constructor arguments MUST be compile-time constants. Permitted field 
 - `array<T>` where `T` permitted
 - user structs whose fields are recursively permitted
 
-### 20.5 Ordering and duplicates
+### 19.5 Ordering and duplicates
 Attributes are an ordered list. Duplicates allowed; order preserved.
 
-### 20.6 Compiled representation (normative)
+### 19.6 Compiled representation (normative)
 Compiled artifact MUST preserve, for each attributed declaration:
 - kind (`fn`/`struct`/`enum`)
 - name (including module qualification when modules exist)
 - ordered list of attribute instances
 
-### 20.7 Errors
+### 19.7 Errors
 ERROR if:
 - attribute name does not resolve to a `struct`
 - unknown named field provided
@@ -2420,7 +2420,7 @@ ERROR if:
 - non-constant value provided
 - field type not permitted
 
-### 20.8 Standard compiler attributes
+### 19.8 Standard compiler attributes
 
 The compiler recognizes certain standard attributes with special semantics:
 
@@ -2458,15 +2458,15 @@ struct string {
 
 ---
 
-## 21. Generics (compile-time only)
+## 20. Generics (compile-time only)
 
-### 21.1 Overview
+### 20.1 Overview
 
 Generics are monomorphized:
 - The compiler generates specialized code for each concrete instantiation.
 - No runtime representation of type parameters.
 
-### 21.2 Generic functions
+### 20.2 Generic functions
 
 ```p7
 fn identity<T>(x: T) -> T { return x; }
@@ -2507,7 +2507,7 @@ fn ambiguous<T>() -> T { ... }
 let y = ambiguous();         // ERROR: cannot infer T (no arguments, no expected type)
 ```
 
-### 21.3 Generic structs
+### 20.3 Generic structs
 
 ```p7
 struct Pair<T, U>(first: T, second: U);
@@ -2552,7 +2552,7 @@ fn needs_pair() -> Pair<int, string> {
 }
 ```
 
-### 21.4 Generic enums
+### 20.4 Generic enums
 
 Generic enums support type parameters:
 ```p7
@@ -2653,7 +2653,7 @@ Note: Without pattern matching in v1, generic enums are primarily useful for:
 - Host interop that may inspect enum variants externally
 
 
-### 21.5 Bounds
+### 20.5 Bounds
 
 Type parameter bounds use proto constraints:
 ```p7
@@ -2671,16 +2671,16 @@ fn duplicate<T: Copy>(x: T) -> Pair<T, T> {
 
 ---
 
-## 22. Extension: Fibers (cooperative coroutines)
+## 21. Extension: Fibers (cooperative coroutines)
 
 Status: optional extension.
 
-### 22.1 Availability
+### 21.1 Availability
 When disabled, functions with the `suspend` effect and `yield` are ERROR.
 
 [[TODO]] define how to enable (flag/import/host config).
 
-### 22.2 Functions with `suspend` effect
+### 21.2 Functions with `suspend` effect
 
 A function with the `suspend` effect (declared as `fn[suspend]` or `fn[suspend, ...]`) may suspend via `yield;`.
 
@@ -2708,14 +2708,14 @@ Rationale: avoids views living across suspension points without lifetime trackin
 Direct calling restriction (recommended):
 - Functions with the `suspend` effect may be called directly only from within other functions with the `suspend` effect. [[TODO]] finalize.
 
-### 22.3 `yield;`
+### 21.3 `yield;`
 
 `yield;` is a **contextual keyword**: in statement position within a function with the `suspend` effect, it suspends the current fiber. Elsewhere, it may be used as an ordinary identifier.
 
 - `yield;` suspends the current fiber.
 - On resume, execution continues after the `yield;`.
 
-### 22.4 Host interop (fibers)
+### 21.4 Host interop (fibers)
 
 Host must support:
 - starting a fiber from a function with the `suspend` effect
@@ -2726,7 +2726,7 @@ Outcome per resume:
 - Returned(value)
 - Threw(enum_value)
 
-### 22.5 `spawn` (start a new fiber)
+### 21.5 `spawn` (start a new fiber)
 
 Form:
 ```p7
@@ -2743,19 +2743,19 @@ Semantics:
 
 ---
 
-## 23. Extension: Threading (actor-like isolation)
+## 22. Extension: Threading (actor-like isolation)
 
 Status: optional extension.
 
-### 23.1 Availability
+### 22.1 Availability
 When disabled, `spawn_thread` is ERROR.
 
 [[TODO]] define enabling mechanism.
 
-### 23.2 Send-gated transfer
-Arguments to `spawn_thread` MUST satisfy `Send` (§6.7). This prevents shared mutable state across threads.
+### 22.2 Send-gated transfer
+Arguments to `spawn_thread` MUST satisfy `Send` (§6.5). This prevents shared mutable state across threads.
 
-### 23.3 `spawn_thread`
+### 22.3 `spawn_thread`
 
 Form:
 ```p7
@@ -2771,14 +2771,14 @@ Semantics:
 - Requests creation of a new thread execution; host controls scheduling.
 - Host hook `on_thread_spawn(handle, info)` is invoked.
 
-### 23.4 Thread completion outcomes
+### 22.4 Thread completion outcomes
 
 Thread completes with:
 - Returned(value) where return type satisfies `Send` (or is `unit`) — otherwise ERROR at compile time.
 - Threw(enum_value) where enum type satisfies `Send` — otherwise ERROR at compile time.
 - Trapped(panic) — terminates the thread; does not affect other threads.
 
-### 23.5 Interaction with fibers
+### 22.5 Interaction with fibers
 If both extensions enabled:
 - Fibers are pinned to a thread (no migration).
 - `spawn` is thread-local; its arguments need not satisfy `Send`.
@@ -2788,12 +2788,12 @@ If both extensions enabled:
 
 ---
 
-## 24. Open items / TODO list (curated)
+## 23. Open items / TODO list (curated)
 
 1) String concatenation spelling, slicing APIs
 2) Boxed array mutation API surface and semantics (§3.3.3)
-3) Enablement mechanisms for extensions (§21, §23)
-4) Host ABI: concrete API surfaces for calling, fibers, threads (§18, §21.4, §23)
+3) Enablement mechanisms for extensions (§21, §22)
+4) Host ABI: concrete API surfaces for calling, fibers, threads (§17, §21.4, §22)
 5) Specify prelude location/definition of `box<T>.new` intrinsic method (§7.4)
 6) Specify representation/ABI attribute like `@repr(transparent)` for structs (especially for newtype/FFI)
 
