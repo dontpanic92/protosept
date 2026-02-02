@@ -33,6 +33,7 @@ Normative keywords:
 - **Slot**: a storage location introduced by `let`, `var`, or a parameter.
 - **Addressable location** (v1): a `let`-introduced slot, a parameter slot, or a field/sub-location of an addressable base where the language provides addressability (see §7.1, §7.2, §11.4). Note: `var` slots are NOT addressable locations in v1.
 - **Copy-treated**: implicit copy occurs at value-flow sites (§6.1). (Distinct from “Copy-eligible”.)
+- **Materialized temporary slot (v1)**: an implicit immutable `let` slot created by the compiler to extend the lifetime of a temporary value, enabling it to be borrowed. Used in narrowly-scoped contexts such as receiver temporary materialization (§11.3.1).
 
 
 ### 0.1 Contextual typing (bidirectional typing)
@@ -1431,6 +1432,12 @@ For method calls only, p7 provides auto-borrow sugar when the method has a `ref 
 
 - `recv.method(args...)` where `method` has a `ref self` receiver desugars as follows:
   - If `recv` has type `Self` and is an addressable location: desugars to `Type.method(ref(recv), args...)`.
+  - If `recv` has type `Self` but is NOT an addressable location (i.e., a temporary): the compiler MUST materialize the receiver into an implicit immutable temporary `let` slot and then borrow that slot for the call. Desugars to:
+    ```
+    let __tmp_recv = recv;
+    Type.method(ref(__tmp_recv), args...)
+    ```
+    where `__tmp_recv` is a compiler-generated name. The materialized temporary lives until the end of the method-call expression evaluation.
   - If `recv` has type `box<Self>`: desugars to `Type.method(ref(*recv), args...)`. The receiver `recv` may be any value (including temporaries), as the borrow is taken of the dereferenced contents `*recv`.
   - If `recv` has type `robox<Self>`: desugars to `Type.method(ref(*recv), args...)`. The receiver `recv` may be any value (including temporaries), as the borrow is taken of the dereferenced contents `*recv`.
   - If `recv` already has type `ref<Self>`: it is passed directly to the `ref self` parameter without desugaring.
@@ -1439,7 +1446,38 @@ For method calls only, p7 provides auto-borrow sugar when the method has a `ref 
 **Restrictions:**
 
 - Applies only to methods with `ref self` receivers; does NOT apply to free functions with `ref<T>` parameters.
-- When the receiver has type `Self`, it MUST be an addressable location; borrowing of temporaries is not permitted.
+
+**Normative note: Evaluation order and temporary lifetime:**
+
+- The receiver expression is evaluated exactly once, before the method arguments.
+- When receiver temporary materialization occurs (for `Self`-typed temporaries), the materialized temporary slot lives until the end of the method-call expression's evaluation (i.e., until the method returns).
+- The compiler MAY optimize away the materialized temporary as long as observable semantics are preserved (e.g., if the method does not actually retain the reference beyond its execution).
+
+**Example:**
+
+Consider a struct `Point` with a `ref self` method `distance`:
+
+```p7
+struct Point(x: int, y: int) {
+  pub fn distance(ref self) -> int {
+    return self.x * self.x + self.y * self.y;
+  }
+}
+
+fn other() -> Point {
+  return Point(3, 4);
+}
+
+let d = other().distance();  // ok: temporary receiver is materialized
+```
+
+The call `other().distance()` desugars to:
+```p7
+let __tmp_recv = other();
+let d = Point.distance(ref(__tmp_recv));
+```
+
+The temporary `__tmp_recv` is valid for the duration of the method call.
 
 **Rationale:**
 
