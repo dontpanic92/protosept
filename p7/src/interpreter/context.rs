@@ -194,10 +194,8 @@ impl Context {
 
     /// Register all builtin host functions
     fn register_builtin_host_functions(&mut self) {
-        self.host_functions
-            .insert("string.len_bytes".to_string(), host_string_len_bytes);
-        self.host_functions
-            .insert("std.io.println".to_string(), host_std_io_println);
+        super::builtin_impl::register_builtin_functions(self);
+        super::std_impl::register_std_functions(self);
     }
 
     /// Register a custom host function
@@ -989,7 +987,7 @@ impl Context {
         self.stack.last().ok_or(RuntimeError::NoStackFrame)
     }
 
-    fn stack_frame_mut(&mut self) -> ContextResult<&mut StackFrame> {
+    pub(crate) fn stack_frame_mut(&mut self) -> ContextResult<&mut StackFrame> {
         self.stack.last_mut().ok_or(RuntimeError::NoStackFrame)
     }
 
@@ -1190,60 +1188,5 @@ impl Context {
             },
             _ => {}
         }
-    }
-}
-
-// ===== Host Functions =====
-
-/// Host function: string.len_bytes
-/// Expects: self (ref<string>) as parameter 0
-/// Returns: int (byte length) on stack
-fn host_string_len_bytes(ctx: &mut Context) -> ContextResult<()> {
-    // The self parameter is passed as param 0 (it's a ref<string>, which is the string value itself)
-    let string_val = ctx
-        .stack_frame_mut()?
-        .stack
-        .pop()
-        .ok_or(RuntimeError::Other(
-            "string.len_bytes: missing self parameter".to_string(),
-        ))?
-        .clone();
-
-    match string_val {
-        Data::String(s) => {
-            let byte_len = s.len() as i32;
-            ctx.stack_frame_mut()?.stack.push(Data::Int(byte_len));
-            Ok(())
-        }
-        _ => Err(RuntimeError::Other(format!(
-            "string.len_bytes expected string, found {:?}",
-            string_val
-        ))),
-    }
-}
-
-/// Host function: std.io.println
-/// Expects: string argument on stack
-/// Returns: unit (pushes Int(0) as placeholder)
-fn host_std_io_println(ctx: &mut Context) -> ContextResult<()> {
-    let string_val = ctx
-        .stack_frame_mut()?
-        .stack
-        .pop()
-        .ok_or(RuntimeError::Other(
-            "std.io.println: missing string argument".to_string(),
-        ))?;
-
-    match string_val {
-        Data::String(s) => {
-            println!("{}", s);
-            // Push unit value (int 0) as return value
-            ctx.stack_frame_mut()?.stack.push(Data::Int(0));
-            Ok(())
-        }
-        _ => Err(RuntimeError::Other(format!(
-            "std.io.println expected string, found {:?}",
-            string_val
-        ))),
     }
 }
