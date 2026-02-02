@@ -873,6 +873,69 @@ This rule applies uniformly to:
 
 Using `structural_copy(x)` when `T` is not structural-copyable is ERROR.
 
+### 6.2a The `structural_eq` compiler intrinsic
+
+`structural_eq<T>(a: ref<T>, b: ref<T>) -> bool` is a compiler intrinsic that performs structural equality comparison of two values through references.
+
+**Signature:**
+- Takes two references of the same type `T`
+- Returns `bool`: `true` if the values are structurally equal, `false` otherwise
+
+**Structural-eqable types** (types for which `structural_eq` is well-typed):
+
+- **Primitives:**
+  - `int`, `bool`, `char`, `unit`: bitwise equality
+  - `float`: IEEE-754 equality semantics
+    - `NaN == NaN` is `false` (NaN is not equal to itself)
+    - `-0.0 == 0.0` is `true` (signed zeroes compare equal; note: they may produce different results in other operations, e.g., `1.0 / 0.0 != 1.0 / -0.0`)
+    - Other values: bitwise equality of their IEEE-754 representation
+  - `ptr`: identity equality (same address)
+
+- **`string`**: content equality (compares UTF-8 byte sequences)
+
+- **`?T`**: nullable equality
+  - `null == null` is `true`
+  - `null == Some(v)` is `false`
+  - `Some(v1) == Some(v2)` recurses: `structural_eq(ref(v1), ref(v2))`
+  - Requires `T` to be structural-eqable
+
+- **Tuples `(T1, T2, ...)`**: component-wise equality
+  - All components must be structural-eqable
+  - `(a1, a2, ...) == (b1, b2, ...)` iff `structural_eq(ref(a1), ref(b1)) && structural_eq(ref(a2), ref(b2)) && ...`
+
+- **`array<T>`**: element-wise equality
+  - `T` must be structural-eqable
+  - Arrays must have the same length
+  - All corresponding elements must be equal: `structural_eq(ref(a[i]), ref(b[i]))` for all `i`
+
+- **`struct` types**: field-wise equality
+  - All fields must be structural-eqable
+  - Compares all fields recursively: `structural_eq(ref(a.field), ref(b.field))` for each field
+
+- **`enum` types**: variant and payload equality
+  - All payload field types must be structural-eqable
+  - First compares discriminants (which variant)
+  - If variants match, compares payloads recursively via `structural_eq`
+
+- **`ref<T>`**: referent value equality (NOT identity)
+  - When comparing two `ref<T>` values, `structural_eq` compares the values at the referenced locations structurally
+  - Does NOT compare addresses; compares the values at those addresses
+  - Requires `T` to be structural-eqable (but does NOT require `T: Copy`)
+  - This enables observational equality through references without dereferencing to a value
+
+- **`box<T>` and `robox<T>`**: identity equality ONLY
+  - Compares heap cell identity (same allocation), NOT contents
+  - `box1 == box2` is `true` iff they point to the same heap cell
+  - Deep content comparison is NOT performed
+  - This is consistent regardless of whether `T` is structural-eqable
+
+Using `structural_eq` when `T` is not structural-eqable is ERROR.
+
+**Rationale:**
+- `box<T>` and `robox<T>` use identity equality to preserve clear semantics: equality tests identity, not deep contents
+- `ref<T>` uses referent value equality to enable observational equality without requiring `T: Copy`
+- This design allows equality testing on non-Copy types through references
+
 ### 6.3 The `Copy` proto (built-in static proto)
 
 `Copy` is a built-in **static proto** with a default method:
@@ -925,6 +988,57 @@ This enables `copy(some_expr)` to work uniformly whether `some_expr` is a variab
 
 **Rationale:**
 - `Copy` is a proto with a method; calling `copy(x)` invokes that method via the standard method-call mechanism with receiver temporary materialization.
+
+---
+
+### 6.4a The `Eq` static proto
+
+`Eq` is a built-in **static proto** that enables equality testing via the `==` and `!=` operators.
+
+**Proto declaration:**
+
+```p7
+proto Eq {
+  pub fn eq(ref self, other: ref<Self>) -> bool {
+    return structural_eq(self, other);
+  }
+}
+```
+
+**Default implementation:**
+- The default `eq` method uses `structural_eq` to compare the referents
+- Takes `ref self` (borrowed receiver) and `other: ref<Self>` (borrowed argument)
+- Returns `bool`
+- Does NOT require `Self: Copy`; observes values through references
+
+**Types satisfying `Eq` (`T: Eq`):**
+
+A type `T` satisfies `Eq` iff:
+1. `T` is structural-eqable (§6.2a), AND
+2. `T` explicitly opts in via `struct[Eq, ...] ...` or `enum[Eq, ...] ...` (for user-defined types), OR
+3. `T` is a built-in type that satisfies `Eq` by default.
+
+**Built-in types satisfying `Eq` by default:**
+- Primitives: `int`, `float`, `bool`, `char`, `unit`, `ptr`
+- `string`
+- `ref<T>` (for any `T` that is structural-eqable)
+- `box<T>` (for any `T`; uses identity equality)
+- `robox<T>` (for any `T`; uses identity equality)
+- `?T` iff `T: Eq` (by composition)
+- `(T1, T2, ...)` (tuples) iff all components satisfy `Eq`
+- `array<T>` iff `T: Eq`
+
+**User-defined types:**
+- `struct` types satisfy `Eq` **only if** they opt in via `struct[Eq, ...] ...` **and** all fields are structural-eqable.
+- `enum` types satisfy `Eq` **only if** they opt in via `enum[Eq, ...] ...` **and** all payload field types are structural-eqable.
+
+Listing `Eq` in a struct/enum conformance when the structural-eqable requirement is not met is ERROR.
+
+**Rationale:**
+- `Eq` is a static proto (not object-safe; `Self` appears in parameter type)
+- Default implementation leverages `structural_eq` for observation through references
+- Enables equality on non-Copy types without requiring value-level dereference
+- `box<T>` and `robox<T>` use identity equality regardless of `T` to maintain clear semantics
 
 ---
 
@@ -1190,6 +1304,61 @@ Notes:
 - `if` without `else` is statement-only and does not participate in operator precedence.
 - Prefix `!x` (logical NOT) and postfix `x!` (force unwrap) are distinct by position.
 
+#### 9.3.1 Equality operators: `==` and `!=`
+
+The equality operators `==` and `!=` test structural equality and inequality.
+
+**Typing:**
+- `a == b` is well-typed iff:
+  - The types of `a` and `b` unify to some type `T`
+  - `T: Eq` (the type satisfies the `Eq` proto; see §6.4a)
+- The result type is `bool`
+- `a != b` has the same typing rules as `a == b`
+
+If `T` does not satisfy `Eq`, using `==` or `!=` is ERROR.
+
+**Desugaring:**
+
+`a == b` desugars to `T.eq(ref(a_tmp), ref(b_tmp))` where:
+- `T` is the unified type of `a` and `b`
+- `a_tmp` and `b_tmp` are addressable locations for `a` and `b`:
+  - If the operand is already an addressable location, that location is used
+  - If the operand is not addressable (e.g., a temporary expression result), a **materialized temporary slot** (§0) is created, and the temporary refers to that slot
+- Evaluation occurs exactly once for each operand (no re-evaluation)
+
+`a != b` desugars to `!(a == b)` (logical negation of equality).
+
+**Examples:**
+```p7
+// Primitive equality
+let x = 42;
+let y = 42;
+x == y  // desugars to: int.eq(ref(x), ref(y)) => true
+
+// String equality (content comparison)
+let s1 = "hello";
+let s2 = "hello";
+s1 == s2  // true (content equality)
+
+// Box identity equality
+let b1 = box(42);
+let b2 = box(42);
+b1 == b2  // false (different heap cells, identity equality)
+let b3 = b1;
+b1 == b3  // true (same heap cell)
+
+// Reference value equality
+let x = 10;
+let r1 = ref(x);
+let r2 = ref(x);
+r1 == r2  // true (compare referent values, not addresses)
+```
+
+**Cross-references:**
+- `Eq` proto definition: §6.4a
+- `structural_eq` intrinsic: §6.2a
+- Match pattern equality: §9.6.1
+
 ### 9.4 `loop` expressions
 
 Two forms:
@@ -1304,9 +1473,45 @@ Supported pattern forms:
 - **Named binding**: `name: pattern` binds `name` to the scrutinee value **when the arm matches**, then evaluates the arm expression.
   - Commonly used with wildcard: `name: _`.
 
+**Equality requirement:**
+
+Non-wildcard patterns (literal patterns and path patterns) test equality and therefore require the scrutinee type to satisfy `Eq`:
+- **Non-wildcard patterns** are literal patterns (e.g., `42`, `"hi"`) and path patterns (e.g., `Enum.Variant`)
+- **Wildcard patterns** are `_` (with or without a binding: `_` or `name: _`)
+- If the scrutinee has type `T` and any arm contains a non-wildcard pattern, then `T: Eq` MUST hold.
+- If `T` does not satisfy `Eq` and a non-wildcard pattern is used, it is ERROR.
+- Wildcard patterns (`_`) and named bindings to wildcard (`name: _`) do NOT require `Eq` (they match any value without testing equality).
+
+**Examples:**
+```p7
+// Valid: int satisfies Eq, using literal pattern
+match x {
+  0 => "zero",
+  n: _ => "non-zero",
+}
+
+// Valid: enum with Eq, using path patterns
+enum[Eq] Status { Ok, Error }
+let s = Status.Ok;
+match s {
+  Status.Ok => "ok",
+  Status.Error => "error",
+}
+
+// ERROR: Cannot use non-wildcard pattern if scrutinee type doesn't satisfy Eq
+struct NoEq { field: int }  // NoEq does NOT list [Eq, ...]
+let ne = NoEq { field: 42 };
+// This would be ERROR if we tried to use a literal or path pattern:
+// match ne { some_value => ... }  // ERROR: tests equality; NoEq does not satisfy Eq
+
+// Valid: Can use wildcard without Eq
+match ne {
+  obj: _ => obj.field,  // OK: wildcard doesn't test equality
+}
+```
+
 Notes:
 - v1 does not support payload destructuring such as `Result.Ok(x) => ...` or `Result.Ok(_) => ...`.
-- Implementations may further restrict which types are valid scrutinee/pattern types based on available equality semantics.
 
 #### 9.6.2 Evaluation and control flow
 
