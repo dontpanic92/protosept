@@ -887,7 +887,7 @@ Using `structural_copy(x)` when `T` is not structural-copyable is ERROR.
   - `int`, `bool`, `char`, `unit`: bitwise equality
   - `float`: IEEE-754 equality semantics
     - `NaN == NaN` is `false` (NaN is not equal to itself)
-    - `-0.0 == 0.0` is `true` (signed zeroes compare equal; note: they may behave differently in other operations, e.g., `1.0 / 0.0` vs `1.0 / -0.0`)
+    - `-0.0 == 0.0` is `true` (signed zeroes compare equal; note: they may produce different results in other operations, e.g., `1.0 / 0.0 != 1.0 / -0.0`)
     - Other values: bitwise equality of their IEEE-754 representation
   - `ptr`: identity equality (same address)
 
@@ -918,7 +918,7 @@ Using `structural_copy(x)` when `T` is not structural-copyable is ERROR.
   - If variants match, compares payloads recursively via `structural_eq`
 
 - **`ref<T>`**: referent value equality (NOT identity)
-  - Compares the referents by value: `structural_eq(a, b)` where `a: ref<T>` and `b: ref<T>` compares `*a` and `*b` structurally
+  - When comparing two `ref<T>` values, `structural_eq` compares the values at the referenced locations structurally
   - Does NOT compare addresses; compares the values at those addresses
   - Requires `T` to be structural-eqable (but does NOT require `T: Copy`)
   - This enables observational equality through references without dereferencing to a value
