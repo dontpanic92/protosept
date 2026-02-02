@@ -1,3 +1,3 @@
 [workspace]
 resolver = "3"
-members = ["p7", "p7-cli"]
+members = ["p7", "unp7", "p7-cli"]
