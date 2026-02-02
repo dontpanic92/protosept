@@ -887,7 +887,7 @@ Using `structural_copy(x)` when `T` is not structural-copyable is ERROR.
   - `int`, `bool`, `char`, `unit`: bitwise equality
   - `float`: IEEE-754 equality semantics
     - `NaN == NaN` is `false` (NaN is not equal to itself)
-    - `-0.0 == 0.0` is `true` (signed zeroes compare equal)
+    - `-0.0 == 0.0` is `true` (signed zeroes compare equal; note: they may behave differently in other operations, e.g., `1.0 / 0.0` vs `1.0 / -0.0`)
     - Other values: bitwise equality of their IEEE-754 representation
   - `ptr`: identity equality (same address)
 
@@ -1484,19 +1484,25 @@ Non-wildcard patterns (literal patterns and path patterns) test equality and the
 
 **Examples:**
 ```p7
-// Valid: int satisfies Eq
+// Valid: int satisfies Eq, using literal pattern
 match x {
   0 => "zero",
   n: _ => "non-zero",
 }
 
-// ERROR: Cannot use literal pattern if scrutinee type doesn't satisfy Eq
+// Valid: enum with Eq, using path patterns
+enum[Eq] Status { Ok, Error }
+let s = Status.Ok;
+match s {
+  Status.Ok => "ok",
+  Status.Error => "error",
+}
+
+// ERROR: Cannot use non-wildcard pattern if scrutinee type doesn't satisfy Eq
 struct NoEq { field: int }  // NoEq does NOT list [Eq, ...]
 let ne = NoEq { field: 42 };
-let ne2 = NoEq { field: 99 };
-match ne {
-  ne2 => ...  // ERROR: path pattern 'ne2' tests equality; NoEq does not satisfy Eq
-}
+// This would be ERROR if we tried to use a literal or path pattern:
+// match ne { some_value => ... }  // ERROR: tests equality; NoEq does not satisfy Eq
 
 // Valid: Can use wildcard without Eq
 match ne {
