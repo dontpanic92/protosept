@@ -1,7 +1,3 @@
-//! Test runner for the p7 language.
-//! Usage: test-runner [test-file]
-//!   test-file: optional path or file name (with or without .p7) under `tests/`.
-
 use p7::{
     InMemoryModuleProvider,
     ast::{Attribute, Expression},
@@ -9,7 +5,7 @@ use p7::{
     interpreter::context::Data as P7Value,
     semantic::SymbolKind,
 };
-use std::{env, fs, path::PathBuf};
+use std::{fs, path::PathBuf};
 
 // Define the test modules that will be provided in-memory
 const TEST_MODULE_SOURCE: &str = r#"
@@ -40,7 +36,7 @@ pub fn value() -> int {
 "#;
 
 #[derive(Debug)]
-enum FailureReason {
+pub enum FailureReason {
     NoTestFunctions,
     ExecutionError(Proto7Error),
     TypeMismatch { expected: String, found: String },
@@ -50,7 +46,7 @@ enum FailureReason {
 }
 
 #[derive(Debug)]
-enum TestResult {
+pub enum TestResult {
     Success,
     Failure(FailureReason),
 }
@@ -60,6 +56,12 @@ struct TestCase {
     function_name: String,
     expected_type: String,
     expected_value: String,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct TestSummary {
+    pub passed: usize,
+    pub failed: usize,
 }
 
 fn extract_string_from_expression(expr: &Expression) -> Option<String> {
@@ -263,19 +265,28 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
     Ok(results)
 }
 
-fn main() -> std::io::Result<()> {
+pub fn print_help(program_name: &str) {
+    println!(
+        "Usage: {program_name} [test-file]\n  test-file: optional path or file name (with or without .p7) under 'tests/'"
+    );
+}
+
+/// Runs the test harness similarly to the historical `test-runner` binary.
+///
+/// - `program_name`: string used for help/usage output (e.g. "p7 test" or "test-runner").
+/// - `args`: arguments *after* the `test` subcommand (or after the program name for `test-runner`).
+/// - Prints per-test output and summary.
+/// - Returns a `TestSummary`.
+pub fn run_cli(program_name: &str, args: &[String]) -> anyhow::Result<TestSummary> {
     let tests_dir = PathBuf::from("tests");
     if !tests_dir.exists() || !tests_dir.is_dir() {
         println!("'tests' directory not found.");
-        return Ok(());
+        return Ok(TestSummary::default());
     }
 
-    let args: Vec<String> = env::args().skip(1).collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!(
-            "Usage: test-runner [test-file]\n  test-file: optional path or file name (with or without .p7) under 'tests/'"
-        );
-        return Ok(());
+        print_help(program_name);
+        return Ok(TestSummary::default());
     }
 
     let mut files: Vec<PathBuf> = Vec::new();
@@ -299,7 +310,7 @@ fn main() -> std::io::Result<()> {
                     "Test file '{}' not found. Provide a valid path or file name under {:?}.",
                     arg, tests_dir
                 );
-                std::process::exit(1);
+                anyhow::bail!("test file not found");
             }
         }
     } else {
@@ -318,11 +329,10 @@ fn main() -> std::io::Result<()> {
 
     if files.is_empty() {
         println!("No test files found to run.");
-        return Ok(());
+        return Ok(TestSummary::default());
     }
 
-    let mut passed_count = 0;
-    let mut failed_count = 0;
+    let mut summary = TestSummary::default();
 
     for path in files {
         match run_tests_in_file(&path) {
@@ -332,31 +342,26 @@ fn main() -> std::io::Result<()> {
                     match result {
                         TestResult::Success => {
                             println!("OK");
-                            passed_count += 1;
+                            summary.passed += 1;
                         }
                         TestResult::Failure(reason) => {
                             println!("FAILED: {:?}", reason);
-                            failed_count += 1;
+                            summary.failed += 1;
                         }
                     }
                 }
             }
             Err(err) => {
                 println!("ERROR loading {:?}: {:?}", path, err);
-                failed_count += 1;
+                summary.failed += 1;
             }
         }
     }
 
     println!(
-        "
-Test results: {} passed, {} failed.",
-        passed_count, failed_count
+        "\nTest results: {} passed, {} failed.",
+        summary.passed, summary.failed
     );
 
-    if failed_count > 0 {
-        std::process::exit(1);
-    }
-
-    Ok(())
+    Ok(summary)
 }

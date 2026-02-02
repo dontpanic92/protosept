@@ -8,4 +8,6 @@ name = "p7"
 path = "src/main.rs"
 
 [dependencies]
+anyhow = "1.0"
 p7 = { path = "../p7" }
+unp7 = { path = "../unp7" }
