@@ -206,15 +206,16 @@ impl Context {
     pub fn load_module(&mut self, module: Module) {
         // Push the main module first to ensure it's at index 0
         self.build_vtable(&module);
-        
+
         // Extract imported modules before pushing the main module
         let imported_modules = module.imported_modules.clone();
         self.modules.push(module);
-        
+
         // Now register and load all imported modules
         for (module_path, imported) in imported_modules {
             let imported_module_idx = self.modules.len();
-            self.imported_modules.insert(module_path.clone(), imported_module_idx);
+            self.imported_modules
+                .insert(module_path.clone(), imported_module_idx);
             self.load_module_internal(*imported);
         }
     }
@@ -223,16 +224,17 @@ impl Context {
     /// Registers each module in imported_modules if not already present.
     fn load_module_internal(&mut self, module: Module) {
         self.build_vtable(&module);
-        
+
         // Extract imported modules before pushing this module
         let imported_modules = module.imported_modules.clone();
         self.modules.push(module);
-        
+
         // Register imported modules of this module
         for (module_path, imported) in imported_modules {
             if !self.imported_modules.contains_key(&module_path) {
                 let module_idx = self.modules.len();
-                self.imported_modules.insert(module_path.clone(), module_idx);
+                self.imported_modules
+                    .insert(module_path.clone(), module_idx);
                 self.load_module_internal(*imported);
             }
         }
@@ -329,12 +331,12 @@ impl Context {
         loop {
             let module_idx = self.stack_frame()?.module_idx;
             let pc = self.stack_frame()?.pc;
-            
+
             // Check if we've reached the end of the current module's instructions
             if pc >= self.modules[module_idx].instructions.len() {
                 break;
             }
-            
+
             let mut reader = Cursor::new(&self.modules[module_idx].instructions[pc..]);
             let instruction = Instruction::read(&mut reader).unwrap();
 
@@ -916,12 +918,13 @@ impl Context {
                         .clone();
 
                     // Look up the module
-                    let target_module_idx = *self.imported_modules.get(&module_path).ok_or_else(|| {
-                        RuntimeError::Other(format!(
-                            "Module '{}' not found in imported modules",
-                            module_path
-                        ))
-                    })?;
+                    let target_module_idx =
+                        *self.imported_modules.get(&module_path).ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Module '{}' not found in imported modules",
+                                module_path
+                            ))
+                        })?;
 
                     // Find the function symbol in the imported module
                     let module = &self.modules[target_module_idx];

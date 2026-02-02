@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Module provider that resolves modules from the filesystem.
-/// 
+///
 /// Resolution order:
 /// 1. `std.*` modules are resolved from the std library directory (relative to the binary)
 /// 2. Other modules are resolved relative to the script's directory
@@ -25,7 +25,10 @@ impl FileSystemModuleProvider {
 
         let std_dir = Self::find_std_dir();
 
-        FileSystemModuleProvider { script_dir, std_dir }
+        FileSystemModuleProvider {
+            script_dir,
+            std_dir,
+        }
     }
 
     /// Find the std library directory relative to the binary location.

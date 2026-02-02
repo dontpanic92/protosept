@@ -11,5 +11,5 @@ pub struct string() {
 
     // Return the byte length (UTF-8 encoded) of the string
     @intrinsic(name="string.len_bytes")
-    pub fn len_bytes(self: ref<string>) -> int {}
+    pub fn len_bytes(self: ref<string>) -> int;
 }

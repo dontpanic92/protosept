@@ -7,7 +7,6 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("string.len_bytes".to_string(), string_len_bytes);
 }
 
-
 fn string_len_bytes(ctx: &mut Context) -> ContextResult<()> {
     // The self parameter is passed as param 0 (it's a ref<string>, which is the string value itself)
     let string_val = ctx
@@ -31,4 +30,3 @@ fn string_len_bytes(ctx: &mut Context) -> ContextResult<()> {
         ))),
     }
 }
-

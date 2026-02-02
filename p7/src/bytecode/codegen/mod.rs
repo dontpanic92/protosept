@@ -141,7 +141,9 @@ impl Generator {
             functions: self.symbol_table.functions.clone(),
             types: self.symbol_table.types.clone(),
             string_constants: self.string_constants.clone(),
-            imported_modules: self.imported_modules.iter()
+            imported_modules: self
+                .imported_modules
+                .iter()
                 .map(|(k, v)| (k.clone(), Box::new(v.clone())))
                 .collect(),
         })

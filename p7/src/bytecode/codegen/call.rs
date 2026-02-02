@@ -326,17 +326,18 @@ impl Generator {
 
         // Get the function definition from the imported module
         let imported_module = self.imported_modules.get(&module_path).ok_or_else(|| {
-            SemanticError::Other(format!("Module '{}' not found in imported modules", module_path))
+            SemanticError::Other(format!(
+                "Module '{}' not found in imported modules",
+                module_path
+            ))
         })?;
 
         let function_def = imported_module
             .functions
             .get(func_id as usize)
-            .ok_or_else(|| {
-                SemanticError::FunctionNotFound {
-                    name: format!("{}.{}", ident.name, field.name),
-                    pos: field.pos(),
-                }
+            .ok_or_else(|| SemanticError::FunctionNotFound {
+                name: format!("{}.{}", ident.name, field.name),
+                pos: field.pos(),
             })?
             .clone();
 
@@ -838,7 +839,7 @@ impl Generator {
         )?;
 
         self.push_typed_argument_list(ordered_exprs, &function_def.params, call_line, call_col)?;
-        
+
         // Check if this is an intrinsic function
         if let Some(intrinsic_name) = &function_def.intrinsic_name {
             // For intrinsic functions, use InvokeHost instead of Call

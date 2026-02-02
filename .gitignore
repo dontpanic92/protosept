@@ -2,4 +2,4 @@
 .idx
 .vscode
 *.md
-!protosept-language-spec.md
+!specs/*.md
