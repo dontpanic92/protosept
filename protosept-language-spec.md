@@ -32,7 +32,7 @@ Normative keywords:
 - `null` denotes the null value (only inhabits nullable types).
 - **Slot**: a storage location introduced by `let`, `var`, or a parameter.
 - **Addressable location** (v1): a `let`-introduced slot, a parameter slot, or a field/sub-location of an addressable base where the language provides addressability (see §7.1, §7.2, §11.4). Note: `var` slots are NOT addressable locations in v1.
-- **Structural-copyable**: types for which `structural_copy(x)` is well-typed (§6.3). This is a structural property determined by the type's structure.
+- **Structural-copyable**: types for which `structural_copy(x)` is well-typed (§6.2). This is a structural property determined by the type's structure.
 - **Copy type**: a type `T` such that `T: Copy` (§6.3). Types satisfying the `Copy` proto enable implicit copying at value-flow sites.
 - **Materialized temporary slot (v1)**: an implicit immutable `let` slot created by the compiler to extend the lifetime of a temporary value, enabling it to be borrowed. Used in narrowly-scoped contexts; in v1, this is currently only used for receiver temporary materialization (§11.3.1).
 
@@ -884,6 +884,8 @@ proto Copy {
   }
 }
 ```
+
+Note: `*self` dereferences the `ref<Self>` receiver to obtain the value. This is well-formed because the method is only callable when `Self: Copy`, ensuring the dereference succeeds per §7.1.
 
 **Types satisfying `Copy` (`T: Copy`):**
 
@@ -2203,7 +2205,7 @@ proto Describable {
 When a type lists a proto in its conformance list (`struct[P, ...] ...` or `enum[P, ...] ...`), the default methods are injected if not already defined by the type.
 
 **Injection rule:**
-- Listing `P` in `struct[P, ...] ...` or `enum[P, ...]` injects default methods from `P` into the type if the type does not already define methods with the same signature.
+- Listing `P` in `struct[P, ...] ...` or `enum[P, ...] ...` injects default methods from `P` into the type if the type does not already define methods with the same signature.
 - If multiple protos inject methods with the same signature and the type does not define that signature, it is an ERROR.
 - If a type defines a method matching a proto method signature, the type's definition takes precedence (no injection for that method).
 
