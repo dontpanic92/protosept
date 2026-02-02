@@ -1476,9 +1476,11 @@ Supported pattern forms:
 **Equality requirement:**
 
 Non-wildcard patterns (literal patterns and path patterns) test equality and therefore require the scrutinee type to satisfy `Eq`:
+- **Non-wildcard patterns** are literal patterns (e.g., `42`, `"hi"`) and path patterns (e.g., `Enum.Variant`)
+- **Wildcard patterns** are `_` (with or without a binding: `_` or `name: _`)
 - If the scrutinee has type `T` and any arm contains a non-wildcard pattern, then `T: Eq` MUST hold.
 - If `T` does not satisfy `Eq` and a non-wildcard pattern is used, it is ERROR.
-- Wildcard patterns (`_`) do not require `Eq` (they match any value without testing equality).
+- Wildcard patterns (`_`) and named bindings to wildcard (`name: _`) do NOT require `Eq` (they match any value without testing equality).
 
 **Examples:**
 ```p7
@@ -1491,8 +1493,9 @@ match x {
 // ERROR: Cannot use literal pattern if scrutinee type doesn't satisfy Eq
 struct NoEq { field: int }  // NoEq does NOT list [Eq, ...]
 let ne = NoEq { field: 42 };
+let ne2 = NoEq { field: 99 };
 match ne {
-  ne2 => ...  // ERROR: NoEq does not satisfy Eq, cannot use value pattern
+  ne2 => ...  // ERROR: path pattern 'ne2' tests equality; NoEq does not satisfy Eq
 }
 
 // Valid: Can use wildcard without Eq
