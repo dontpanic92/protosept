@@ -32,7 +32,8 @@ Normative keywords:
 - `null` denotes the null value (only inhabits nullable types).
 - **Slot**: a storage location introduced by `let`, `var`, or a parameter.
 - **Addressable location** (v1): a `let`-introduced slot, a parameter slot, or a field/sub-location of an addressable base where the language provides addressability (see §7.1, §7.2, §11.4). Note: `var` slots are NOT addressable locations in v1.
-- **Copy-treated**: implicit copy occurs at value-flow sites (§6.1). (Distinct from “Copy-eligible”.)
+- **Structural-copyable**: types for which `structural_copy(x)` is well-typed (§6.2). This is a structural property determined by the type's structure.
+- **Copy type**: a type `T` such that `T: Copy` (§6.3). Types satisfying the `Copy` proto enable implicit copying at value-flow sites.
 - **Materialized temporary slot (v1)**: an implicit immutable `let` slot created by the compiler to extend the lifetime of a temporary value, enabling it to be borrowed. Used in narrowly-scoped contexts; in v1, this is currently only used for receiver temporary materialization (§11.3.1).
 
 
@@ -496,7 +497,7 @@ Types in v1:
   A raw, pointer-sized machine address.  
   Properties:
   - Non-null by default; nullable version is `?ptr`.
-  - Copy-eligible and Copy-treated.
+  - Structural-copyable and satisfies `Copy`.
   - Allowed operations (v1): `==` and `!=`.
   - Other operations (arithmetic, dereferencing) are TODO and expected only under FFI/unsafe extension.
 
@@ -627,7 +628,7 @@ let y = p.1;  // y has type string, value "test"
 
 ### 3.4.4 Structural rules
 
-- Tuple types are **Copy-treated** when all component types are Copy-treated.
+- Tuple types satisfy `Copy` iff all component types satisfy `Copy`.
 - Tuple types are **Send** when all component types are Send.
 - Tuple elements cannot be mutated in-place (tuples are immutable value types).
 
@@ -645,7 +646,7 @@ let y = p.1;  // y has type string, value "test"
 
 `ref<T>` is a **read-only view** of an existing addressable location that holds a `T` (§7).
 
-- `ref<T>` values are **Copy-treated** (copying a `ref<T>` copies the view/handle; it does not copy the underlying `T`).
+- `ref<T>` values satisfy `Copy` (copying a `ref<T>` copies the view/handle; it does not copy the underlying `T`).
 - `ref<T>` values are **non-escapable** (§7.3).
 
 `ref<?T>` is permitted and means a view of a nullable location.
@@ -657,7 +658,7 @@ let y = p.1;  // y has type string, value "test"
 `box<T>` is an **owned heap-allocated identity container** holding a `T`.
 
 - `box<T>` values can escape (stored, returned, captured, interop).
-- `box<T>` is **Copy-treated**: copying a box copies the handle; all copies alias the same boxed cell.
+- `box<T>` satisfies `Copy`: copying a box copies the handle; all copies alias the same boxed cell.
 - Mutation of boxed contents is visible through all aliases.
 
 ---
@@ -667,12 +668,12 @@ let y = p.1;  // y has type string, value "test"
 `robox<T>` is a **read-only heap-allocated identity container** holding a `T`.
 
 - `robox<T>` values can escape (stored, returned, captured, interop).
-- `robox<T>` is **Copy-treated**: copying a robox copies the handle; all copies alias the same boxed cell.
+- `robox<T>` satisfies `Copy`: copying a robox copies the handle; all copies alias the same boxed cell.
 - `robox<T>` **forbids mutation** through the handle:
   - `*rb = ...` is ERROR when `rb: robox<T>`.
   - `rb.field = ...` is ERROR when `rb: robox<S>`.
 - `robox<T>` supports borrowing boxed contents with `ref(*rb)`.
-- Dereferencing `*rb` as a value is allowed only when `T` is Copy-eligible; otherwise ERROR (mirroring the `box<T>` rule).
+- Dereferencing `*rb` as a value is allowed only when `T: Copy`; otherwise ERROR (mirroring the `box<T>` rule).
 - Method-call behavior:
   - Calling methods with `ref self` receivers on `robox<Self>` is allowed via auto-borrow to `ref(*rb)` (§11.3.1).
   - Calling `box self` methods on `robox<Self>` is ERROR.
@@ -844,7 +845,7 @@ This is ERROR because `var` slots are not addressable locations.
 
 Whenever a value flows into a new slot or output position (binding, parameter, return, break-value, etc.):
 
-- If the type is **Copy-treated**, the value is copied.
+- If the type satisfies `T: Copy`, the value is copied.
 - Otherwise, the value is moved and the source becomes invalid to use (ERROR if used).
 
 This rule applies uniformly to:
@@ -854,64 +855,91 @@ This rule applies uniformly to:
 - `break expr` values
 - iteration bindings (`for`)
 
-### 6.2 Copy-treated vs Copy-eligible
+### 6.2 The `structural_copy(x)` intrinsic
 
-p7 distinguishes:
+`structural_copy(x)` is a compiler intrinsic that performs a bitwise duplication of a value.
 
-- **Copy-eligible** (structural conformance to `Copy`): the type can be duplicated safely by duplicating its parts.
-- **Copy-treated** (implicit behavior): the compiler chooses copying at value-flow sites.
+**Structural-copyable types** (types for which `structural_copy(x)` is well-typed):
+- Primitives: `int`, `float`, `bool`, `char`, `unit`
+- `string` (string data is reference-counted; copying duplicates the handle)
+- `ref<T>` (view/handle copy; does not duplicate the referent)
+- `box<T>` (handle copy; does not duplicate the heap allocation)
+- `robox<T>` (handle copy; does not duplicate the heap allocation)
+- `?T` iff `T` is structural-copyable
+- `array<T>` iff `T` is structural-copyable
+- `(T1, T2, ...)` (tuples) iff all components are structural-copyable
+- `struct` iff all fields are structural-copyable
+- `enum` iff all payload field types are structural-copyable
 
-Copy-eligible is a structural property; Copy-treated is an *implicit* behavior.
+Using `structural_copy(x)` when `T` is not structural-copyable is ERROR.
 
-### 6.3 The `Copy` proto (constraint proto)
+### 6.3 The `Copy` proto (built-in static proto)
 
-`Copy` is a built-in **constraint proto** used for structural eligibility checks.
+`Copy` is a built-in **static proto** with a default method:
 
-Copy-eligible (structural `T: Copy`) in v1:
+```p7
+proto Copy {
+  pub fn copy(ref self) -> Self {
+    return structural_copy(*self);
+  }
+}
+```
+
+Note: `*self` dereferences the `ref<Self>` receiver to obtain the value. This is well-formed because the method is only callable when `Self: Copy`, ensuring the dereference succeeds per §7.1.
+
+**Types satisfying `Copy` (`T: Copy`):**
+
+A type `T` satisfies `Copy` iff:
+1. `T` is structural-copyable (§6.2), AND
+2. `T` explicitly opts in via `struct[Copy, ...] ...` or `enum[Copy, ...] ...` (for user-defined types), OR
+3. `T` is a built-in type that satisfies `Copy` by default.
+
+**Built-in types satisfying `Copy` by default:**
 - Primitives: `int`, `float`, `bool`, `char`, `unit`
 - `string`
-- `box<T>` (handle copy)
-- `ref<T>` (view/handle copy)
-- `?T` iff `T` is Copy-eligible
-- `array<T>` iff `T` is Copy-eligible
-- `struct` iff all fields are Copy-eligible
-- `enum` iff all payload field types are Copy-eligible
+- `ref<T>` (for any `T`)
+- `box<T>` (for any `T`)
+- `robox<T>` (for any `T`)
+- `?T` iff `T: Copy` (by composition)
+- `(T1, T2, ...)` (tuples) iff all components satisfy `Copy`
+- `array<T>` iff `T: Copy`
 
-Copy-treated by default in v1:
-- Primitives
-- `string`
-- `box<T>`
-- `robox<T>`
-- `ref<T>`
-- `?T` iff `T` is Copy-treated (by composition)
-- User-defined `struct` types are Copy-treated **only if** they opt in via `struct[Copy] ...`.
-- User-defined `enum` types are Copy-treated **only if** they opt in via `enum[Copy] ...` 
+**User-defined types:**
+- `struct` types satisfy `Copy` **only if** they opt in via `struct[Copy, ...] ...` **and** all fields are structural-copyable.
+- `enum` types satisfy `Copy` **only if** they opt in via `enum[Copy, ...] ...` **and** all payload field types are structural-copyable.
+
+Listing `Copy` in a struct/enum conformance when the structural-copyable requirement is not met is ERROR.
 
 ### 6.4 Explicit copying: `copy(x)`
 
 `copy(x)` is the explicit copying operation.
 
-- `copy(x)` is well-typed iff the type of `x` is Copy-eligible (`T: Copy`).
-- It returns a value of the same type as `x`.
-- It does not require the type to be Copy-treated.
+**Semantics:**
+- `copy(x)` is well-typed iff `T: Copy` where `T` is the type of `x`.
+- It returns a value of type `T`.
+- `copy(x)` desugars to `T.copy(ref(x_tmp))` where `x_tmp` is the addressable location for `x`:
+  - If `x` is already an addressable location, `x_tmp` is `x`.
+  - If `x` is not addressable (e.g., a temporary), a **materialized temporary slot** is created (§0), and `x_tmp` refers to that slot.
 
-Rationale:
-- Structural properties are usable explicitly (`copy`), while implicit duplication can be gated by opt-in for user types.
+This enables `copy(some_expr)` to work uniformly whether `some_expr` is a variable, field access, or any other value-producing expression.
+
+**Rationale:**
+- `Copy` is a proto with a method; calling `copy(x)` invokes that method via the standard method-call mechanism with receiver temporary materialization.
 
 ---
 
-## 6.5 The `Send` constraint proto
+## 6.5 The `Send` static proto
 
-`Send` is a built-in constraint proto indicating a deep-copyable pure value with no shared identity/aliasing.
+`Send` is a built-in **static proto** indicating a deep-copyable pure value with no shared identity/aliasing.
 
-Send-eligible in v1:
+Types satisfying `Send` (`T: Send`) in v1:
 - Primitives
 - `string`
-- `array<T>` iff `T` is Send-eligible
-- User-defined `enum` iff all payload field types are Send-eligible
-- User-defined `struct` iff all fields are Send-eligible
+- `array<T>` iff `T: Send`
+- User-defined `enum` iff all payload field types satisfy `Send`
+- User-defined `struct` iff all fields satisfy `Send`
 
-Not Send-eligible:
+Types that do NOT satisfy `Send`:
 - `box<T>`
 - `robox<T>`
 - `ref<T>`
@@ -929,14 +957,14 @@ A value of type `ref<T>` is a read-only view of an addressable location holding 
 
 - Dereference: `*r` reads the current value of the referent location.
 - Read semantics: `*r` yields a value of type `T`:
-  - if `T` is Copy-treated, `*r` yields a copy;
+  - if `T: Copy`, `*r` yields a copy;
   - otherwise, `*r` causes an ERROR.
 
 **Operations on `ref<T>` values:**
 
 - Member access (`r.field`) and method calls (`r.method(...)`) are permitted without copying `T`:
   - These operations access the referent location directly.
-  - Only explicit dereference (`*r`) is restricted by the Copy-treated requirement.
+  - Only explicit dereference (`*r`) is restricted by the `T: Copy` requirement.
 
 ### 7.2 Taking views
 
@@ -985,8 +1013,8 @@ Operations (surface syntax v1):
 
 - Read / deref: `*b`
   - `*b` is an **addressable location** (place expression) referring to the boxed contents.
-  - If `T` is Copy-eligible, `*b` as a value expression yields a copy of type `T`.
-  - If `T` is not Copy-eligible, using `*b` as a value expression (moving out) is ERROR in v1.
+  - If `T: Copy`, `*b` as a value expression yields a copy of type `T`.
+  - If `T` does not satisfy `Copy`, using `*b` as a value expression (moving out) is ERROR in v1.
   - Rationale: boxes are aliasable; moving out implicitly would require moved-out states or uniqueness.
 
 - Write: `*b = expr`
@@ -999,7 +1027,7 @@ Operations (surface syntax v1):
 
 - **Borrowing boxed contents**: `ref(*b)`
   - Produces a `ref<T>` view of the boxed contents.
-  - Permitted for **any** `T`, including non-Copy-treated types.
+  - Permitted for **any** `T`, including types that do not satisfy `Copy`.
   - The resulting `ref<T>` follows all `ref<...>` rules (§7.1, §7.3).
   - When `T` is an object proto `P`, `ref(*b)` yields `ref<P>` and is dynamically dispatched per §18.
 
@@ -1017,14 +1045,14 @@ Operations (surface syntax v1):
 
 - Read / deref: `*rb` (where `rb: robox<T>`)
   - `*rb` is **not** a mutable place; it cannot appear on the left side of assignment.
-  - If `T` is Copy-eligible, `*rb` as a value expression yields a copy of type `T`.
-  - If `T` is not Copy-eligible, using `*rb` as a value expression is ERROR (mirroring the `box<T>` rule).
+  - If `T: Copy`, `*rb` as a value expression yields a copy of type `T`.
+  - If `T` does not satisfy `Copy`, using `*rb` as a value expression is ERROR (mirroring the `box<T>` rule).
 
 - Write: `*rb = expr` is **ERROR** when `rb: robox<T>`.
 
 - **Borrowing boxed contents**: `ref(*rb)`
   - Produces a `ref<T>` view of the boxed contents.
-  - Permitted for **any** `T`, including non-Copy-treated types.
+  - Permitted for **any** `T`, including types that do not satisfy `Copy`.
   - The resulting `ref<T>` follows all `ref<...>` rules (§7.1, §7.3).
   - When `T` is an object proto `P`, `ref(*rb)` yields `ref<P>` and is dynamically dispatched per §18.
 
@@ -1507,7 +1535,7 @@ Methods on structs, enums, and protos may declare a receiver parameter. The rece
 3. `self: box<Self>` or shorthand `box self` – boxed receiver:
    - Type: `box<Self>`.
    - Caller passes a boxed handle to the instance.
-   - The boxed handle is Copy-treated (§6.2); passing does not move the box itself.
+   - The boxed handle satisfies `Copy` (§6.3); passing does not move the box itself.
    - The box's contents remain aliased; multiple calls to methods on the same box see shared state.
 
 **Rules:**
@@ -1516,7 +1544,7 @@ Methods on structs, enums, and protos may declare a receiver parameter. The rece
 - No implicit boxing occurs to satisfy a receiver:
   - A method with `self: box<Self>` requires the caller to have `box<Self>`, not just `Self`.
 - For methods with `ref self` receivers, the auto-borrow sugar (§11.3.1) applies at method call sites for `box<Self>` and `robox<Self>` receivers.
-- Boxed receivers (`self: box<Self>`) pass the box handle, which is Copy-treated. This allows multiple method calls on the same box without moving the box itself.
+- Boxed receivers (`self: box<Self>`) pass the box handle, which satisfies `Copy`. This allows multiple method calls on the same box without moving the box itself.
 - Calling a method with a `box self` receiver on a `robox<Self>` value is ERROR (capability mismatch).
 
 **Example:**
@@ -1531,7 +1559,7 @@ struct Counter(count: int) {
 }
 
 let c = box(Counter(0));
-c.increment();   // ok: box handle is Copy-treated, box is not moved
+c.increment();   // ok: box handle satisfies Copy, box is not moved
 c.increment();   // ok: can call again
 let n = c.get(); // ok: desugars to Counter.get(ref(*c)) per §11.3.1
 
@@ -2111,10 +2139,38 @@ A type `T` satisfies a proto `P` if `T` provides methods matching every required
 
 ### 18.2 Proto categories
 
-- **Constraint protos**: compile-time only, no runtime dispatch (`Copy`, `Send`).
-- **Object protos**: compile-time conformance + runtime dynamic dispatch via `box<P>` and `ref<P>`.
+Protos are categorized as:
+- **Object proto**: eligible for runtime dispatch via `box<P>` and `ref<P>`.
+- **Static proto**: compile-time only; not eligible for runtime dispatch.
 
-User-declared `proto` are object protos in v1.
+**Inference rule (object safety):**
+
+A proto is an **object proto** iff all its methods are object-safe:
+- `Self` MUST NOT appear in parameter types or return types except as the receiver.
+- The receiver must be explicit: either `ref self` (shorthand for `self: ref<Self>`) or `box self` (shorthand for `self: box<Self>`).
+- Generic methods in object protos are ERROR in v1.
+
+Otherwise, the proto is a **static proto**.
+
+**Built-in static protos:** `Copy`, `Send`.
+
+**Using static protos in `box<P>` or `ref<P>` is ERROR.**
+
+Examples:
+```p7
+// Object proto (all methods are object-safe)
+proto Printable {
+  fn print(ref self) -> unit;
+}
+
+// Static proto (method returns Self)
+proto Clone {
+  fn clone(ref self) -> Self;  // Self in return type
+}
+
+// ERROR: Cannot use static proto as `box<Clone>`
+let x: box<Clone> = ...;  // ERROR
+```
 
 ### 18.3 Proto declaration
 
@@ -2134,8 +2190,27 @@ Proto methods may declare receivers as defined in §11.4:
 - `self: ref<Self>` (or shorthand `ref self`) – borrowed receiver
 - `self: box<Self>` (or shorthand `box self`) – boxed receiver
 
+**Default implementations:**
+
+Proto methods MAY have bodies (default implementations):
+
+```p7
+proto Describable {
+  fn describe(ref self) -> string {
+    return "Default description";
+  }
+}
+```
+
+When a type lists a proto in its conformance list (`struct[P, ...] ...` or `enum[P, ...] ...`), the default methods are injected if not already defined by the type.
+
+**Injection rule:**
+- Listing `P` in `struct[P, ...] ...` or `enum[P, ...] ...` injects default methods from `P` into the type if the type does not already define methods with the same signature.
+- If multiple protos inject methods with the same signature and the type does not define that signature, it is an ERROR.
+- If a type defines a method matching a proto method signature, the type's definition takes precedence (no injection for that method).
+
 v1 restrictions:
-- Proto methods MUST NOT mention `Self` in parameter or return types beyond the receiver.
+- Proto methods MUST NOT mention `Self` in parameter or return types beyond the receiver (for object safety; see §18.2).
 - Overloads in protos: ERROR in v1 (recommended).
 
 ### 18.4 Proto handles
@@ -2146,13 +2221,13 @@ Runtime proto handles are:
 - `box<P>` – owned proto handle (§18.5)
 - `ref<P>` – borrowed proto handle (§18.4.1)
 
-Constraint protos MUST NOT appear as `box<P>` or `ref<P>`.
+Static protos MUST NOT appear as `box<P>` or `ref<P>`.
 
 #### 18.4.1 Borrowed proto handles: `ref<P>`
 
 **Well-formedness:**
 - `ref<P>` is well-formed only when `P` is an object proto.
-- Using `ref<P>` where `P` is a constraint proto is ERROR.
+- Using `ref<P>` where `P` is a static proto is ERROR.
 
 **Meaning:**
 - A value of type `ref<P>` is a borrowed view of some dynamic type `T` satisfying proto `P`.
@@ -2224,13 +2299,12 @@ enum[Printable, Copy] Status(
 
 Rules:
 - Each name in `struct[...]` or `enum[...]` MUST be the name of a proto.
-- The compiler MUST check structural satisfaction.
-- Listing a proto MAY enable implicit behaviors described by this spec:
+- The compiler MUST check structural satisfaction after injection.
+- Listing a proto enables implicit behaviors described by this spec:
+  - Default method injection from the proto (§18.3).
   - `Copy` and `Send` opt-in behavior (§6.3, §6.5).
   - Implicit `box<T> -> box<P>` coercions for object protos (§18.5).
   - Implicit `ref<T> -> ref<P>` coercions for object protos (§18.5.1).
-
-The conformance list does not inject members; it only checks and enables implicit behaviors.
 
 **Duplicate conformances:** Listing the same proto more than once in a struct's conformance list is a compile-time ERROR.
 
@@ -2243,7 +2317,7 @@ Calling a proto method on `box<P>` or `ref<P>` performs dynamic dispatch:
 
 For `box<P>`:
 - For methods with `ref self` receivers: the proto box handle is passed and dereferenced to obtain a `ref<T>` view of the boxed contents.
-- For methods with `box self` receivers: the proto box handle itself is passed (as `box<P>`), aliasing the original box. The method receives a boxed handle, which is Copy-treated; multiple calls do not move the box.
+- For methods with `box self` receivers: the proto box handle itself is passed (as `box<P>`), aliasing the original box. The method receives a boxed handle, which satisfies `Copy`; multiple calls do not move the box.
 
 For `ref<P>`:
 - For methods with `ref self` receivers: the borrowed proto handle is passed directly as a `ref<T>` view to the underlying object.
@@ -2262,7 +2336,7 @@ struct Counter(count: int) {
 }
 
 let b: box<Mutator> = box(Counter(0)) as box<Mutator>;
-b.mutate();  // dispatches to Counter.mutate; box handle is Copy-treated
+b.mutate();  // dispatches to Counter.mutate; box handle satisfies Copy
 b.mutate();  // ok: can call again
 ```
 
