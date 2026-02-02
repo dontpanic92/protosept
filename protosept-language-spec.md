@@ -926,18 +926,18 @@ This enables `copy(some_expr)` to work uniformly whether `some_expr` is a variab
 
 ---
 
-## 6.5 The `Send` constraint proto
+## 6.5 The `Send` static proto
 
-`Send` is a built-in constraint proto indicating a deep-copyable pure value with no shared identity/aliasing.
+`Send` is a built-in **static proto** indicating a deep-copyable pure value with no shared identity/aliasing.
 
-Send-eligible in v1:
+Types satisfying `Send` (`T: Send`) in v1:
 - Primitives
 - `string`
-- `array<T>` iff `T` is Send-eligible
-- User-defined `enum` iff all payload field types are Send-eligible
-- User-defined `struct` iff all fields are Send-eligible
+- `array<T>` iff `T: Send`
+- User-defined `enum` iff all payload field types satisfy `Send`
+- User-defined `struct` iff all fields satisfy `Send`
 
-Not Send-eligible:
+Types that do NOT satisfy `Send`:
 - `box<T>`
 - `robox<T>`
 - `ref<T>`
