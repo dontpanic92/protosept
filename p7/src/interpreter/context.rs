@@ -35,6 +35,8 @@ pub enum Data {
     },
     /// Exception value (enum variant ID) - used for try-catch as special return value
     Exception(i32),
+    /// Array value - immutable collection of Data values
+    Array(Vec<Data>),
 }
 
 impl From<i32> for Data {
@@ -90,6 +92,10 @@ macro_rules! arithmetic_op {
                 // Arithmetic on exceptions is invalid.
                 return Err(RuntimeError::Other("Arithmetic on exception value".to_string()));
             }
+            (Data::Array(_), _) | (_, Data::Array(_)) => {
+                // Arithmetic on arrays is invalid.
+                return Err(RuntimeError::Other("Arithmetic on array".to_string()));
+            }
         }
     };
 }
@@ -128,6 +134,10 @@ macro_rules! comparison_op {
             (Data::Exception(_), _) | (_, Data::Exception(_)) => {
                 // Comparison with exceptions not supported
                 return Err(RuntimeError::Other("Comparison on exception value".to_string()));
+            }
+            (Data::Array(_), _) | (_, Data::Array(_)) => {
+                // Comparison with arrays not supported
+                return Err(RuntimeError::Other("Comparison on array".to_string()));
             }
         }
     };
@@ -429,6 +439,11 @@ impl Context {
                                     "Cannot negate exception value".to_string(),
                                 ));
                             }
+                            Data::Array(_) => {
+                                return Err(RuntimeError::Other(
+                                    "Cannot negate array".to_string(),
+                                ));
+                            }
                         }
                     } else {
                         unimplemented!();
@@ -465,6 +480,11 @@ impl Context {
                             Data::Exception(_) => {
                                 return Err(RuntimeError::Other(
                                     "Cannot negate exception value".to_string(),
+                                ));
+                            }
+                            Data::Array(_) => {
+                                return Err(RuntimeError::Other(
+                                    "Cannot apply logical NOT to array".to_string(),
                                 ));
                             }
                         }

@@ -208,6 +208,19 @@ pub enum Expression {
     Continue {
         pos: (usize, usize),
     },
+
+    // Array literal expression (e.g., [1, 2, 3])
+    ArrayLiteral {
+        elements: Vec<Expression>,
+        pos: (usize, usize),
+    },
+
+    // Array indexing expression (e.g., arr[0])
+    ArrayIndex {
+        array: Box<Expression>,
+        index: Box<Expression>,
+        pos: (usize, usize),
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
