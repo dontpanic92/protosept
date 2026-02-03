@@ -991,68 +991,6 @@ impl Context {
 
                     self.stack.push(new_frame);
                 }
-                Instruction::NewArray(element_count) => {
-                    // Pop element_count values from stack and create an array
-                    let mut elements = Vec::new();
-                    for _ in 0..element_count {
-                        if let Some(elem) = self.stack_frame_mut()?.stack.pop() {
-                            elements.push(elem);
-                        } else {
-                            return Err(RuntimeError::StackUnderflow);
-                        }
-                    }
-                    // Elements were popped in reverse order, so reverse them
-                    elements.reverse();
-                    self.stack_frame_mut()?.stack.push(Data::Array(elements));
-                }
-                Instruction::ArrayIndex => {
-                    // Pop index and array from stack
-                    let index = self
-                        .stack_frame_mut()?
-                        .stack
-                        .pop()
-                        .ok_or(RuntimeError::StackUnderflow)?;
-                    let array = self
-                        .stack_frame_mut()?
-                        .stack
-                        .pop()
-                        .ok_or(RuntimeError::StackUnderflow)?;
-
-                    match (array, index) {
-                        (Data::Array(elements), Data::Int(idx)) => {
-                            // Check for negative index
-                            if idx < 0 {
-                                return Err(RuntimeError::Other(format!(
-                                    "Array index out of bounds: negative index {}",
-                                    idx
-                                )));
-                            }
-
-                            // Check bounds
-                            if (idx as usize) >= elements.len() {
-                                return Err(RuntimeError::Other(format!(
-                                    "Array index out of bounds: index {} >= length {}",
-                                    idx,
-                                    elements.len()
-                                )));
-                            }
-
-                            // Push element at index
-                            let element = elements[idx as usize].clone();
-                            self.stack_frame_mut()?.stack.push(element);
-                        }
-                        (Data::Array(_), _) => {
-                            return Err(RuntimeError::Other(
-                                "Array index must be an integer".to_string(),
-                            ));
-                        }
-                        _ => {
-                            return Err(RuntimeError::Other(
-                                "ArrayIndex instruction requires an array".to_string(),
-                            ));
-                        }
-                    }
-                }
             }
         }
 

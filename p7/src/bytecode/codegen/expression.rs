@@ -837,8 +837,12 @@ impl Generator {
             first_expr_type
         };
 
-        // Generate NewArray instruction
-        self.builder.newarray(elements.len() as u32);
+        // Push element count onto stack
+        self.builder.ldi(elements.len() as i32);
+
+        // Call array.new host function
+        let string_id = self.add_string_constant("array.new".to_string());
+        self.builder.call_host_function(string_id);
 
         Ok(Type::Array(Box::new(element_type)))
     }
@@ -878,8 +882,9 @@ impl Generator {
             });
         }
 
-        // Generate ArrayIndex instruction
-        self.builder.array_index();
+        // Call array.index host function
+        let string_id = self.add_string_constant("array.index".to_string());
+        self.builder.call_host_function(string_id);
 
         Ok(element_type)
     }

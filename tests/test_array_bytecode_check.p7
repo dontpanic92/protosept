@@ -1,0 +1,5 @@
+// Simple test to verify bytecode generation
+fn main() -> int {
+    let arr = [1, 2, 3];
+    arr[1]
+}

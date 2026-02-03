@@ -206,19 +206,6 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::CallExternal(module_path_idx, symbol_name_idx));
     }
 
-    /// Create a new array with the given number of elements.
-    /// Expects element values on the stack (in order: elem0, elem1, ..., elemN).
-    pub fn newarray(&mut self, element_count: u32) {
-        self.add_instruction(Instruction::NewArray(element_count));
-    }
-
-    /// Array indexing - reads element at index.
-    /// Expects: [..., Array, index] on stack.
-    /// TRAPs if index is negative or out of bounds.
-    pub fn array_index(&mut self) {
-        self.add_instruction(Instruction::ArrayIndex);
-    }
-
     pub fn get_bytecode(&self) -> Vec<u8> {
         self.writer.get_ref().clone()
     }
