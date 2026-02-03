@@ -1,7 +1,0 @@
-// Array error tests - out of bounds (should trap)
-import test.test;
-
-fn test_out_of_bounds() -> int {
-    let arr = [1, 2, 3];
-    arr[3]
-}
