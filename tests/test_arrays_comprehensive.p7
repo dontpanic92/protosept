@@ -1,0 +1,23 @@
+// Comprehensive array test
+import test.test;
+
+@test(expected_type = "int", expected_value = "2")
+fn test_array_nested_indexing() -> int {
+    let arr1 = [1, 2, 3];
+    let arr2 = [0, 1, 2];
+    arr1[arr2[1]]  // arr2[1] is 1, arr1[1] is 2
+}
+
+@test(expected_type = "int", expected_value = "30")
+fn test_array_computation() -> int {
+    let data = [5, 10, 15, 20];
+    let idx1 = 1;
+    let idx2 = 3;
+    data[idx1] + data[idx2]  // 10 + 20 = 30
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_array_in_condition() -> int {
+    let arr = [10, 20, 30];
+    if arr[1] > 15 { 1 } else { 0 }
+}

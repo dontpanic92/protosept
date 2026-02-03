@@ -821,25 +821,20 @@ impl Generator {
             ));
         } else {
             // Generate code for all elements and check they have the same type
-            let mut element_types = Vec::new();
-            for element in &elements {
+            let first_expr_type = self.generate_expression(elements[0].clone())?;
+            
+            for element in &elements[1..] {
                 let expr_type = self.generate_expression(element.clone())?;
-                element_types.push(expr_type);
-            }
-
-            // Check all elements have the same type
-            let first_type = &element_types[0];
-            for (i, elem_type) in element_types.iter().enumerate().skip(1) {
-                if elem_type != first_type {
+                if expr_type != first_expr_type {
                     return Err(SemanticError::TypeMismatch {
-                        lhs: self.type_to_string(first_type),
-                        rhs: self.type_to_string(elem_type),
+                        lhs: self.type_to_string(&first_expr_type),
+                        rhs: self.type_to_string(&expr_type),
                         pos: self.make_pos(line, col),
                     });
                 }
             }
 
-            first_type.clone()
+            first_expr_type
         };
 
         // Generate NewArray instruction
