@@ -44,7 +44,15 @@ fn array_new(ctx: &mut Context) -> ContextResult<()> {
         ))?;
 
     let element_count = match element_count_data {
-        Data::Int(count) => count as u32,
+        Data::Int(count) => {
+            if count < 0 {
+                return Err(RuntimeError::Other(format!(
+                    "array.new: element count must be non-negative, found {}",
+                    count
+                )));
+            }
+            count as u32
+        }
         _ => {
             return Err(RuntimeError::Other(format!(
                 "array.new: element count must be int, found {:?}",
@@ -75,7 +83,7 @@ fn array_index(ctx: &mut Context) -> ContextResult<()> {
         .stack
         .pop()
         .ok_or(RuntimeError::StackUnderflow)?;
-    
+
     // Pop array from stack
     let array = ctx
         .stack_frame_mut()?
