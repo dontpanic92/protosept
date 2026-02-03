@@ -229,6 +229,18 @@ impl Parser {
                 expression = self.parse_function_call(expression)?;
             } else if self.peek_match(TokenType::Dot) {
                 expression = self.parse_field_access(expression)?;
+            } else if self.peek_match(TokenType::OpenBracket) {
+                // Parse array indexing: arr[index]
+                let line = self.peek().unwrap().line;
+                let col = self.peek().unwrap().col;
+                self.consume(); // consume '['
+                let index = self.parse_expression()?;
+                self.consume_match(TokenType::CloseBracket)?;
+                expression = Expression::ArrayIndex {
+                    array: Box::new(expression),
+                    index: Box::new(index),
+                    pos: (line, col),
+                };
             } else {
                 break;
             }
@@ -286,6 +298,35 @@ impl Parser {
                 }
                 TokenType::Continue => {
                     return self.parse_continue_expression();
+                }
+                TokenType::OpenBracket => {
+                    // Parse array literal [e1, e2, ...]
+                    let pos = (token.line, token.col);
+                    self.consume(); // consume '['
+                    let mut elements = Vec::new();
+                    
+                    while let Some(token) = self.peek() {
+                        if token.token_type == TokenType::CloseBracket {
+                            self.consume();
+                            break;
+                        }
+                        
+                        elements.push(self.parse_expression()?);
+                        
+                        if self.peek_match(TokenType::Comma) {
+                            self.consume();
+                        } else if !self.peek_match(TokenType::CloseBracket) {
+                            return Err(ParseError::UnexpectedToken {
+                                found: format!("{:?}", self.peek().map(|t| &t.token_type)),
+                                pos: self.peek().map(|t| SourcePos {
+                                    line: t.line,
+                                    col: t.col,
+                                }),
+                            });
+                        }
+                    }
+                    
+                    Expression::ArrayLiteral { elements, pos }
                 }
                 TokenType::Ref => {
                     self.consume();

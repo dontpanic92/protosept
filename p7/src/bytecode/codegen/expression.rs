@@ -156,6 +156,12 @@ impl Generator {
             } => self.generate_while(*condition, *body, pos),
             Expression::Break { value, pos } => self.generate_break(value, pos),
             Expression::Continue { pos } => self.generate_continue(pos),
+            Expression::ArrayLiteral { elements, pos } => {
+                self.generate_array_literal(elements, pos)
+            }
+            Expression::ArrayIndex { array, index, pos } => {
+                self.generate_array_index(*array, *index, pos)
+            }
         }
     }
 
@@ -796,5 +802,90 @@ impl Generator {
                 pos: self.make_pos(line, col),
             }),
         }
+    }
+
+    fn generate_array_literal(
+        &mut self,
+        elements: Vec<Expression>,
+        pos: (usize, usize),
+    ) -> SaResult<Type> {
+        let (line, col) = pos;
+
+        // Infer element type from first element if non-empty
+        let element_type = if elements.is_empty() {
+            // Empty array requires expected type from context
+            // For now, we'll return an error if no expected type is available
+            // TODO: Support expected type propagation for empty arrays
+            return Err(SemanticError::Other(
+                format!("Cannot infer type for empty array literal at {}:{} - expected type annotation required", line, col)
+            ));
+        } else {
+            // Generate code for all elements and check they have the same type
+            let mut element_types = Vec::new();
+            for element in &elements {
+                let expr_type = self.generate_expression(element.clone())?;
+                element_types.push(expr_type);
+            }
+
+            // Check all elements have the same type
+            let first_type = &element_types[0];
+            for (i, elem_type) in element_types.iter().enumerate().skip(1) {
+                if elem_type != first_type {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: self.type_to_string(first_type),
+                        rhs: self.type_to_string(elem_type),
+                        pos: self.make_pos(line, col),
+                    });
+                }
+            }
+
+            first_type.clone()
+        };
+
+        // Generate NewArray instruction
+        self.builder.newarray(elements.len() as u32);
+
+        Ok(Type::Array(Box::new(element_type)))
+    }
+
+    fn generate_array_index(
+        &mut self,
+        array: Expression,
+        index: Expression,
+        pos: (usize, usize),
+    ) -> SaResult<Type> {
+        let (line, col) = pos;
+
+        // Generate code for array expression
+        let array_type = self.generate_expression(array)?;
+
+        // Check that it's an array type
+        let element_type = match array_type {
+            Type::Array(elem_type) => *elem_type,
+            _ => {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: "array".to_string(),
+                    rhs: self.type_to_string(&array_type),
+                    pos: self.make_pos(line, col),
+                });
+            }
+        };
+
+        // Generate code for index expression
+        let index_type = self.generate_expression(index)?;
+
+        // Check that index is an integer
+        if index_type != Type::Primitive(PrimitiveType::Int) {
+            return Err(SemanticError::TypeMismatch {
+                lhs: "int".to_string(),
+                rhs: self.type_to_string(&index_type),
+                pos: self.make_pos(line, col),
+            });
+        }
+
+        // Generate ArrayIndex instruction
+        self.builder.array_index();
+
+        Ok(element_type)
     }
 }

@@ -269,6 +269,8 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
                 offset_hex, module_path_idx, symbol_name_idx
             )
         }
+        Instruction::NewArray(count) => format!("{}  newarray {}", offset_hex, count),
+        Instruction::ArrayIndex => format!("{}  array_index", offset_hex),
     }
 }
 

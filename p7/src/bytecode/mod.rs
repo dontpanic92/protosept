@@ -163,6 +163,18 @@ pub enum Instruction {
     // Parameters: (module_path_idx, symbol_name_idx) where both are indices into Module.string_constants
     #[brw(magic = 39u8)]
     CallExternal(u32, u32),
+
+    // Create a new array on the stack.
+    // Expects: [..., elem0, elem1, ..., elemN] (N = element_count) on stack
+    // Pops N element values, creates array, pushes Array value
+    #[brw(magic = 40u8)]
+    NewArray(u32),
+
+    // Array indexing - reads element at index.
+    // Expects: [..., Array, index] -> pops both and pushes the element value
+    // TRAPs if index is negative or out of bounds
+    #[brw(magic = 41u8)]
+    ArrayIndex,
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {

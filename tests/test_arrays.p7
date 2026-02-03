@@ -1,0 +1,47 @@
+// Array literal and indexing tests
+import test.test;
+
+@test(expected_type = "int", expected_value = "1")
+fn test_array_literal_int() -> int {
+    let arr = [1, 2, 3];
+    arr[0]
+}
+
+@test(expected_type = "int", expected_value = "2")
+fn test_array_indexing() -> int {
+    let arr = [1, 2, 3];
+    arr[1]
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_array_last_element() -> int {
+    let arr = [1, 2, 3];
+    arr[2]
+}
+
+@test(expected_type = "float", expected_value = "1.5")
+fn test_array_literal_float() -> float {
+    let arr = [1.5, 2.5, 3.5];
+    arr[0]
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_array_single_element() -> int {
+    let arr = [42];
+    arr[0]
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_array_expression_elements() -> int {
+    let a = 1;
+    let b = 2;
+    let arr = [a + b, 4, 5];
+    arr[2]
+}
+
+@test(expected_type = "int", expected_value = "7")
+fn test_array_with_expression_index() -> int {
+    let arr = [5, 6, 7, 8];
+    let idx = 1;
+    arr[idx + 1]
+}
