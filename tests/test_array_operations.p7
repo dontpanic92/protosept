@@ -77,7 +77,7 @@ fn test_array_slice_entire_array() -> int {
     sliced.len()
 }
 
-@test(expected_type = "int", expected_value = "1")
+@test(expected_type = "int", expected_value = "10")
 fn test_array_slice_first_element_only() -> int {
     let arr = [10, 20, 30];
     let sliced = arr.slice(0, 1);
@@ -115,7 +115,7 @@ fn test_array_push_length_increases() -> int {
     boxed.len()
 }
 
-@test(expected_type = "int", expected_value = "4")
+@test(expected_type = "int", expected_value = "42")
 fn test_array_push_element_accessible() -> int {
     let arr = [1, 2, 3];
     let boxed = box(arr);
@@ -226,7 +226,7 @@ fn test_array_push_clear_push_value() -> int {
     boxed[2]
 }
 
-@test(expected_type = "int", expected_value = "15")
+@test(expected_type = "int", expected_value = "20")
 fn test_array_slice_sum() -> int {
     let arr = [1, 2, 3, 4, 5, 6];
     let sliced = arr.slice(1, 6);

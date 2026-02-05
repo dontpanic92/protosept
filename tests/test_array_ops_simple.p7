@@ -77,7 +77,7 @@ fn test_array_slice_entire_array() -> int {
     sliced.len()
 }
 
-@test(expected_type = "int", expected_value = "1")
+@test(expected_type = "int", expected_value = "10")
 fn test_array_slice_first_element_only() -> int {
     let arr = [10, 20, 30];
     let sliced = arr.slice(0, 1);
