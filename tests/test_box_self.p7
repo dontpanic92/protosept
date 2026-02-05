@@ -1,0 +1,38 @@
+// Test file to demonstrate box self receiver shorthand
+// This test shows that `box self` is equivalent to `self: box<Self>`
+
+struct Counter(value: int) {
+    // Using the box self shorthand
+    fn increment1(box self) {
+        self.value = self.value + 1;
+    }
+
+    // Using the explicit box<Self> syntax (should be equivalent)
+    fn increment2(self: box<Self>) {
+        self.value = self.value + 1;
+    }
+
+    // For comparison, ref self vs ref<Self>
+    fn get1(ref self) -> int {
+        self.value
+    }
+
+    fn get2(self: ref<Self>) -> int {
+        self.value
+    }
+}
+
+@test(expected_type = "int", expected_value = "1")
+pub fn test_box_self() -> int {
+    let c = box(Counter(value=0));
+    c.increment1();
+    c.get1()
+}
+
+@test(expected_type = "int", expected_value = "2")
+pub fn test_box_self2() -> int {
+    let c = box(Counter(value=0));
+    c.increment1();
+    c.increment2();
+    c.get2()
+}

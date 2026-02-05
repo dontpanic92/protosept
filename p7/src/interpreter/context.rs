@@ -599,7 +599,20 @@ impl Context {
                         return Err(RuntimeError::StackUnderflow);
                     }
                     let field_value = field_value_opt.unwrap();
-                    match struct_ref_opt.unwrap() {
+                    let struct_ref_data = struct_ref_opt.unwrap();
+
+                    // Resolve BoxRef/ProtoBoxRef/ProtoRefRef to the underlying StructRef
+                    let resolved_ref = match &struct_ref_data {
+                        Data::BoxRef(idx) | Data::ProtoBoxRef { box_idx: idx, .. } => {
+                            self.box_heap.get(*idx as usize).cloned().ok_or_else(|| {
+                                RuntimeError::Other(format!("Invalid box reference: {}", idx))
+                            })?
+                        }
+                        Data::ProtoRefRef { ref_idx, .. } => Data::StructRef(*ref_idx),
+                        other => other.clone(),
+                    };
+
+                    match resolved_ref {
                         Data::StructRef(ref_id) => {
                             let ref_usize = ref_id as usize;
                             if ref_usize >= self.heap.len() {

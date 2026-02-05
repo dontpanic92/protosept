@@ -66,6 +66,20 @@ impl Generator {
                     return Ok(Type::BoxType(Box::new(inner_ty)));
                 }
 
+                // Handle array<T> specially (builtin generic type)
+                if base.name == "array" {
+                    if type_args.len() != 1 {
+                        return Err(SemanticError::Other(format!(
+                            "array<T> requires exactly one type argument, found {} at line {} column {}",
+                            type_args.len(),
+                            base.line,
+                            base.col
+                        )));
+                    }
+                    let inner_ty = self.get_semantic_type(&type_args[0])?;
+                    return Ok(Type::Array(Box::new(inner_ty)));
+                }
+
                 // Implement proper generic type resolution with monomorphization
 
                 // First, find the base generic type
@@ -312,21 +326,24 @@ impl Generator {
             Type::Array(inner) => format!("array<{}>", self.type_to_string(inner)),
             Type::Reference(inner) => format!("ref {}", self.type_to_string(inner)),
             Type::Struct(id) => {
-                if let TypeDefinition::Struct(s) = &self.symbol_table.types[*id as usize] {
+                // Check bounds to handle type IDs from imported modules
+                if let Some(TypeDefinition::Struct(s)) = self.symbol_table.types.get(*id as usize) {
                     s.qualified_name.clone()
                 } else {
                     format!("struct#{}", id)
                 }
             }
             Type::Enum(id) => {
-                if let TypeDefinition::Enum(e) = &self.symbol_table.types[*id as usize] {
+                // Check bounds to handle type IDs from imported modules
+                if let Some(TypeDefinition::Enum(e)) = self.symbol_table.types.get(*id as usize) {
                     e.qualified_name.clone()
                 } else {
                     format!("enum#{}", id)
                 }
             }
             Type::Proto(id) => {
-                if let TypeDefinition::Proto(p) = &self.symbol_table.types[*id as usize] {
+                // Check bounds to handle type IDs from imported modules
+                if let Some(TypeDefinition::Proto(p)) = self.symbol_table.types.get(*id as usize) {
                     p.qualified_name.clone()
                 } else {
                     format!("proto#{}", id)

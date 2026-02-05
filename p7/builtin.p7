@@ -13,3 +13,44 @@ pub struct string() {
     @intrinsic(name="string.len_bytes")
     pub fn len_bytes(self: ref<string>) -> int;
 }
+
+@builtin()
+pub struct array<T>() {
+
+    // Return the number of elements in the array
+    @intrinsic(name="array.len")
+    pub fn len(ref self) -> int;
+
+    // TODO: Requires nullable type (?T) support
+    // Return element at index i if in bounds, otherwise null
+    // Requires T: Copy since extracting from immutable container
+    // @intrinsic(name="array.get")
+    // pub fn get(ref self, i: int) -> ?T;
+
+
+    // Return a new array with elements from start (inclusive) to end (exclusive)
+    // Clamping: start < 0 becomes 0, end > len becomes len, start >= end returns empty
+    // Requires T: Copy since elements are copied into new array
+    @intrinsic(name="array.slice")
+    pub fn slice(ref self, start: int, end: int) -> Self;
+
+
+    // Append element to end of boxed array
+    // @intrinsic(name="array.push")
+    // pub fn push(box self, elem: T);
+
+    // Remove all elements from the array
+    @intrinsic(name="array.clear")
+    pub fn clear(box self);
+
+    // TODO: Requires nullable type (?T) support
+    // Remove and return last element, or null if empty
+    // @intrinsic(name="array.pop")
+    // pub fn pop(box self) -> ?T;
+
+    // TODO: Requires nullable type (?T) support
+    // Replace element at index i with elem, returning old value if successful
+    // Returns null if out-of-bounds
+    // @intrinsic(name="array.set")
+    // pub fn set(box self, i: int, elem: T) -> ?T;
+}

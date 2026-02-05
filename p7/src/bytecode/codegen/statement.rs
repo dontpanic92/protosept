@@ -78,7 +78,15 @@ impl Generator {
         // Check if this expression involves a move (before consuming it)
         let move_info = self.compute_move_info(&expression);
 
-        let inferred_ty = self.generate_expression(expression)?;
+        // Pre-compute expected type from annotation for type inference
+        let expected_type = if let Some(ref annotation) = type_annotation {
+            Some(self.get_semantic_type(annotation)?)
+        } else {
+            None
+        };
+
+        let inferred_ty =
+            self.generate_expression_with_expected_type(expression, expected_type.as_ref())?;
 
         // Mark variable as moved if needed
         if let Some(var_id) = move_info {
@@ -86,9 +94,7 @@ impl Generator {
         }
 
         // Validate type annotation if provided
-        let final_ty = if let Some(annotation) = type_annotation {
-            let annotated_ty = self.get_semantic_type(&annotation)?;
-
+        let final_ty = if let Some(annotated_ty) = expected_type {
             // Check if inferred type is compatible with annotation
             if !self.types_compatible(&inferred_ty, &annotated_ty) {
                 return Err(SemanticError::TypeMismatch {

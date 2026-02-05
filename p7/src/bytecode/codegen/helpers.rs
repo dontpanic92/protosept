@@ -3,7 +3,7 @@ use crate::errors::SemanticError;
 use crate::errors::SourcePos;
 use crate::{
     ast::{Expression, Identifier, Pattern},
-    semantic::{PrimitiveType, SymbolId, Type},
+    semantic::{PrimitiveType, SymbolId, Type, TypeDefinition},
 };
 
 use super::{Generator, SaResult};
@@ -147,6 +147,105 @@ impl Generator {
                 });
             }
         }
+    }
+
+    pub(super) fn handle_array_method_call(
+        &mut self,
+        object_ty: &Type,
+        field: &Identifier,
+        arguments: &Vec<(Option<Identifier>, Expression)>,
+        call_line: usize,
+        call_col: usize,
+    ) -> SaResult<Type> {
+        self.load_builtin();
+
+        // Extract all needed data from the builtin module first to avoid borrow issues
+        let (intrinsic_name, param_names, param_defaults, params, return_type, is_self_return) = {
+            let builtin = &self.imported_modules["builtin"];
+            let method = {
+                let array_struct = builtin.symbols.iter().find(|s| s.name == "array").unwrap();
+                array_struct.children.iter().find(|s| s.0 == &field.name)
+            };
+
+            if method.is_none() {
+                return Err(SemanticError::FunctionNotFound {
+                    name: format!("array.{}", field.name),
+                    pos: field.pos(),
+                });
+            }
+
+            let method_id = *method.unwrap().1;
+            let method_symbol = builtin.symbols.get(method_id as usize).unwrap();
+            let func_id = method_symbol.get_func_id().unwrap();
+            let function_def = builtin.functions.get(func_id as usize).unwrap().clone();
+
+            let intrinsic_name =
+                Self::extract_intrinsic_name(&function_def.attributes).unwrap();
+
+            // Check if return type is the builtin array struct (meaning "Self")
+            let is_self_return = match &function_def.return_type {
+                Type::Struct(id) => {
+                    builtin.types.iter().position(|t| {
+                        matches!(t, TypeDefinition::Struct(s) if s.qualified_name == "builtin.array")
+                    }) == Some(*id as usize)
+                }
+                _ => false,
+            };
+
+            (
+                intrinsic_name,
+                function_def.param_names.clone(),
+                function_def.param_defaults.clone(),
+                function_def.params.clone(),
+                function_def.return_type.clone(),
+                is_self_return,
+            )
+        };
+
+        // Use shared argument processing logic
+        let ordered_exprs = self.process_arguments(
+            &format!("array.{}", field.name),
+            call_line,
+            call_col,
+            arguments.clone(),
+            &param_names[1..],  // Skip self parameter
+            &param_defaults[1..],
+        )?;
+
+        // Receiver already on stack from generate_expression
+        // Push additional arguments
+        self.push_typed_argument_list(
+            ordered_exprs,
+            &params[1..],  // Skip self parameter
+            call_line,
+            call_col,
+        )?;
+
+        // Call the intrinsic host function
+        let string_id = self.add_string_constant(intrinsic_name.clone());
+        self.builder.call_host_function(string_id);
+
+        // Resolve the return type: if is_self_return is true, it means the method
+        // returns "Self" which should be the actual array type.
+        let final_return_type = if is_self_return {
+            // Extract the actual array type from object_ty
+            match object_ty {
+                Type::Array(_) => object_ty.clone(),
+                Type::Reference(inner) => match inner.as_ref() {
+                    Type::Array(_) => inner.as_ref().clone(),
+                    _ => return_type,
+                },
+                Type::BoxType(inner) => match inner.as_ref() {
+                    Type::Array(_) => inner.as_ref().clone(),
+                    _ => return_type,
+                },
+                _ => return_type,
+            }
+        } else {
+            return_type
+        };
+
+        Ok(final_return_type)
     }
 
     /// Helper to mark a variable as moved

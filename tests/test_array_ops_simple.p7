@@ -1,0 +1,106 @@
+// Tests for basic array operations: len and slice (without box dereference)
+import test.test;
+
+// === Tests for array.len() ===
+
+@test(expected_type = "int", expected_value = "3")
+fn test_array_len_basic() -> int {
+    let arr = [1, 2, 3];
+    arr.len()
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_array_len_empty() -> int {
+    let arr: array<int> = [];
+    arr.len()
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_array_len_single() -> int {
+    let arr = [42];
+    arr.len()
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_array_len_five_elements() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    arr.len()
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_array_len_float_array() -> int {
+    let arr = [1.0, 2.0, 3.0];
+    arr.len()
+}
+
+// === Tests for array.slice() ===
+
+@test(expected_type = "int", expected_value = "2")
+fn test_array_slice_basic() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    let sliced = arr.slice(1, 3);
+    sliced[0]
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_array_slice_second_element() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    let sliced = arr.slice(1, 3);
+    sliced[1]
+}
+
+@test(expected_type = "int", expected_value = "2")
+fn test_array_slice_len() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    let sliced = arr.slice(1, 3);
+    sliced.len()
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_array_slice_empty() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    let sliced = arr.slice(2, 2);
+    sliced.len()
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_array_slice_start_greater_than_end() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    let sliced = arr.slice(3, 1);
+    sliced.len()
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_array_slice_entire_array() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    let sliced = arr.slice(0, 5);
+    sliced.len()
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_array_slice_first_element_only() -> int {
+    let arr = [10, 20, 30];
+    let sliced = arr.slice(0, 1);
+    sliced[0]
+}
+
+@test(expected_type = "int", expected_value = "30")
+fn test_array_slice_last_element_only() -> int {
+    let arr = [10, 20, 30];
+    let sliced = arr.slice(2, 3);
+    sliced[0]
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_array_slice_clamp_negative_start() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    let sliced = arr.slice(-1, 3);
+    sliced.len()
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_array_slice_clamp_end_beyond_length() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    let sliced = arr.slice(0, 100);
+    sliced.len()
+}

@@ -157,11 +157,35 @@ impl Generator {
             Expression::Break { value, pos } => self.generate_break(value, pos),
             Expression::Continue { pos } => self.generate_continue(pos),
             Expression::ArrayLiteral { elements, pos } => {
-                self.generate_array_literal(elements, pos)
+                self.generate_array_literal(elements, pos, None)
             }
             Expression::ArrayIndex { array, index, pos } => {
                 self.generate_array_index(*array, *index, pos)
             }
+        }
+    }
+
+    /// Generate an expression with an expected type hint.
+    /// This is used to infer types for empty array literals.
+    pub(super) fn generate_expression_with_expected_type(
+        &mut self,
+        expression: Expression,
+        expected_type: Option<&Type>,
+    ) -> SaResult<Type> {
+        match expression {
+            Expression::ArrayLiteral { elements, pos } => {
+                // Extract element type from expected array type
+                let expected_element_type = expected_type.and_then(|ty| {
+                    if let Type::Array(elem_ty) = ty {
+                        Some(elem_ty.as_ref())
+                    } else {
+                        None
+                    }
+                });
+                self.generate_array_literal(elements, pos, expected_element_type)
+            }
+            // For all other expressions, delegate to the regular generate_expression
+            other => self.generate_expression(other),
         }
     }
 
@@ -808,17 +832,20 @@ impl Generator {
         &mut self,
         elements: Vec<Expression>,
         pos: (usize, usize),
+        expected_element_type: Option<&Type>,
     ) -> SaResult<Type> {
         let (line, col) = pos;
 
-        // Infer element type from first element if non-empty
+        // Infer element type from first element if non-empty, or use expected type for empty arrays
         let element_type = if elements.is_empty() {
-            // Empty array requires expected type from context
-            // For now, we'll return an error if no expected type is available
-            // TODO: Support expected type propagation for empty arrays
-            return Err(SemanticError::Other(
-                format!("Cannot infer type for empty array literal at {}:{} - expected type annotation required", line, col)
-            ));
+            // Empty array uses expected type from context
+            if let Some(expected) = expected_element_type {
+                expected.clone()
+            } else {
+                return Err(SemanticError::Other(
+                    format!("Cannot infer type for empty array literal at {}:{} - expected type annotation required", line, col)
+                ));
+            }
         } else {
             // Generate code for all elements and check they have the same type
             let first_expr_type = self.generate_expression(elements[0].clone())?;

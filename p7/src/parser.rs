@@ -335,6 +335,22 @@ impl Parser {
                     self.consume_match(TokenType::CloseParen)?;
                     Expression::Ref(Box::new(expr))
                 }
+                TokenType::Box => {
+                    // box(expr) - parse as intrinsic function call
+                    let pos = (token.line, token.col);
+                    self.consume();
+                    self.consume_match(TokenType::OpenParen)?;
+                    let arg = self.parse_expression()?;
+                    self.consume_match(TokenType::CloseParen)?;
+                    Expression::FunctionCall(FunctionCall {
+                        callee: std::boxed::Box::new(Expression::Identifier(Identifier {
+                            name: "box".to_string(),
+                            line: pos.0,
+                            col: pos.1,
+                        })),
+                        arguments: vec![(None, arg)],
+                    })
+                }
                 _ => {
                     return Err(ParseError::UnexpectedToken {
                         found: format!("{:?}", token.token_type),
@@ -775,6 +791,32 @@ impl Parser {
                         line: name.line,
                         col: name.col,
                     })));
+
+                    Ok(Parameter { name, arg_type, default_value: None })
+                },
+                TokenType::Box => {
+                    // Receiver shortcut: `box self` == `self: box<Self>`
+                    self.consume();
+                    let name = self.parse_identifier()?;
+                    if name.name != "self" {
+                        return Err(ParseError::UnexpectedToken {
+                            found: format!("{:?}", TokenType::Identifier(name.name)),
+                            pos: Some(SourcePos { line: name.line, col: name.col }),
+                        });
+                    }
+
+                    let arg_type = Type::Generic {
+                        base: Identifier {
+                            name: "box".to_string(),
+                            line: name.line,
+                            col: name.col,
+                        },
+                        type_args: vec![Type::Identifier(Identifier {
+                            name: "Self".to_string(),
+                            line: name.line,
+                            col: name.col,
+                        })],
+                    };
 
                     Ok(Parameter { name, arg_type, default_value: None })
                 },
@@ -1279,6 +1321,22 @@ impl Parser {
                     let ty = self.parse_type()?;
                     self.consume_match(TokenType::GreaterThan)?;
                     Ok(Type::Reference(Box::new(ty)))
+                }
+                TokenType::Box => {
+                    let (line, col) = (token.line, token.col);
+                    self.consume();
+                    // box<Type> syntax - must have angle brackets
+                    self.consume_match(TokenType::LessThan)?;
+                    let ty = self.parse_type()?;
+                    self.consume_match(TokenType::GreaterThan)?;
+                    Ok(Type::Generic {
+                        base: Identifier {
+                            name: "box".to_string(),
+                            line,
+                            col,
+                        },
+                        type_args: vec![ty],
+                    })
                 }
                 TokenType::OpenBracket => {
                     self.consume();

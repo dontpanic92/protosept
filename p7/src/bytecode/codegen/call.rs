@@ -474,6 +474,13 @@ impl Generator {
             return Ok(result);
         }
 
+        // Handle array method calls
+        if let Some(result) = self.try_generate_array_method_call(
+            &object_ty, field, &arguments, call_line, call_col,
+        )? {
+            return Ok(result);
+        }
+
         // Handle primitive method calls
         if let Some(result) = self.try_generate_primitive_method_call(
             &object_ty, field, &arguments, call_line, call_col,
@@ -584,6 +591,32 @@ impl Generator {
         Ok(None)
     }
 
+    /// Tries to handle array method calls (e.g., arr.len(), arr.slice())
+    fn try_generate_array_method_call(
+        &mut self,
+        object_ty: &Type,
+        field: &Identifier,
+        arguments: &CallArgs,
+        call_line: usize,
+        call_col: usize,
+    ) -> SaResult<Option<Type>> {
+        // Check if the type is an array (possibly wrapped in ref or box)
+        let is_array_ty = match object_ty {
+            Type::Array(_) => true,
+            Type::BoxType(inner) => matches!(inner.as_ref(), Type::Array(_)),
+            Type::Reference(inner) => matches!(inner.as_ref(), Type::Array(_)),
+            _ => false,
+        };
+
+        if !is_array_ty {
+            return Ok(None);
+        }
+
+        // Delegate to helper function
+        let result = self.handle_array_method_call(object_ty, field, arguments, call_line, call_col)?;
+        Ok(Some(result))
+    }
+
     /// Generates a struct instance method call
     fn generate_struct_instance_method_call(
         &mut self,
@@ -595,6 +628,10 @@ impl Generator {
     ) -> SaResult<Type> {
         let type_symbol_id = match object_ty {
             Type::Reference(inner) => match inner.as_ref() {
+                Type::Struct(id) => self.symbol_table.find_symbol_for_type(*id),
+                _ => None,
+            },
+            Type::BoxType(inner) => match inner.as_ref() {
                 Type::Struct(id) => self.symbol_table.find_symbol_for_type(*id),
                 _ => None,
             },
