@@ -112,7 +112,7 @@ fn test_array_push_length_increases() -> int {
     let arr = [1, 2, 3];
     let boxed = box(arr);
     boxed.push(4);
-    (*boxed).len()
+    boxed.len()
 }
 
 @test(expected_type = "int", expected_value = "4")
@@ -120,8 +120,7 @@ fn test_array_push_element_accessible() -> int {
     let arr = [1, 2, 3];
     let boxed = box(arr);
     boxed.push(42);
-    let unboxed = *boxed;
-    unboxed[3]
+    boxed[3]
 }
 
 @test(expected_type = "int", expected_value = "5")
@@ -130,7 +129,7 @@ fn test_array_push_multiple_times() -> int {
     let boxed = box(arr);
     boxed.push(4);
     boxed.push(5);
-    (*boxed).len()
+    boxed.len()
 }
 
 @test(expected_type = "int", expected_value = "5")
@@ -139,8 +138,7 @@ fn test_array_push_last_pushed_element() -> int {
     let boxed = box(arr);
     boxed.push(4);
     boxed.push(5);
-    let unboxed = *boxed;
-    unboxed[4]
+    boxed[4]
 }
 
 @test(expected_type = "int", expected_value = "1")
@@ -148,7 +146,7 @@ fn test_array_push_to_empty() -> int {
     let arr: [int] = [];
     let boxed = box(arr);
     boxed.push(100);
-    (*boxed).len()
+    boxed.len()
 }
 
 @test(expected_type = "int", expected_value = "100")
@@ -156,8 +154,7 @@ fn test_array_push_to_empty_value() -> int {
     let arr: [int] = [];
     let boxed = box(arr);
     boxed.push(100);
-    let unboxed = *boxed;
-    unboxed[0]
+    boxed[0]
 }
 
 // === Tests for box<array>.clear() ===

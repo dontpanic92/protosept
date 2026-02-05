@@ -177,14 +177,17 @@ impl Generator {
         // Resolve protocol conformances
         let conforming_to = self.resolve_conformances(&conformance)?;
 
+        // Extract type parameter names for enclosing context
+        let type_param_names: Vec<String> = type_parameters
+            .iter()
+            .map(|tp| tp.name.name.clone())
+            .collect();
+
         let ty = Enum {
             qualified_name: qualified_name.clone(),
             variants,
             attributes: attributes.clone(),
-            type_parameters: type_parameters
-                .iter()
-                .map(|tp| tp.name.name.clone())
-                .collect(),
+            type_parameters: type_param_names.clone(),
             generic_variant_types,
             monomorphization: None,
             conforming_to: conforming_to.clone(),
@@ -200,10 +203,16 @@ impl Generator {
 
         self.symbol_table.push_symbol(symbol);
 
+        // Set enclosing type params for methods to reference enum's type parameters
+        let prev_enclosing_type_params = std::mem::replace(&mut self.enclosing_type_params, type_param_names);
+
         // Process enum methods
         for method in methods {
             self.process_function_declaration(method.function)?;
         }
+
+        // Restore previous enclosing type params
+        self.enclosing_type_params = prev_enclosing_type_params;
 
         // Check conformance after processing methods
         self.check_struct_conformance(type_id, &conforming_to, name.line, name.col)?;
@@ -283,7 +292,7 @@ impl Generator {
             fields: fields_with_types,
             field_defaults,
             attributes: attributes.clone(),
-            type_parameters: type_param_names,
+            type_parameters: type_param_names.clone(),
             generic_field_types,
             monomorphization: None, // This is the generic definition, not a monomorphization
             conforming_to: conforming_to.clone(),
@@ -298,9 +307,15 @@ impl Generator {
         );
         self.symbol_table.push_symbol(symbol);
 
+        // Set enclosing type params for methods to reference struct's type parameters
+        let prev_enclosing_type_params = std::mem::replace(&mut self.enclosing_type_params, type_param_names);
+
         for method in methods {
             self.process_function_declaration(method.function)?;
         }
+
+        // Restore previous enclosing type params
+        self.enclosing_type_params = prev_enclosing_type_params;
 
         // Check conformance after processing methods
         self.check_struct_conformance(type_id, &conforming_to, name.line, name.col)?;

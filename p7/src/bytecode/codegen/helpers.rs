@@ -159,8 +159,22 @@ impl Generator {
     ) -> SaResult<Type> {
         self.load_builtin();
 
+        // Extract the element type from the array receiver
+        let element_type = match object_ty {
+            Type::Array(inner) => inner.as_ref().clone(),
+            Type::Reference(inner) => match inner.as_ref() {
+                Type::Array(elem) => elem.as_ref().clone(),
+                _ => Type::Primitive(PrimitiveType::Unit),
+            },
+            Type::BoxType(inner) => match inner.as_ref() {
+                Type::Array(elem) => elem.as_ref().clone(),
+                _ => Type::Primitive(PrimitiveType::Unit),
+            },
+            _ => Type::Primitive(PrimitiveType::Unit),
+        };
+
         // Extract all needed data from the builtin module first to avoid borrow issues
-        let (intrinsic_name, param_names, param_defaults, params, return_type, is_self_return) = {
+        let (intrinsic_name, param_names, param_defaults, generic_param_types, generic_return_type, return_type, is_self_return) = {
             let builtin = &self.imported_modules["builtin"];
             let method = {
                 let array_struct = builtin.symbols.iter().find(|s| s.name == "array").unwrap();
@@ -196,11 +210,63 @@ impl Generator {
                 intrinsic_name,
                 function_def.param_names.clone(),
                 function_def.param_defaults.clone(),
-                function_def.params.clone(),
+                function_def.generic_param_types.clone(),
+                function_def.generic_return_type.clone(),
                 function_def.return_type.clone(),
                 is_self_return,
             )
         };
+
+        let substitution = if generic_param_types.is_some() {
+            // Build substitution map: T -> element_type, Self -> array<element_type>
+            let mut substitution: std::collections::HashMap<String, ParsedType> =
+                std::collections::HashMap::new();
+            let parsed_element_type = self.type_to_parsed_type(&element_type);
+            substitution.insert("T".to_string(), parsed_element_type.clone());
+
+            // Self should resolve to array<T> with the actual element type
+            let self_type = ParsedType::Generic {
+                base: crate::ast::Identifier {
+                    name: "array".to_string(),
+                    line: 0,
+                    col: 0,
+                },
+                type_args: vec![parsed_element_type],
+            };
+            substitution.insert("Self".to_string(), self_type);
+            substitution
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        // Resolve parameter types by substituting T with the actual element type
+        let params = if let Some(ref generic_params) = generic_param_types {
+            // Substitute and resolve each parameter type
+            let mut resolved_params = Vec::new();
+            for parsed_param in generic_params {
+                let substituted = self.substitute_parsed_type(parsed_param, &substitution);
+                let resolved = self.get_semantic_type(&substituted)?;
+                resolved_params.push(resolved);
+            }
+            resolved_params
+        } else {
+            // No generic params - use empty (shouldn't happen for array methods)
+            Vec::new()
+        };
+
+        let resolved_return_type = if let Some(parsed_return_type) = generic_return_type {
+            let substituted = self.substitute_parsed_type(&parsed_return_type, &substitution);
+            Some(self.get_semantic_type(&substituted)?)
+        } else {
+            None
+        };
+
+        // If the receiver is a box but the method expects a non-box self, deref first.
+        if let (Type::BoxType(_), Some(expected_self)) = (object_ty, params.first()) {
+            if !matches!(expected_self, Type::BoxType(_)) {
+                self.builder.box_deref();
+            }
+        }
 
         // Use shared argument processing logic
         let ordered_exprs = self.process_arguments(
@@ -227,7 +293,9 @@ impl Generator {
 
         // Resolve the return type: if is_self_return is true, it means the method
         // returns "Self" which should be the actual array type.
-        let final_return_type = if is_self_return {
+        let final_return_type = if let Some(resolved) = resolved_return_type {
+            resolved
+        } else if is_self_return {
             // Extract the actual array type from object_ty
             match object_ty {
                 Type::Array(_) => object_ty.clone(),

@@ -36,8 +36,8 @@ pub struct array<T>() {
 
 
     // Append element to end of boxed array
-    // @intrinsic(name="array.push")
-    // pub fn push(box self, elem: T);
+    @intrinsic(name="array.push")
+    pub fn push(box self, elem: T);
 
     // Remove all elements from the array
     @intrinsic(name="array.clear")

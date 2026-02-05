@@ -888,6 +888,29 @@ impl Generator {
         // Check that it's an array type
         let element_type = match array_type {
             Type::Array(elem_type) => *elem_type,
+            Type::Reference(inner) => match *inner {
+                Type::Array(elem_type) => *elem_type,
+                other => {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "array".to_string(),
+                        rhs: self.type_to_string(&other),
+                        pos: self.make_pos(line, col),
+                    });
+                }
+            },
+            Type::BoxType(inner) => match *inner {
+                Type::Array(elem_type) => {
+                    self.builder.box_deref();
+                    *elem_type
+                }
+                other => {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "array".to_string(),
+                        rhs: self.type_to_string(&other),
+                        pos: self.make_pos(line, col),
+                    });
+                }
+            },
             _ => {
                 return Err(SemanticError::TypeMismatch {
                     lhs: "array".to_string(),

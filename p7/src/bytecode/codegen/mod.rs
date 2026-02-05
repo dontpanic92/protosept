@@ -56,6 +56,8 @@ pub struct Generator {
     // Track the containing type when generating methods (for Self resolution)
     pub(super) current_self_type: Option<Type>,
     pub(super) is_compiling_builtin: bool,
+    // Track type parameters of the enclosing generic type (struct/enum) when processing methods
+    pub(super) enclosing_type_params: Vec<String>,
 }
 
 impl Generator {
@@ -85,6 +87,7 @@ impl Generator {
             string_constants: Vec::new(),
             current_self_type: None,
             is_compiling_builtin: false,
+            enclosing_type_params: Vec::new(),
         }
     }
 
@@ -247,6 +250,7 @@ impl Generator {
             string_constants: Vec::new(),
             current_self_type: None,
             is_compiling_builtin: true, // Skip builtin preload to avoid infinite recursion
+            enclosing_type_params: Vec::new(),
         };
         // Override root module metadata with this module_path
         if let Some(root) = generator.symbol_table.symbols.get_mut(0) {
@@ -300,14 +304,21 @@ impl Generator {
             .symbol_table
             .get_new_symbol_qualified_name(declaration.name.name.clone());
 
-        // Extract type parameter names
-        let type_param_names: Vec<String> = declaration
+        // Extract type parameter names from the function itself
+        let own_type_param_names: Vec<String> = declaration
             .type_parameters
             .iter()
             .map(|tp| tp.name.name.clone())
             .collect();
 
-        let is_generic = !type_param_names.is_empty();
+        // Combine with enclosing type params (from generic struct/enum)
+        // Enclosing params come first as they are "outer" type parameters
+        let mut all_type_param_names = self.enclosing_type_params.clone();
+        all_type_param_names.extend(own_type_param_names.clone());
+
+        // A function needs deferred type resolution if it has its own type params
+        // or if it's inside a generic struct/enum (has enclosing type params)
+        let is_generic = !all_type_param_names.is_empty();
 
         // For generic functions, store parsed parameter types; for non-generic, resolve them
         let (params, generic_param_types) = if is_generic {
@@ -386,7 +397,7 @@ impl Generator {
             return_type: return_type.clone(),
             attributes: declaration.attributes.clone(),
             intrinsic_name: intrinsic_name.clone(),
-            type_parameters: type_param_names.clone(),
+            type_parameters: all_type_param_names.clone(),
             generic_param_types,
             generic_return_type,
             generic_body: if is_generic {
