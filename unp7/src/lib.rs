@@ -269,6 +269,11 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
                 offset_hex, module_path_idx, symbol_name_idx
             )
         }
+        Instruction::Ldnull => format!("{}  ldnull", offset_hex),
+        Instruction::WrapNullable => format!("{}  wrap_nullable", offset_hex),
+        Instruction::IsNull => format!("{}  is_null", offset_hex),
+        Instruction::ForceUnwrap => format!("{}  force_unwrap", offset_hex),
+        Instruction::NullCoalesce => format!("{}  null_coalesce", offset_hex),
     }
 }
 

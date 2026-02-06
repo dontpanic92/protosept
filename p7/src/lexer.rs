@@ -30,6 +30,7 @@ pub enum TokenType {
     While,
     Break,
     Continue,
+    Null,
 
     // Identifiers and Literals
     Identifier(String),
@@ -53,6 +54,9 @@ pub enum TokenType {
     Ampersand,
     Not,
     Assignment,
+    Question,
+    DoubleQuestion,
+    Exclamation,
 
     // Punctuation
     Colon,
@@ -403,7 +407,16 @@ impl Lexer {
                     self.read_char();
                     TokenType::NotEquals
                 } else {
-                    TokenType::Not
+                    TokenType::Exclamation
+                }
+            }
+            Some('?') => {
+                self.read_char();
+                if self.peek_char() == Some('?') {
+                    self.read_char();
+                    TokenType::DoubleQuestion
+                } else {
+                    TokenType::Question
                 }
             }
             Some('>') => {
@@ -505,6 +518,7 @@ impl Lexer {
                         "while" => TokenType::While,
                         "break" => TokenType::Break,
                         "continue" => TokenType::Continue,
+                        "null" => TokenType::Null,
                         _ => TokenType::Identifier(ident),
                     }
                 } else if c.is_numeric() {

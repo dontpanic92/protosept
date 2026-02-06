@@ -51,6 +51,10 @@ impl Generator {
                 let ty = self.get_semantic_type(a)?;
                 Ok(Type::Array(Box::new(ty)))
             }
+            ParsedType::Nullable(n) => {
+                let ty = self.get_semantic_type(n)?;
+                Ok(Type::Nullable(Box::new(ty)))
+            }
             ParsedType::Generic { base, type_args } => {
                 // Handle box<T> specially (builtin generic type)
                 if base.name == "box" {
@@ -315,6 +319,7 @@ impl Generator {
             (Type::Enum(a), Type::Enum(b)) => a == b,
             (Type::Proto(a), Type::Proto(b)) => a == b,
             (Type::BoxType(a), Type::BoxType(b)) => self.types_equal(a, b),
+            (Type::Nullable(a), Type::Nullable(b)) => self.types_equal(a, b),
             _ => false,
         }
     }
@@ -350,6 +355,7 @@ impl Generator {
                 }
             }
             Type::BoxType(inner) => format!("box<{}>", self.type_to_string(inner)),
+            Type::Nullable(inner) => format!("?{}", self.type_to_string(inner)),
         }
     }
 }

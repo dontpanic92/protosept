@@ -37,6 +37,10 @@ pub enum Data {
     Exception(i32),
     /// Array value - immutable collection of Data values
     Array(Vec<Data>),
+    /// Null value for nullable types
+    Null,
+    /// Some(value) for nullable types
+    Some(Box<Data>),
 }
 
 impl From<i32> for Data {
@@ -96,6 +100,10 @@ macro_rules! arithmetic_op {
                 // Arithmetic on arrays is invalid.
                 return Err(RuntimeError::Other("Arithmetic on array".to_string()));
             }
+            (Data::Null, _) | (_, Data::Null) | (Data::Some(_), _) | (_, Data::Some(_)) => {
+                // Arithmetic on nullable values is invalid.
+                return Err(RuntimeError::Other("Arithmetic on nullable value".to_string()));
+            }
         }
     };
 }
@@ -138,6 +146,10 @@ macro_rules! comparison_op {
             (Data::Array(_), _) | (_, Data::Array(_)) => {
                 // Comparison with arrays not supported
                 return Err(RuntimeError::Other("Comparison on array".to_string()));
+            }
+            (Data::Null, _) | (_, Data::Null) | (Data::Some(_), _) | (_, Data::Some(_)) => {
+                // Comparison with nullable values not supported directly
+                return Err(RuntimeError::Other("Comparison on nullable value".to_string()));
             }
         }
     };
@@ -444,6 +456,11 @@ impl Context {
                                     "Cannot negate array".to_string(),
                                 ));
                             }
+                            Data::Null | Data::Some(_) => {
+                                return Err(RuntimeError::Other(
+                                    "Cannot negate nullable value".to_string(),
+                                ));
+                            }
                         }
                     } else {
                         unimplemented!();
@@ -485,6 +502,11 @@ impl Context {
                             Data::Array(_) => {
                                 return Err(RuntimeError::Other(
                                     "Cannot apply logical NOT to array".to_string(),
+                                ));
+                            }
+                            Data::Null | Data::Some(_) => {
+                                return Err(RuntimeError::Other(
+                                    "Cannot apply logical NOT to nullable value".to_string(),
                                 ));
                             }
                         }
@@ -1003,6 +1025,52 @@ impl Context {
                     new_frame.pc = address as usize;
 
                     self.stack.push(new_frame);
+                }
+                Instruction::Ldnull => {
+                    self.stack_frame_mut()?.stack.push(Data::Null);
+                }
+                Instruction::WrapNullable => {
+                    let value = self.stack_frame_mut()?.stack.pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    self.stack_frame_mut()?.stack.push(Data::Some(Box::new(value)));
+                }
+                Instruction::IsNull => {
+                    let nullable = self.stack_frame_mut()?.stack.pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    let is_null = matches!(nullable, Data::Null);
+                    self.stack_frame_mut()?.stack.push(Data::Int(if is_null { 1 } else { 0 }));
+                }
+                Instruction::ForceUnwrap => {
+                    let nullable = self.stack_frame_mut()?.stack.pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    match nullable {
+                        Data::Some(value) => {
+                            self.stack_frame_mut()?.stack.push(*value);
+                        }
+                        Data::Null => {
+                            return Err(RuntimeError::Other("Force unwrap on null value".to_string()));
+                        }
+                        _ => {
+                            return Err(RuntimeError::Other("Force unwrap on non-nullable value".to_string()));
+                        }
+                    }
+                }
+                Instruction::NullCoalesce => {
+                    let default = self.stack_frame_mut()?.stack.pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    let nullable = self.stack_frame_mut()?.stack.pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    match nullable {
+                        Data::Some(value) => {
+                            self.stack_frame_mut()?.stack.push(*value);
+                        }
+                        Data::Null => {
+                            self.stack_frame_mut()?.stack.push(default);
+                        }
+                        _ => {
+                            return Err(RuntimeError::Other("Null coalesce on non-nullable value".to_string()));
+                        }
+                    }
                 }
             }
         }

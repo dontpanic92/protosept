@@ -206,6 +206,31 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::CallExternal(module_path_idx, symbol_name_idx));
     }
 
+    /// Load null onto the stack.
+    pub fn ldnull(&mut self) {
+        self.add_instruction(Instruction::Ldnull);
+    }
+
+    /// Wrap a value into a nullable Some variant.
+    pub fn wrap_nullable(&mut self) {
+        self.add_instruction(Instruction::WrapNullable);
+    }
+
+    /// Check if nullable value is null.
+    pub fn is_null(&mut self) {
+        self.add_instruction(Instruction::IsNull);
+    }
+
+    /// Force unwrap: get inner value or trap if null.
+    pub fn force_unwrap(&mut self) {
+        self.add_instruction(Instruction::ForceUnwrap);
+    }
+
+    /// Null-coalescing: return value if Some, default if null.
+    pub fn null_coalesce(&mut self) {
+        self.add_instruction(Instruction::NullCoalesce);
+    }
+
     pub fn get_bytecode(&self) -> Vec<u8> {
         self.writer.get_ref().clone()
     }

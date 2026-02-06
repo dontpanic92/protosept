@@ -162,17 +162,42 @@ impl Generator {
             Expression::ArrayIndex { array, index, pos } => {
                 self.generate_array_index(*array, *index, pos)
             }
+            Expression::NullLiteral => {
+                // Null literal needs type context to determine the inner type
+                // For now, emit a placeholder - the actual type comes from bidirectional typing
+                self.builder.ldnull();
+                // Return a placeholder nullable type; the actual type will be refined by context
+                Ok(Type::Nullable(Box::new(Type::Primitive(PrimitiveType::Unit))))
+            }
+            Expression::ForceUnwrap { operand, token } => {
+                self.generate_force_unwrap(*operand, token)
+            }
         }
     }
 
     /// Generate an expression with an expected type hint.
-    /// This is used to infer types for empty array literals.
+    /// This is used to infer types for empty array literals and null literals.
     pub(super) fn generate_expression_with_expected_type(
         &mut self,
         expression: Expression,
         expected_type: Option<&Type>,
     ) -> SaResult<Type> {
         match expression {
+            Expression::NullLiteral => {
+                // Null literal needs expected type to determine inner type
+                if let Some(expected_ty) = expected_type {
+                    if let Type::Nullable(_) = expected_ty {
+                        self.builder.ldnull();
+                        return Ok(expected_ty.clone());
+                    } else {
+                        // If expected type is not nullable, this is an error
+                        return Ok(Type::Nullable(Box::new(Type::Primitive(PrimitiveType::Unit))));
+                    }
+                }
+                // No expected type - return generic nullable
+                self.builder.ldnull();
+                Ok(Type::Nullable(Box::new(Type::Primitive(PrimitiveType::Unit))))
+            }
             Expression::ArrayLiteral { elements, pos } => {
                 // Extract element type from expected array type
                 let expected_element_type = expected_type.and_then(|ty| {
@@ -321,6 +346,25 @@ impl Generator {
         Ok(Type::Reference(Box::new(ty)))
     }
 
+    fn generate_force_unwrap(&mut self, operand: Expression, token: Token) -> SaResult<Type> {
+        let ty = self.generate_expression(operand)?;
+
+        // Operand must be nullable type
+        let inner_ty = match ty {
+            Type::Nullable(inner) => *inner,
+            _ => {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: self.type_to_string(&ty),
+                    rhs: "nullable type".to_string(),
+                    pos: self.make_pos(token.line, token.col),
+                });
+            }
+        };
+
+        self.builder.force_unwrap();
+        Ok(inner_ty)
+    }
+
     fn generate_binary(
         &mut self,
         left: Expression,
@@ -330,7 +374,45 @@ impl Generator {
         if operator.token_type == TokenType::Assignment {
             return self.generate_assignment(left, right, &operator);
         }
+        if operator.token_type == TokenType::DoubleQuestion {
+            return self.generate_null_coalesce(left, right, &operator);
+        }
         self.generate_binary_operation(left, operator, right)
+    }
+
+    fn generate_null_coalesce(
+        &mut self,
+        left: Expression,
+        right: Expression,
+        operator: &Token,
+    ) -> SaResult<Type> {
+        let lhs_ty = self.generate_expression(left)?;
+
+        // LHS must be nullable type
+        let inner_ty = match lhs_ty {
+            Type::Nullable(inner) => *inner,
+            _ => {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: self.type_to_string(&lhs_ty),
+                    rhs: "nullable type".to_string(),
+                    pos: self.make_pos(operator.line, operator.col),
+                });
+            }
+        };
+
+        let rhs_ty = self.generate_expression(right)?;
+
+        // RHS must be compatible with inner type
+        if !self.types_compatible(&rhs_ty, &inner_ty) {
+            return Err(SemanticError::TypeMismatch {
+                lhs: self.type_to_string(&rhs_ty),
+                rhs: self.type_to_string(&inner_ty),
+                pos: self.make_pos(operator.line, operator.col),
+            });
+        }
+
+        self.builder.null_coalesce();
+        Ok(inner_ty)
     }
 
     fn generate_assignment(

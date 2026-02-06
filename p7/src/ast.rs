@@ -40,6 +40,7 @@ pub enum Type {
         base: Identifier,
         type_args: Vec<Type>,
     },
+    Nullable(Box<Type>),
 }
 
 impl Type {
@@ -59,6 +60,9 @@ impl Type {
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("{}<{}>", base.name, args)
+            }
+            Type::Nullable(n) => {
+                format!("?{}", n.get_name())
             }
         }
     }
@@ -140,6 +144,7 @@ pub enum Expression {
     FloatLiteral(f64),
     StringLiteral(String),
     BooleanLiteral(bool),
+    NullLiteral,
     Unary {
         operator: Token,
         right: Box<Expression>,
@@ -221,6 +226,12 @@ pub enum Expression {
         index: Box<Expression>,
         pos: (usize, usize),
     },
+
+    // Force unwrap operation (e.g., x!)
+    ForceUnwrap {
+        operand: Box<Expression>,
+        token: Token,
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -300,6 +311,8 @@ impl Expression {
     pub fn get_name(&self) -> String {
         match self {
             Expression::Identifier(identifier) => identifier.name.clone(),
+            Expression::NullLiteral => "null".to_string(),
+            Expression::ForceUnwrap { operand, .. } => format!("{}!", operand.get_name()),
             Expression::FunctionCall(function_call) => function_call.callee.get_name(),
             Expression::FieldAccess { object, field } => {
                 format!("{}.{}", object.get_name(), field.name)
@@ -330,6 +343,7 @@ impl Expression {
     pub fn get_pos(&self) -> (usize, usize) {
         match self {
             Expression::Identifier(identifier) => (identifier.line, identifier.col),
+            Expression::ForceUnwrap { token, .. } => (token.line, token.col),
             Expression::FunctionCall(function_call) => function_call.callee.get_pos(),
             Expression::FieldAccess { object: _, field } => (field.line, field.col),
             Expression::Ref(expr) => expr.get_pos(),

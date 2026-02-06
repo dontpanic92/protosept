@@ -183,6 +183,7 @@ pub enum Type {
     Enum(TypeId),
     Struct(TypeId),
     Proto(TypeId),
+    Nullable(Box<Type>),
 }
 
 impl Type {
@@ -201,6 +202,8 @@ impl Type {
             Type::Primitive(_) => true,
             // ref<T> and box<T> are copy-treated (handle/view copy)
             Type::Reference(_) | Type::BoxType(_) => true,
+            // ?T is copy-treated iff T is copy-treated
+            Type::Nullable(inner) => inner.is_copy_treated(symbol_table),
             // User-defined structs: check for Copy proto conformance
             Type::Struct(type_id) => {
                 if let TypeDefinition::Struct(s) = symbol_table.get_type(*type_id) {
@@ -252,6 +255,7 @@ impl Clone for Type {
             Type::Enum(e) => Type::Enum(*e),
             Type::Struct(s) => Type::Struct(*s),
             Type::Proto(p) => Type::Proto(*p),
+            Type::Nullable(n) => Type::Nullable(n.clone()),
         }
     }
 }
@@ -266,6 +270,7 @@ impl PartialEq for Type {
             (Type::Enum(a), Type::Enum(b)) => *a == *b,
             (Type::Struct(a), Type::Struct(b)) => *a == *b,
             (Type::Proto(a), Type::Proto(b)) => *a == *b,
+            (Type::Nullable(a), Type::Nullable(b)) => *a == *b,
             _ => false,
         }
     }
@@ -284,6 +289,7 @@ impl std::hash::Hash for Type {
             Type::Enum(e) => e.hash(state),
             Type::Struct(s) => s.hash(state),
             Type::Proto(p) => p.hash(state),
+            Type::Nullable(n) => n.hash(state),
         }
     }
 }
@@ -305,6 +311,7 @@ impl ToString for Type {
             Type::Enum(e) => format!("enum({})", e.to_string()),
             Type::Struct(s) => format!("struct({})", s.to_string()),
             Type::Proto(p) => format!("proto({})", p.to_string()),
+            Type::Nullable(n) => format!("?{}", n.to_string()),
         }
     }
 }

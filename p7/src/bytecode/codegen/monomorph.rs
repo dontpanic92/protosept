@@ -483,6 +483,9 @@ impl Generator {
             ParsedType::Array(inner) => {
                 ParsedType::Array(Box::new(self.substitute_parsed_type(inner, substitution)))
             }
+            ParsedType::Nullable(inner) => {
+                ParsedType::Nullable(Box::new(self.substitute_parsed_type(inner, substitution)))
+            }
             ParsedType::Generic { base, type_args } => {
                 // Recursively substitute in type arguments
                 let substituted_args: Vec<ParsedType> = type_args

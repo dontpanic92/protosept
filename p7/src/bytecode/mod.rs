@@ -163,6 +163,31 @@ pub enum Instruction {
     // Parameters: (module_path_idx, symbol_name_idx) where both are indices into Module.string_constants
     #[brw(magic = 39u8)]
     CallExternal(u32, u32),
+
+    // Load null value onto the stack.
+    // Expects: [...] -> [..., null]
+    #[brw(magic = 40u8)]
+    Ldnull,
+
+    // Wrap a value into a nullable Some variant.
+    // Expects: [..., value] -> [..., Some(value)]
+    #[brw(magic = 41u8)]
+    WrapNullable,
+
+    // Check if nullable value is null.
+    // Expects: [..., nullable] -> [..., bool] (1 if null, 0 if Some)
+    #[brw(magic = 42u8)]
+    IsNull,
+
+    // Force unwrap: get inner value or trap.
+    // Expects: [..., nullable] -> [..., value] (or trap if null)
+    #[brw(magic = 43u8)]
+    ForceUnwrap,
+
+    // Null-coalescing: return value if Some, default if null.
+    // Expects: [..., nullable, default] -> [..., value or default]
+    #[brw(magic = 44u8)]
+    NullCoalesce,
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {

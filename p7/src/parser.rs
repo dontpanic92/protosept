@@ -241,6 +241,14 @@ impl Parser {
                     index: Box::new(index),
                     pos: (line, col),
                 };
+            } else if self.peek_match(TokenType::Exclamation) {
+                // Parse force unwrap: expr!
+                let token = self.peek().unwrap().clone();
+                self.consume(); // consume '!'
+                expression = Expression::ForceUnwrap {
+                    operand: Box::new(expression),
+                    token,
+                };
             } else {
                 break;
             }
@@ -262,6 +270,10 @@ impl Parser {
                 TokenType::StringLiteral(value) => {
                     self.consume();
                     Expression::StringLiteral(value.clone())
+                }
+                TokenType::Null => {
+                    self.consume();
+                    Expression::NullLiteral
                 }
                 TokenType::Identifier(_) => {
                     let identifier = self.parse_identifier()?;
@@ -449,15 +461,16 @@ impl Parser {
     fn get_precedence(token_type: &TokenType) -> u8 {
         match token_type {
             TokenType::Assignment => 1,
-            TokenType::Or => 2,
-            TokenType::And => 3,
-            TokenType::Equals | TokenType::NotEquals => 4,
+            TokenType::DoubleQuestion => 2, // null-coalescing
+            TokenType::Or => 3,
+            TokenType::And => 4,
+            TokenType::Equals | TokenType::NotEquals => 5,
             TokenType::GreaterThan
             | TokenType::GreaterThanOrEqual
             | TokenType::LessThan
-            | TokenType::LessThanOrEqual => 5,
-            TokenType::Plus | TokenType::Minus => 6,
-            TokenType::Multiply | TokenType::Divide => 7,
+            | TokenType::LessThanOrEqual => 6,
+            TokenType::Plus | TokenType::Minus => 7,
+            TokenType::Multiply | TokenType::Divide => 8,
             _ => 0,
         }
     }
@@ -1314,6 +1327,12 @@ impl Parser {
     fn parse_type(&mut self) -> ParseResult<Type> {
         if let Some(token) = self.peek() {
             match &token.token_type {
+                TokenType::Question => {
+                    self.consume();
+                    // ?Type syntax
+                    let ty = self.parse_type()?;
+                    Ok(Type::Nullable(Box::new(ty)))
+                }
                 TokenType::Ref => {
                     self.consume();
                     // ref<Type> syntax - must have angle brackets

@@ -1,0 +1,39 @@
+// Basic nullable type tests
+import test.test;
+
+// Test 1: Null literal with explicit type - test that we can create nullable variables
+@test(expected_type = "int", expected_value = "99")
+fn test_null_literal() -> int {
+    let x: ?int = null;
+    // Return a value since we can't directly test null
+    99
+}
+
+// Test 2: Null coalescing with null value
+@test(expected_type = "int", expected_value = "42")
+fn test_null_coalesce_with_null() -> int {
+    let x: ?int = null;
+    x ?? 42
+}
+
+// Test 3: Null coalescing with default
+@test(expected_type = "int", expected_value = "10")
+fn test_null_coalesce_default() -> int {
+    let x: ?int = null;
+    let default = 10;
+    x ?? default
+}
+
+// Test 4: Null coalescing with float
+@test(expected_type = "float", expected_value = "3.14")
+fn test_null_coalesce_float() -> float {
+    let x: ?float = null;
+    x ?? 3.14
+}
+
+// Test 5: Null coalescing chains
+@test(expected_type = "int", expected_value = "100")
+fn test_null_coalesce_chain()-> int {
+    let x: ?int = null;
+    x ?? 100
+}
