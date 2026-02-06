@@ -105,6 +105,20 @@ fn test_array_slice_clamp_end_beyond_length() -> int {
     sliced.len()
 }
 
+// === Tests for array.get() ===
+
+@test(expected_type = "int", expected_value = "2")
+fn test_array_get_in_bounds() -> int {
+    let arr = [1, 2, 3];
+    arr.get(1) ?? -1
+}
+
+@test(expected_type = "int", expected_value = "99")
+fn test_array_get_out_of_bounds() -> int {
+    let arr = [1, 2, 3];
+    arr.get(10) ?? 99
+}
+
 // === Tests for box<array>.push() ===
 
 @test(expected_type = "int", expected_value = "4")
@@ -191,6 +205,54 @@ fn test_array_clear_already_empty() -> int {
     let boxed = box(arr);
     boxed.clear();
     boxed.len()
+}
+
+// === Tests for box<array>.pop() ===
+
+@test(expected_type = "int", expected_value = "3")
+fn test_array_pop_returns_last() -> int {
+    let arr = [1, 2, 3];
+    let boxed = box(arr);
+    boxed.pop() ?? -1
+}
+
+@test(expected_type = "int", expected_value = "2")
+fn test_array_pop_decreases_length() -> int {
+    let arr = [1, 2, 3];
+    let boxed = box(arr);
+    boxed.pop();
+    boxed.len()
+}
+
+@test(expected_type = "int", expected_value = "77")
+fn test_array_pop_empty_returns_default() -> int {
+    let arr: array<int> = [];
+    let boxed = box(arr);
+    boxed.pop() ?? 77
+}
+
+// === Tests for box<array>.set() ===
+
+@test(expected_type = "int", expected_value = "2")
+fn test_array_set_returns_old() -> int {
+    let arr = [1, 2, 3];
+    let boxed = box(arr);
+    boxed.set(1, 9) ?? -1
+}
+
+@test(expected_type = "int", expected_value = "9")
+fn test_array_set_updates_value() -> int {
+    let arr = [1, 2, 3];
+    let boxed = box(arr);
+    boxed.set(1, 9);
+    boxed[1]
+}
+
+@test(expected_type = "int", expected_value = "55")
+fn test_array_set_out_of_bounds() -> int {
+    let arr = [1, 2, 3];
+    let boxed = box(arr);
+    boxed.set(10, 9) ?? 55
 }
 
 // === Combined operation tests ===

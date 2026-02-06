@@ -174,7 +174,15 @@ impl Generator {
         };
 
         // Extract all needed data from the builtin module first to avoid borrow issues
-        let (intrinsic_name, param_names, param_defaults, generic_param_types, generic_return_type, return_type, is_self_return) = {
+        let (
+            intrinsic_name,
+            param_names,
+            param_defaults,
+            generic_param_types,
+            generic_return_type,
+            return_type,
+            is_self_return,
+        ) = {
             let builtin = &self.imported_modules["builtin"];
             let method = {
                 let array_struct = builtin.symbols.iter().find(|s| s.name == "array").unwrap();
@@ -193,8 +201,7 @@ impl Generator {
             let func_id = method_symbol.get_func_id().unwrap();
             let function_def = builtin.functions.get(func_id as usize).unwrap().clone();
 
-            let intrinsic_name =
-                Self::extract_intrinsic_name(&function_def.attributes).unwrap();
+            let intrinsic_name = Self::extract_intrinsic_name(&function_def.attributes).unwrap();
 
             // Check if return type is the builtin array struct (meaning "Self")
             let is_self_return = match &function_def.return_type {
@@ -274,7 +281,7 @@ impl Generator {
             call_line,
             call_col,
             arguments.clone(),
-            &param_names[1..],  // Skip self parameter
+            &param_names[1..], // Skip self parameter
             &param_defaults[1..],
         )?;
 
@@ -282,7 +289,7 @@ impl Generator {
         // Push additional arguments
         self.push_typed_argument_list(
             ordered_exprs,
-            &params[1..],  // Skip self parameter
+            &params[1..], // Skip self parameter
             call_line,
             call_col,
         )?;

@@ -204,7 +204,8 @@ impl Generator {
         self.symbol_table.push_symbol(symbol);
 
         // Set enclosing type params for methods to reference enum's type parameters
-        let prev_enclosing_type_params = std::mem::replace(&mut self.enclosing_type_params, type_param_names);
+        let prev_enclosing_type_params =
+            std::mem::replace(&mut self.enclosing_type_params, type_param_names);
 
         // Process enum methods
         for method in methods {
@@ -308,7 +309,8 @@ impl Generator {
         self.symbol_table.push_symbol(symbol);
 
         // Set enclosing type params for methods to reference struct's type parameters
-        let prev_enclosing_type_params = std::mem::replace(&mut self.enclosing_type_params, type_param_names);
+        let prev_enclosing_type_params =
+            std::mem::replace(&mut self.enclosing_type_params, type_param_names);
 
         for method in methods {
             self.process_function_declaration(method.function)?;

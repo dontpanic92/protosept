@@ -113,6 +113,10 @@ When subcommand mode is selected:
 
 This behavior is intentionally aligned with Go/Cargo conventions.
 
+### Known Subcommands
+
+`p7 test`: Run tests in `tests` folder, or specify a test file via `p7 test test/test_file.p7`
+
 ## Implementation Strategy (Recommended)
 
 Use a **two-phase parser**:

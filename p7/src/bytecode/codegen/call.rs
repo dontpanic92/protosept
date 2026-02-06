@@ -475,9 +475,9 @@ impl Generator {
         }
 
         // Handle array method calls
-        if let Some(result) = self.try_generate_array_method_call(
-            &object_ty, field, &arguments, call_line, call_col,
-        )? {
+        if let Some(result) =
+            self.try_generate_array_method_call(&object_ty, field, &arguments, call_line, call_col)?
+        {
             return Ok(result);
         }
 
@@ -613,7 +613,8 @@ impl Generator {
         }
 
         // Delegate to helper function
-        let result = self.handle_array_method_call(object_ty, field, arguments, call_line, call_col)?;
+        let result =
+            self.handle_array_method_call(object_ty, field, arguments, call_line, call_col)?;
         Ok(Some(result))
     }
 

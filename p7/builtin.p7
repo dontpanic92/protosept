@@ -24,8 +24,8 @@ pub struct array<T>() {
     // TODO: Requires nullable type (?T) support
     // Return element at index i if in bounds, otherwise null
     // Requires T: Copy since extracting from immutable container
-    // @intrinsic(name="array.get")
-    // pub fn get(ref self, i: int) -> ?T;
+    @intrinsic(name="array.get")
+    pub fn get(ref self, i: int) -> ?T;
 
 
     // Return a new array with elements from start (inclusive) to end (exclusive)
@@ -45,12 +45,12 @@ pub struct array<T>() {
 
     // TODO: Requires nullable type (?T) support
     // Remove and return last element, or null if empty
-    // @intrinsic(name="array.pop")
-    // pub fn pop(box self) -> ?T;
+    @intrinsic(name="array.pop")
+    pub fn pop(box self) -> ?T;
 
     // TODO: Requires nullable type (?T) support
     // Replace element at index i with elem, returning old value if successful
     // Returns null if out-of-bounds
-    // @intrinsic(name="array.set")
-    // pub fn set(box self, i: int, elem: T) -> ?T;
+    @intrinsic(name="array.set")
+    pub fn set(box self, i: int, elem: T) -> ?T;
 }

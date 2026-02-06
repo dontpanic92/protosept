@@ -61,9 +61,7 @@ fn first_double_dash_index(tokens: &[String]) -> Option<usize> {
 
 #[allow(dead_code)]
 pub fn global_help_requested(global_argv: &[String]) -> bool {
-    global_argv
-        .iter()
-        .any(|a| a == "-h" || a == "--help")
+    global_argv.iter().any(|a| a == "-h" || a == "--help")
 }
 
 /// Dispatches CLI mode per specs/p7-cli.md.
@@ -71,10 +69,7 @@ pub fn global_help_requested(global_argv: &[String]) -> bool {
 /// - argv must include argv[0] (program name).
 /// - This performs no IO and does not validate file existence.
 pub fn dispatch_from_argv(argv: &[String]) -> DispatchResult {
-    let program_name = argv
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "p7".to_string());
+    let program_name = argv.first().cloned().unwrap_or_else(|| "p7".to_string());
 
     let tokens: &[String] = if argv.len() >= 2 { &argv[1..] } else { &[] };
 

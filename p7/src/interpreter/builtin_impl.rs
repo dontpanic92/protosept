@@ -7,10 +7,13 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("string.len_bytes".to_string(), string_len_bytes);
     ctx.register_host_function("array.new".to_string(), array_new);
     ctx.register_host_function("array.index".to_string(), array_index);
+    ctx.register_host_function("array.get".to_string(), array_get);
     ctx.register_host_function("array.len".to_string(), array_len);
     ctx.register_host_function("array.slice".to_string(), array_slice);
     ctx.register_host_function("array.push".to_string(), array_push);
     ctx.register_host_function("array.clear".to_string(), array_clear);
+    ctx.register_host_function("array.pop".to_string(), array_pop);
+    ctx.register_host_function("array.set".to_string(), array_set);
 }
 
 fn string_len_bytes(ctx: &mut Context) -> ContextResult<()> {
@@ -119,16 +122,49 @@ fn array_index(ctx: &mut Context) -> ContextResult<()> {
             ctx.stack_frame_mut()?.stack.push(element);
             Ok(())
         }
-        (Data::Array(_), _) => {
-            Err(RuntimeError::Other(
-                "array.index: index must be an integer".to_string(),
-            ))
+        (Data::Array(_), _) => Err(RuntimeError::Other(
+            "array.index: index must be an integer".to_string(),
+        )),
+        _ => Err(RuntimeError::Other(
+            "array.index: first argument must be an array".to_string(),
+        )),
+    }
+}
+
+fn array_get(ctx: &mut Context) -> ContextResult<()> {
+    // Pop index from stack
+    let index = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+
+    // Pop array from stack
+    let array = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+
+    match (array, index) {
+        (Data::Array(elements), Data::Int(idx)) => {
+            if idx < 0 || (idx as usize) >= elements.len() {
+                ctx.stack_frame_mut()?.stack.push(Data::Null);
+                return Ok(());
+            }
+
+            let element = elements[idx as usize].clone();
+            ctx.stack_frame_mut()?
+                .stack
+                .push(Data::Some(Box::new(element)));
+            Ok(())
         }
-        _ => {
-            Err(RuntimeError::Other(
-                "array.index: first argument must be an array".to_string(),
-            ))
-        }
+        (Data::Array(_), _) => Err(RuntimeError::Other(
+            "array.get: index must be an integer".to_string(),
+        )),
+        _ => Err(RuntimeError::Other(
+            "array.get: first argument must be an array".to_string(),
+        )),
     }
 }
 
@@ -221,12 +257,9 @@ fn array_push(ctx: &mut Context) -> ContextResult<()> {
     match box_ref {
         Data::BoxRef(box_idx) => {
             // Get the boxed array
-            let boxed_data = ctx
-                .box_heap
-                .get_mut(box_idx as usize)
-                .ok_or_else(|| {
-                    RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
-                })?;
+            let boxed_data = ctx.box_heap.get_mut(box_idx as usize).ok_or_else(|| {
+                RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
+            })?;
 
             // Ensure it's an array
             match boxed_data {
@@ -256,12 +289,9 @@ fn array_clear(ctx: &mut Context) -> ContextResult<()> {
     match box_ref {
         Data::BoxRef(box_idx) => {
             // Get the boxed array
-            let boxed_data = ctx
-                .box_heap
-                .get_mut(box_idx as usize)
-                .ok_or_else(|| {
-                    RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
-                })?;
+            let boxed_data = ctx.box_heap.get_mut(box_idx as usize).ok_or_else(|| {
+                RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
+            })?;
 
             // Ensure it's an array and clear it
             match boxed_data {
@@ -276,6 +306,98 @@ fn array_clear(ctx: &mut Context) -> ContextResult<()> {
         }
         _ => Err(RuntimeError::Other(
             "array.clear: first argument must be a box reference".to_string(),
+        )),
+    }
+}
+
+fn array_pop(ctx: &mut Context) -> ContextResult<()> {
+    // Pop box reference from stack
+    let box_ref = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+
+    match box_ref {
+        Data::BoxRef(box_idx) => {
+            let boxed_data = ctx.box_heap.get_mut(box_idx as usize).ok_or_else(|| {
+                RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
+            })?;
+
+            match boxed_data {
+                Data::Array(elements) => {
+                    let value = elements.pop();
+                    match value {
+                        Some(elem) => ctx
+                            .stack_frame_mut()?
+                            .stack
+                            .push(Data::Some(Box::new(elem))),
+                        None => ctx.stack_frame_mut()?.stack.push(Data::Null),
+                    }
+                    Ok(())
+                }
+                _ => Err(RuntimeError::Other(
+                    "array.pop: boxed value must be an array".to_string(),
+                )),
+            }
+        }
+        _ => Err(RuntimeError::Other(
+            "array.pop: first argument must be a box reference".to_string(),
+        )),
+    }
+}
+
+fn array_set(ctx: &mut Context) -> ContextResult<()> {
+    // Pop element to set from stack
+    let elem = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+
+    // Pop index from stack
+    let index = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+
+    // Pop box reference from stack
+    let box_ref = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+
+    match (box_ref, index) {
+        (Data::BoxRef(box_idx), Data::Int(idx)) => {
+            let boxed_data = ctx.box_heap.get_mut(box_idx as usize).ok_or_else(|| {
+                RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
+            })?;
+
+            match boxed_data {
+                Data::Array(elements) => {
+                    if idx < 0 || (idx as usize) >= elements.len() {
+                        ctx.stack_frame_mut()?.stack.push(Data::Null);
+                        return Ok(());
+                    }
+
+                    let old = std::mem::replace(&mut elements[idx as usize], elem);
+                    ctx.stack_frame_mut()?
+                        .stack
+                        .push(Data::Some(Box::new(old)));
+                    Ok(())
+                }
+                _ => Err(RuntimeError::Other(
+                    "array.set: boxed value must be an array".to_string(),
+                )),
+            }
+        }
+        (Data::BoxRef(_), _) => Err(RuntimeError::Other(
+            "array.set: index must be an integer".to_string(),
+        )),
+        _ => Err(RuntimeError::Other(
+            "array.set: first argument must be a box reference".to_string(),
         )),
     }
 }

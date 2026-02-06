@@ -452,9 +452,7 @@ impl Context {
                                 ));
                             }
                             Data::Array(_) => {
-                                return Err(RuntimeError::Other(
-                                    "Cannot negate array".to_string(),
-                                ));
+                                return Err(RuntimeError::Other("Cannot negate array".to_string()));
                             }
                             Data::Null | Data::Some(_) => {
                                 return Err(RuntimeError::Other(
@@ -1030,35 +1028,58 @@ impl Context {
                     self.stack_frame_mut()?.stack.push(Data::Null);
                 }
                 Instruction::WrapNullable => {
-                    let value = self.stack_frame_mut()?.stack.pop()
+                    let value = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
                         .ok_or(RuntimeError::StackUnderflow)?;
-                    self.stack_frame_mut()?.stack.push(Data::Some(Box::new(value)));
+                    self.stack_frame_mut()?
+                        .stack
+                        .push(Data::Some(Box::new(value)));
                 }
                 Instruction::IsNull => {
-                    let nullable = self.stack_frame_mut()?.stack.pop()
+                    let nullable = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
                         .ok_or(RuntimeError::StackUnderflow)?;
                     let is_null = matches!(nullable, Data::Null);
-                    self.stack_frame_mut()?.stack.push(Data::Int(if is_null { 1 } else { 0 }));
+                    self.stack_frame_mut()?
+                        .stack
+                        .push(Data::Int(if is_null { 1 } else { 0 }));
                 }
                 Instruction::ForceUnwrap => {
-                    let nullable = self.stack_frame_mut()?.stack.pop()
+                    let nullable = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
                         .ok_or(RuntimeError::StackUnderflow)?;
                     match nullable {
                         Data::Some(value) => {
                             self.stack_frame_mut()?.stack.push(*value);
                         }
                         Data::Null => {
-                            return Err(RuntimeError::Other("Force unwrap on null value".to_string()));
+                            return Err(RuntimeError::Other(
+                                "Force unwrap on null value".to_string(),
+                            ));
                         }
                         _ => {
-                            return Err(RuntimeError::Other("Force unwrap on non-nullable value".to_string()));
+                            return Err(RuntimeError::Other(
+                                "Force unwrap on non-nullable value".to_string(),
+                            ));
                         }
                     }
                 }
                 Instruction::NullCoalesce => {
-                    let default = self.stack_frame_mut()?.stack.pop()
+                    let default = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
                         .ok_or(RuntimeError::StackUnderflow)?;
-                    let nullable = self.stack_frame_mut()?.stack.pop()
+                    let nullable = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
                         .ok_or(RuntimeError::StackUnderflow)?;
                     match nullable {
                         Data::Some(value) => {
@@ -1068,7 +1089,9 @@ impl Context {
                             self.stack_frame_mut()?.stack.push(default);
                         }
                         _ => {
-                            return Err(RuntimeError::Other("Null coalesce on non-nullable value".to_string()));
+                            return Err(RuntimeError::Other(
+                                "Null coalesce on non-nullable value".to_string(),
+                            ));
                         }
                     }
                 }

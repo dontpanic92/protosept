@@ -167,7 +167,9 @@ impl Generator {
                 // For now, emit a placeholder - the actual type comes from bidirectional typing
                 self.builder.ldnull();
                 // Return a placeholder nullable type; the actual type will be refined by context
-                Ok(Type::Nullable(Box::new(Type::Primitive(PrimitiveType::Unit))))
+                Ok(Type::Nullable(Box::new(Type::Primitive(
+                    PrimitiveType::Unit,
+                ))))
             }
             Expression::ForceUnwrap { operand, token } => {
                 self.generate_force_unwrap(*operand, token)
@@ -191,12 +193,16 @@ impl Generator {
                         return Ok(expected_ty.clone());
                     } else {
                         // If expected type is not nullable, this is an error
-                        return Ok(Type::Nullable(Box::new(Type::Primitive(PrimitiveType::Unit))));
+                        return Ok(Type::Nullable(Box::new(Type::Primitive(
+                            PrimitiveType::Unit,
+                        ))));
                     }
                 }
                 // No expected type - return generic nullable
                 self.builder.ldnull();
-                Ok(Type::Nullable(Box::new(Type::Primitive(PrimitiveType::Unit))))
+                Ok(Type::Nullable(Box::new(Type::Primitive(
+                    PrimitiveType::Unit,
+                ))))
             }
             Expression::ArrayLiteral { elements, pos } => {
                 // Extract element type from expected array type
@@ -924,14 +930,15 @@ impl Generator {
             if let Some(expected) = expected_element_type {
                 expected.clone()
             } else {
-                return Err(SemanticError::Other(
-                    format!("Cannot infer type for empty array literal at {}:{} - expected type annotation required", line, col)
-                ));
+                return Err(SemanticError::Other(format!(
+                    "Cannot infer type for empty array literal at {}:{} - expected type annotation required",
+                    line, col
+                )));
             }
         } else {
             // Generate code for all elements and check they have the same type
             let first_expr_type = self.generate_expression(elements[0].clone())?;
-            
+
             for element in &elements[1..] {
                 let expr_type = self.generate_expression(element.clone())?;
                 if expr_type != first_expr_type {

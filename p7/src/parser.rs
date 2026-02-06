@@ -316,15 +316,15 @@ impl Parser {
                     let pos = (token.line, token.col);
                     self.consume(); // consume '['
                     let mut elements = Vec::new();
-                    
+
                     while let Some(token) = self.peek() {
                         if token.token_type == TokenType::CloseBracket {
                             self.consume();
                             break;
                         }
-                        
+
                         elements.push(self.parse_expression()?);
-                        
+
                         if self.peek_match(TokenType::Comma) {
                             self.consume();
                         } else if !self.peek_match(TokenType::CloseBracket) {
@@ -337,7 +337,7 @@ impl Parser {
                             });
                         }
                     }
-                    
+
                     Expression::ArrayLiteral { elements, pos }
                 }
                 TokenType::Ref => {

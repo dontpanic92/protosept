@@ -1,7 +1,7 @@
-mod module_provider;
-mod test_harness;
 mod dispatch;
+mod module_provider;
 mod repl;
+mod test_harness;
 
 use dispatch::{DispatchMode, Subcommand};
 use module_provider::FileSystemModuleProvider;
@@ -105,10 +105,7 @@ fn parse_run_args(args: &[String]) -> Result<(String, Vec<String>), String> {
 
 fn main() -> ExitCode {
     let argv: Vec<String> = env::args().collect();
-    let program_name = argv
-        .first()
-        .map(|s| s.as_str())
-        .unwrap_or("p7");
+    let program_name = argv.first().map(|s| s.as_str()).unwrap_or("p7");
 
     let dispatch = dispatch::dispatch_from_argv(&argv);
     match dispatch.mode {
@@ -205,44 +202,40 @@ fn main() -> ExitCode {
                     }
                     ExitCode::SUCCESS
                 }
-                Subcommand::Test => {
-                    match test_harness::run_cli("p7 test", &subcommand_args) {
-                        Ok(summary) => {
-                            if summary.failed > 0 {
-                                ExitCode::from(1)
-                            } else {
-                                ExitCode::SUCCESS
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("Error: {e}");
+                Subcommand::Test => match test_harness::run_cli("p7 test", &subcommand_args) {
+                    Ok(summary) => {
+                        if summary.failed > 0 {
                             ExitCode::from(1)
-                        }
-                    }
-                }
-                Subcommand::Run => {
-                    match parse_run_args(&subcommand_args) {
-                        Ok((script_path, script_args)) => {
-                            let script_path = Path::new(&script_path);
-                            match run_script(script_path, &script_args) {
-                                Ok(()) => ExitCode::SUCCESS,
-                                Err(e) => {
-                                    eprintln!("{e}");
-                                    ExitCode::from(1)
-                                }
-                            }
-                        }
-                        Err(e) if e == "__HELP__" => {
-                            print_run_help(program_name);
+                        } else {
                             ExitCode::SUCCESS
                         }
-                        Err(e) => {
-                            eprintln!("{e}\n");
-                            print_run_help(program_name);
-                            ExitCode::from(1)
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        ExitCode::from(1)
+                    }
+                },
+                Subcommand::Run => match parse_run_args(&subcommand_args) {
+                    Ok((script_path, script_args)) => {
+                        let script_path = Path::new(&script_path);
+                        match run_script(script_path, &script_args) {
+                            Ok(()) => ExitCode::SUCCESS,
+                            Err(e) => {
+                                eprintln!("{e}");
+                                ExitCode::from(1)
+                            }
                         }
                     }
-                }
+                    Err(e) if e == "__HELP__" => {
+                        print_run_help(program_name);
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!("{e}\n");
+                        print_run_help(program_name);
+                        ExitCode::from(1)
+                    }
+                },
             }
         }
     }
