@@ -2006,6 +2006,39 @@ struct FileHandle {
 
 ---
 
+### 12.7 Representation attributes (FFI)
+
+Protosept provides representation attributes for structs intended to cross FFI or host boundaries.
+
+#### 12.7.1 `@repr(transparent)`
+
+Applies only to **tuple structs with exactly one field**.
+
+Rules:
+- The struct MUST have exactly one field.
+- The struct has the same size, alignment, and ABI passing convention as its single field.
+- Using `@repr(transparent)` on any other struct form is ERROR.
+
+Common use: newtype wrappers around FFI-safe scalars or pointers.
+
+#### 12.7.2 `@repr(C)`
+
+Applies to non-`@builtin()` structs that declare concrete fields.
+
+Layout rules:
+- Field order is preserved exactly as declared in source.
+- Each field is placed at the next offset satisfying its alignment.
+- Struct alignment is the max alignment of its fields.
+- Total size is padded to a multiple of the struct alignment.
+
+The compiler MUST compute and preserve layout metadata (`size`, `align`, and per-field `offset`) for `@repr(C)` structs in the compiled artifact when those structs appear in any `@ffi` signature (§19.6a, §23.6).
+
+Restrictions (v1):
+- All fields of an `@repr(C)` struct MUST be FFI-safe types (§23.3). Otherwise ERROR.
+- `@repr(C)` structs MAY be generic, but any `@ffi` call boundary MUST be monomorphic (§17.4, §23.4).
+
+---
+
 ## 13. Enums
 
 ### 13.1 Declaration
@@ -2600,6 +2633,22 @@ Compiled artifact MUST preserve, for each attributed declaration:
 - name (including module qualification when modules exist)
 - ordered list of attribute instances
 
+### 19.6a FFI metadata (normative)
+
+When the FFI extension is enabled by the host (§23.1), the compiled artifact MUST preserve enough metadata to support universal FFI call marshalling at runtime.
+
+Minimum required metadata:
+- For each function/method annotated with `@ffi(...)`:
+  - resolved FFI key (§23.2.2)
+  - ABI (§23.2.1)
+  - full parameter and return type descriptions (after monomorphization)
+- For each `@repr(C)` or `@repr(transparent)` struct that appears in any `@ffi` signature (directly or transitively):
+  - representation kind (`C` or `transparent`)
+  - `size` and `align`
+  - per-field type and `offset` (for `@repr(C)`)
+
+If required metadata is missing at runtime, invoking the corresponding `@ffi` function MUST TRAP with a descriptive error.
+
 ### 19.7 Errors
 ERROR if:
 - attribute name does not resolve to a `struct`
@@ -2643,6 +2692,41 @@ struct string {
   pub fn len_bytes(self: ref<string>) -> int;
 }
 ```
+
+#### 19.8.3 `@host(...)`
+
+Declares a function/method as implemented by the embedding host (not by Protosept source code).
+
+Syntax:
+```p7
+@host(name = "qualified.host.name")
+fn f(x: int) -> int;
+```
+
+Rules:
+- A `@host` function/method is a signature-only declaration (no body). Providing a body is ERROR.
+- The compiler MUST lower calls to a host-dispatched call using the provided `name`.
+- If the host has not registered the named function at runtime, calling it MUST TRAP with message `host function not found: <name>`.
+
+#### 19.8.4 `@ffi(...)`
+
+Declares a function/method as implemented by a native symbol resolved via the host’s FFI facility.
+
+Syntax:
+```p7
+@ffi(name = "puts", lib = "c", abi = "c")
+fn puts(s: ptr) -> int;
+```
+
+Fields (v1):
+- `name: string` (required) — native symbol name
+- `lib: ?string = null` — library/module hint; `null` means “process-global / host-defined default”
+- `abi: string = "c"` — calling convention; see §23.2.1
+
+Rules:
+- A `@ffi` function/method is a signature-only declaration (no body). Providing a body is ERROR.
+- `@ffi` functions MUST be monomorphic at the call boundary; if the compiler cannot determine a monomorphic signature at the call site, it is an ERROR (§17.4, §23.4).
+- Whether FFI is enabled is host-controlled (§23.1). If disabled, calling a `@ffi` function MUST TRAP.
 
 ---
 
@@ -2976,14 +3060,114 @@ If both extensions enabled:
 
 ---
 
-## 23. Open items / TODO list (curated)
+## 23. Extension: FFI (native interop)
+
+Status: optional extension.
+
+FFI enables Protosept code to call native functions resolved by the host. Two resolution models are supported:
+- **Dynamic resolver** (universal): library loading + symbol lookup at runtime.
+- **Static registry** (universal): host-provided mapping from FFI key to function pointer/thunk.
+
+### 23.1 Availability and capability
+
+FFI is disabled by default unless explicitly enabled by the host.
+
+When disabled:
+- `@ffi(...)` declarations are allowed (for typechecking and tooling).
+- Invoking a `@ffi` function MUST TRAP.
+
+### 23.2 FFI calls
+
+#### 23.2.1 ABI
+
+Supported ABIs (v1):
+- `"c"` — platform C ABI
+- `"system"` — platform default system ABI (host-defined; optional)
+
+Using an unsupported ABI string is ERROR.
+
+#### 23.2.2 FFI key
+
+For a declaration `@ffi(name = N, lib = L, ...)`, the **FFI key** is:
+- If `lib` is `Some(L)`: `L + ":" + N`
+- If `lib` is `null`: `N`
+
+The compiled artifact MUST preserve the resolved FFI key (§19.6a).
+
+### 23.3 FFI-safe types (v1)
+
+FFI-safe types are types that may appear in `@ffi` function signatures.
+
+FFI-safe (v1):
+- Scalars:
+  - Core primitives: `int`, `float`, `bool`, `unit`, `ptr`
+  - Fixed-width FFI scalars from `std.ffi` (§23.3a)
+- `@repr(transparent)` tuple structs whose single field type is FFI-safe
+- `@repr(C)` structs whose fields are all FFI-safe (recursively). These are C POD structs.
+
+Not FFI-safe (v1):
+- `string`, `array<T>`, tuples `(T1, ...)`, `box<T>`, `robox<T>`, `ref<T>`, `proto`, `?T` (except `?ptr`)
+- any struct/enum without an explicit FFI representation (`@repr(C)` or `@repr(transparent)`)
+
+Using a non-FFI-safe type in a `@ffi` signature is ERROR.
+
+### 23.3a `std.ffi` fixed-width scalar types (normative)
+
+To support C POD structs and universal FFI marshalling without expanding the core language primitive set, fixed-width scalar types are provided by the host in the `std.ffi` module when the FFI extension is enabled.
+
+When §23 is enabled, the host MUST make module `std.ffi` available for import (even in `nostd` mode).
+
+`std.ffi` defines the following nominal scalar types with fixed, platform-independent widths:
+- `i8`, `i16`, `i32`, `i64` — signed two's-complement integers of the given bit width
+- `u8`, `u16`, `u32`, `u64` — unsigned integers of the given bit width
+- `isize`, `usize` — signed/unsigned pointer-sized integers
+- `f32` — IEEE-754 binary32
+- `f64` — IEEE-754 binary64
+
+These types are FFI-safe and may appear in `@repr(C)` structs and `@ffi` signatures. The compiled artifact MUST preserve their exact size/alignment as part of signature/layout metadata (§19.6a).
+
+Note: The core `int` and `float` types remain `i64` and `f64` respectively; `std.ffi` types exist specifically to express C ABI widths.
+
+### 23.4 Monomorphization requirement
+
+Generics are compile-time only (§20). For FFI:
+- Every `@ffi` call boundary MUST be monomorphic.
+- Exported/host-visible entrypoints that are `@ffi` MUST be monomorphic.
+
+### 23.5 Resolution models (host responsibility)
+
+Hosts MAY implement one or both resolution models.
+
+**(A) Dynamic resolver (universal)**
+- Given the `lib` hint (if any) and `name` (or FFI key), open the library and resolve the symbol at runtime.
+- The resolver SHOULD cache library handles and symbol addresses (host-defined policy).
+
+**(B) Static registry (universal)**
+- Host provides a registry mapping FFI key → callable function pointer or thunk.
+
+### 23.6 Universal call marshalling (normative)
+
+When invoking an `@ffi` function, the runtime MUST:
+- use the recorded monomorphic signature and representation metadata (§19.6a, §12.7)
+- marshal arguments according to the selected ABI (§23.2.1) and type layouts
+- call the resolved native symbol
+- marshal the return value back into a Protosept value
+
+`@repr(C)` POD structs MAY be passed **by value** and returned **by value** in v1.
+
+If marshalling cannot be performed (unsupported ABI, missing layout metadata, unsupported type), the call MUST TRAP with a descriptive error.
+
+---
+
+## 24. Open items / TODO list (curated)
 
 1) String concatenation spelling, slicing APIs
 2) Boxed array mutation API surface and semantics (§3.3.3)
 3) Enablement mechanisms for extensions (§21, §22)
 4) Host ABI: concrete API surfaces for calling, fibers, threads (§17, §21.4, §22)
 5) Specify prelude location/definition of `box<T>.new` intrinsic method (§7.4)
-6) Specify representation/ABI attribute like `@repr(transparent)` for structs (especially for newtype/FFI)
+6) Specify representation/ABI attributes for FFI: `@repr(transparent)` and `@repr(C)`; define compiled layout metadata requirements (§12.7, §19.6a, §23)
+7) Define universal marshalling surface for strings/arrays/callbacks under FFI (beyond POD + ptr) (§23)
 
 ---
 End.
