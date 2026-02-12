@@ -722,6 +722,62 @@ Escape sequences:
 
 Any other `\`-escape sequence is an ERROR.
 
+### 4.3a Interpolated string literals
+
+An interpolated string literal is written with a leading `f` prefix and a string literal:
+
+- Syntax: `f" ... "`
+- The `f` MUST appear immediately before the opening quote (no whitespace). Otherwise it is parsed as an identifier followed by a string literal.
+
+Interpolated strings contain zero or more **interpolation holes** of the form `{ expr }`, where `expr` is a normal expression.
+
+Examples:
+```p7
+let name = "Ada";
+let n = 3;
+let s = f"hello {name}, n={n}";
+```
+
+**Escaping `{` and `}`:**
+- `{{` inside `f"..."` produces a literal `{`.
+- `}}` inside `f"..."` produces a literal `}`.
+- A single `}` that does not close an interpolation hole is ERROR.
+
+All normal string escape sequences from §4.3 apply to the literal text segments.
+
+**Parsing rule (balanced braces):**
+- The body of `{ expr }` is parsed as an expression and may contain nested `{ ... }` braces (e.g., block expressions) as long as braces are balanced.
+- The interpolation hole ends at the `}` that matches its opening `{` (brace nesting depth returns to 0).
+- Unterminated holes are ERROR.
+
+**Typing rule (no implicit conversion):**
+For each interpolation hole expression `ei` with type `Ti`:
+- `Ti` MUST satisfy `Display` (§6.4b). Otherwise it is a compile-time ERROR.
+- The `Display.display(ref self) -> string` method is used to obtain the textual representation of the hole value.
+- The resulting interpolated string expression has type `string`.
+
+This rule does **not** introduce implicit conversions between types in general expression typing. In particular:
+- `let s: string = 123;` is still ERROR.
+- `let s: string = f"{123}";` is OK because interpolation requires `int: Display`, not because `int` converts to `string`.
+
+**Evaluation order and semantics:**
+- Literal segments and hole expressions are evaluated left-to-right.
+- The final value is the concatenation of:
+  1) each literal segment (as `string`), and
+  2) the result of `Display.display(...)` for each hole expression, in order.
+
+**Lowering (desugaring, informative):**
+An implementation MAY lower:
+```p7
+f"A{e1}B{e2}C"
+```
+to an equivalent sequence that:
+- evaluates `e1` and `e2` once each (left-to-right),
+- calls `Display.display` on each value (via normal method-call rules, including receiver temporary materialization where applicable), and
+- concatenates the pieces to produce a `string`.
+
+The concatenation mechanism is implementation-defined (e.g., repeated concatenation or a builder), but MUST preserve the observable semantics above.
+
 ### 4.4 Boolean literals
 `true`, `false`
 
@@ -1041,6 +1097,35 @@ Listing `Eq` in a struct/enum conformance when the structural-eqable requirement
 - `box<T>` and `robox<T>` use identity equality regardless of `T` to maintain clear semantics
 
 ---
+
+### 6.4b The `Display` proto (built-in formatting proto)
+
+`Display` is a built-in proto used for user-facing string formatting (notably, interpolated string literals; see §4.3a).
+
+**Proto declaration:**
+
+```p7
+proto Display {
+  pub fn display(ref self) -> string;
+}
+```
+
+`Display` is an **object proto** (§18.2). However, interpolated string literals do not require or imply dynamic dispatch; they are specified in terms of `Display.display` as a compile-time requirement on each interpolation hole.
+
+**Types satisfying `Display` (`T: Display`):**
+
+A type `T` satisfies `Display` iff:
+1. `T` explicitly opts in via `struct[Display, ...] ...` or `enum[Display, ...] ...` (for user-defined types), AND
+2. After proto default-method injection (§18.3), `T` provides a method matching `display(ref self) -> string`, OR
+3. `T` is a built-in type that satisfies `Display` by default (below).
+
+**Built-in types satisfying `Display` by default (v1):**
+- Primitives: `int`, `float`, `bool`, `char`, `unit`, `ptr`
+- `string`
+
+**Rationale:**
+- Allows convenient formatting in interpolated strings (e.g., `f"{x}"` where `x: int`) without introducing implicit conversion or assignability between unrelated types (e.g., `int` is still not assignable to `string`).
+- Keeps formatting behavior explicit and discoverable via a named proto and method (`Display.display`).
 
 ## 6.5 The `Send` static proto
 
