@@ -1364,7 +1364,27 @@ impl Parser {
                     Ok(Type::Array(Box::new(ty)))
                 }
                 TokenType::Identifier(_) => {
-                    let ident = self.parse_identifier()?;
+                    let mut ident = self.parse_identifier()?;
+
+                    // Support module-qualified types like `ui.Message`
+                    if self.peek_match(TokenType::Dot) {
+                        let mut full_name = ident.name.clone();
+                        let line = ident.line;
+                        let col = ident.col;
+
+                        while self.peek_match(TokenType::Dot) {
+                            self.consume(); // consume '.'
+                            let next = self.parse_identifier()?;
+                            full_name.push('.');
+                            full_name.push_str(&next.name);
+                        }
+
+                        ident = Identifier {
+                            name: full_name,
+                            line,
+                            col,
+                        };
+                    }
 
                     // Check for generic type syntax: identifier<type_args>
                     if self.peek_match(TokenType::LessThan) {

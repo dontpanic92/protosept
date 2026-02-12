@@ -1,10 +1,133 @@
 use crate::ast::Type as ParsedType;
-use crate::errors::SemanticError;
+use crate::errors::{SemanticError, SourcePos};
 use crate::semantic::{PrimitiveType, SymbolKind, Type, TypeDefinition, TypeId};
 
 use super::{Generator, SaResult};
 
 impl Generator {
+    fn type_from_id(&self, type_id: TypeId) -> SaResult<Type> {
+        match self.symbol_table.get_type_checked(type_id) {
+            Some(TypeDefinition::Struct(_)) => Ok(Type::Struct(type_id)),
+            Some(TypeDefinition::Enum(_)) => Ok(Type::Enum(type_id)),
+            Some(TypeDefinition::Proto(_)) => Ok(Type::Proto(type_id)),
+            None => Err(SemanticError::Other(format!(
+                "Type id {} not found in symbol table",
+                type_id
+            ))),
+        }
+    }
+
+    pub(super) fn resolve_qualified_type_name(
+        &mut self,
+        name: &str,
+        line: usize,
+        col: usize,
+    ) -> SaResult<Type> {
+        let mut parts = name.split('.').collect::<Vec<_>>();
+        if parts.len() < 2 {
+            return Err(SemanticError::TypeNotFound {
+                name: name.to_string(),
+                pos: SourcePos::at(line, col),
+            });
+        }
+
+        let module_alias = parts.remove(0).to_string();
+        let member_name = parts.join(".");
+
+        let symbol_id = self.symbol_table.find_symbol_in_scope(&module_alias).ok_or_else(|| {
+            SemanticError::TypeNotFound {
+                name: name.to_string(),
+                pos: SourcePos::at(line, col),
+            }
+        })?;
+
+        let symbol = self
+            .symbol_table
+            .get_symbol(symbol_id)
+            .ok_or_else(|| SemanticError::TypeNotFound {
+                name: name.to_string(),
+                pos: SourcePos::at(line, col),
+            })?;
+
+        let module_id = match symbol.kind {
+            SymbolKind::Module(module_id) => module_id,
+            _ => {
+                return Err(SemanticError::TypeNotFound {
+                    name: name.to_string(),
+                    pos: SourcePos::at(line, col),
+                })
+            }
+        };
+
+        let module_path = self
+            .symbol_table
+            .get_module(module_id)
+            .map(|m| m.path.clone())
+            .ok_or_else(|| SemanticError::TypeNotFound {
+                name: name.to_string(),
+                pos: SourcePos::at(line, col),
+            })?;
+
+        let module = self.imported_modules.get(&module_path).cloned().ok_or_else(|| {
+            SemanticError::TypeNotFound {
+                name: name.to_string(),
+                pos: SourcePos::at(line, col),
+            }
+        })?;
+
+        let (imported_type_id, qualified_name) = {
+            let root = module.symbols.get(0).ok_or_else(|| SemanticError::TypeNotFound {
+                name: name.to_string(),
+                pos: SourcePos::at(line, col),
+            })?;
+
+            let child_id = root.children.get(&member_name).ok_or_else(|| {
+                SemanticError::TypeNotFound {
+                    name: name.to_string(),
+                    pos: SourcePos::at(line, col),
+                }
+            })?;
+
+            let member = module.symbols.get(*child_id as usize).ok_or_else(|| {
+                SemanticError::TypeNotFound {
+                    name: name.to_string(),
+                    pos: SourcePos::at(line, col),
+                }
+            })?;
+
+            match member.kind {
+                SymbolKind::Type(type_id) => (type_id, member.qualified_name.clone()),
+                _ => {
+                    return Err(SemanticError::TypeNotFound {
+                        name: name.to_string(),
+                        pos: SourcePos::at(line, col),
+                    })
+                }
+            }
+        };
+
+        if let Some(existing_symbol) =
+            self.symbol_table.find_symbol_by_qualified_name(&qualified_name)
+        {
+            if let SymbolKind::Type(existing_type_id) = existing_symbol.kind {
+                return self.type_from_id(existing_type_id);
+            }
+        }
+
+        let mut type_map = std::collections::HashMap::new();
+        let new_type_id =
+            self.import_type_from_module(&module, imported_type_id, &mut type_map)?;
+
+        let new_symbol = crate::semantic::Symbol::new(
+            qualified_name.clone(),
+            qualified_name.clone(),
+            SymbolKind::Type(new_type_id),
+        );
+        self.symbol_table.insert_symbol(new_symbol);
+
+        self.type_from_id(new_type_id)
+    }
+
     pub(super) fn types_compatible(&self, actual: &Type, expected: &Type) -> bool {
         // Direct equality
         if actual == expected {
@@ -34,6 +157,14 @@ impl Generator {
     pub(super) fn get_semantic_type(&mut self, parsed_type: &ParsedType) -> SaResult<Type> {
         match parsed_type {
             ParsedType::Identifier(identifier) => {
+                if identifier.name.contains('.') {
+                    return self.resolve_qualified_type_name(
+                        &identifier.name,
+                        identifier.line,
+                        identifier.col,
+                    );
+                }
+
                 if let Some(ty) = self.symbol_table.find_type_in_scope(&identifier.name) {
                     Ok(ty)
                 } else {
@@ -87,7 +218,11 @@ impl Generator {
                 // Implement proper generic type resolution with monomorphization
 
                 // First, find the base generic type
-                let base_type = self.require_type_from_identifier(base)?;
+                let base_type = if base.name.contains('.') {
+                    self.resolve_qualified_type_name(&base.name, base.line, base.col)?
+                } else {
+                    self.require_type_from_identifier(base)?
+                };
 
                 // Resolve all type arguments
                 let resolved_type_args = self.resolve_type_args(type_args)?;

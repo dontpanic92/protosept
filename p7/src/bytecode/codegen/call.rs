@@ -313,9 +313,33 @@ impl Generator {
             });
         };
 
+        let member_kind = member_symbol.kind.clone();
+
         // Get the function ID from the symbol
-        let func_id = match &member_symbol.kind {
-            SymbolKind::Function { func_id, .. } => *func_id,
+        let func_id = match member_kind {
+            SymbolKind::Function { func_id, .. } => func_id,
+            SymbolKind::Type(_) => {
+                let qualified_name = format!("{}.{}", ident.name, field.name);
+                let ty =
+                    self.resolve_qualified_type_name(&qualified_name, call_line, call_col)?;
+                if let Type::Struct(type_id) = ty {
+                    let callee_expr = Expression::FieldAccess {
+                        object: Box::new(Expression::Identifier(ident.clone())),
+                        field: field.clone(),
+                    };
+                    let call = FunctionCall {
+                        callee: Box::new(callee_expr),
+                        arguments,
+                    };
+                    return Ok(Some(self.generate_struct_from_call(call, type_id)?));
+                }
+
+                return Err(SemanticError::TypeMismatch {
+                    lhs: "Struct".to_string(),
+                    rhs: ty.to_string(),
+                    pos: SourcePos::at(call_line, call_col),
+                });
+            }
             _ => {
                 return Err(SemanticError::FunctionNotFound {
                     name: format!("{}.{}", ident.name, field.name),

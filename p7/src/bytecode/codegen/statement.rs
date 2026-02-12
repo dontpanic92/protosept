@@ -555,7 +555,7 @@ impl Generator {
         Ok(conforming_to)
     }
 
-    fn import_type_from_module(
+    pub(super) fn import_type_from_module(
         &mut self,
         module: &Module,
         type_id: u32,
