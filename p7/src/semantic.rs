@@ -466,12 +466,14 @@ impl SymbolTable {
             {
                 let type_symbol = self.get_symbol(*enclose_type).unwrap();
                 if let SymbolKind::Type(id) = type_symbol.kind {
-                    // Determine the actual type kind
-                    return match &self.types[id as usize] {
-                        TypeDefinition::Struct(_) => Some(Type::Struct(id)),
-                        TypeDefinition::Enum(_) => Some(Type::Enum(id)),
-                        TypeDefinition::Proto(_) => Some(Type::Proto(id)),
-                    };
+                    if let Some(type_def) = self.types.get(id as usize) {
+                        // Determine the actual type kind
+                        return match type_def {
+                            TypeDefinition::Struct(_) => Some(Type::Struct(id)),
+                            TypeDefinition::Enum(_) => Some(Type::Enum(id)),
+                            TypeDefinition::Proto(_) => Some(Type::Proto(id)),
+                        };
+                    }
                 }
             }
         }
@@ -485,11 +487,15 @@ impl SymbolTable {
         let symbol = self.get_symbol(symbol_id)?;
         match &symbol.kind {
             SymbolKind::Type(id) => {
-                // Determine the actual type kind
-                match &self.types[*id as usize] {
-                    TypeDefinition::Struct(_) => Some(Type::Struct(*id)),
-                    TypeDefinition::Enum(_) => Some(Type::Enum(*id)),
-                    TypeDefinition::Proto(_) => Some(Type::Proto(*id)),
+                if let Some(type_def) = self.types.get(*id as usize) {
+                    // Determine the actual type kind
+                    match type_def {
+                        TypeDefinition::Struct(_) => Some(Type::Struct(*id)),
+                        TypeDefinition::Enum(_) => Some(Type::Enum(*id)),
+                        TypeDefinition::Proto(_) => Some(Type::Proto(*id)),
+                    }
+                } else {
+                    None
                 }
             }
             _ => None,
@@ -559,6 +565,10 @@ impl SymbolTable {
 
     pub fn get_type(&self, type_id: TypeId) -> &TypeDefinition {
         &self.types[type_id as usize]
+    }
+
+    pub fn get_type_checked(&self, type_id: TypeId) -> Option<&TypeDefinition> {
+        self.types.get(type_id as usize)
     }
 
     pub fn get_type_mut(&mut self, type_id: TypeId) -> &mut TypeDefinition {

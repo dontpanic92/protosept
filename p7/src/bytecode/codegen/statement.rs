@@ -2,6 +2,7 @@ use crate::ast::{
     Attribute, EnumVariant, FunctionDeclaration, Identifier, ProtoMethod, StructField,
     StructMethod, TypeParameter,
 };
+use crate::bytecode::Module;
 use crate::errors::SemanticError;
 use crate::errors::SourcePos;
 use crate::{
@@ -491,7 +492,13 @@ impl Generator {
                 .insert(parent_path.clone(), imported_module);
         }
 
-        let imported_parent = self.imported_modules.get(&parent_path).unwrap();
+        let imported_parent = self
+            .imported_modules
+            .get(&parent_path)
+            .cloned()
+            .ok_or_else(|| {
+                SemanticError::Other(format!("Invalid module import: {}", parent_path))
+            })?;
         // Symbols exported from parent: children of root
         let root = imported_parent
             .symbols
@@ -499,10 +506,33 @@ impl Generator {
             .ok_or_else(|| SemanticError::Other(format!("Invalid module root: {}", parent_path)))?;
         if let Some(sym_id) = root.children.get(&symbol_name) {
             if let Some(sym) = imported_parent.symbols.get(*sym_id as usize) {
+                let resolved_kind = match sym.kind {
+                    SymbolKind::Type(imported_type_id) => {
+                        if let Some(existing_symbol) =
+                            self.symbol_table.find_symbol_by_qualified_name(&sym.qualified_name)
+                        {
+                            if let SymbolKind::Type(existing_type_id) = existing_symbol.kind {
+                                SymbolKind::Type(existing_type_id)
+                            } else {
+                                sym.kind.clone()
+                            }
+                        } else {
+                            let mut type_map = std::collections::HashMap::new();
+                            let new_type_id = self.import_type_from_module(
+                                &imported_parent,
+                                imported_type_id,
+                                &mut type_map,
+                            )?;
+                            SymbolKind::Type(new_type_id)
+                        }
+                    }
+                    _ => sym.kind.clone(),
+                };
+
                 let new_symbol = Symbol::new(
                     binding_name.clone(),
                     sym.qualified_name.clone(),
-                    sym.kind.clone(),
+                    resolved_kind,
                 );
                 self.symbol_table.insert_symbol(new_symbol);
                 return Ok(Type::Primitive(PrimitiveType::Unit));
@@ -523,5 +553,148 @@ impl Generator {
             conforming_to.push(proto_type_id);
         }
         Ok(conforming_to)
+    }
+
+    fn import_type_from_module(
+        &mut self,
+        module: &Module,
+        type_id: u32,
+        type_map: &mut std::collections::HashMap<u32, u32>,
+    ) -> SaResult<u32> {
+        if let Some(&mapped_id) = type_map.get(&type_id) {
+            return Ok(mapped_id);
+        }
+
+        let type_def = module.types.get(type_id as usize).ok_or_else(|| {
+            SemanticError::Other(format!(
+                "Type id {} not found in imported module",
+                type_id
+            ))
+        })?;
+
+        let mapped_def = match type_def {
+            TypeDefinition::Struct(s) => {
+                let fields = s
+                    .fields
+                    .iter()
+                    .map(|(name, ty)| {
+                        let mapped_ty = self.map_type_from_module(module, ty, type_map)?;
+                        Ok((name.clone(), mapped_ty))
+                    })
+                    .collect::<SaResult<Vec<_>>>()?;
+
+                let conforming_to = s
+                    .conforming_to
+                    .iter()
+                    .map(|proto_id| self.import_type_from_module(module, *proto_id, type_map))
+                    .collect::<SaResult<Vec<_>>>()?;
+
+                TypeDefinition::Struct(Struct {
+                    qualified_name: s.qualified_name.clone(),
+                    fields,
+                    field_defaults: s.field_defaults.clone(),
+                    attributes: s.attributes.clone(),
+                    type_parameters: s.type_parameters.clone(),
+                    generic_field_types: s.generic_field_types.clone(),
+                    monomorphization: s.monomorphization.clone(),
+                    conforming_to,
+                    methods: Vec::new(),
+                })
+            }
+            TypeDefinition::Enum(e) => {
+                let variants = e
+                    .variants
+                    .iter()
+                    .map(|(name, fields)| {
+                        let mapped_fields = fields
+                            .iter()
+                            .map(|field_ty| self.map_type_from_module(module, field_ty, type_map))
+                            .collect::<SaResult<Vec<_>>>()?;
+                        Ok((name.clone(), mapped_fields))
+                    })
+                    .collect::<SaResult<Vec<_>>>()?;
+
+                let conforming_to = e
+                    .conforming_to
+                    .iter()
+                    .map(|proto_id| self.import_type_from_module(module, *proto_id, type_map))
+                    .collect::<SaResult<Vec<_>>>()?;
+
+                TypeDefinition::Enum(Enum {
+                    qualified_name: e.qualified_name.clone(),
+                    variants,
+                    attributes: e.attributes.clone(),
+                    type_parameters: e.type_parameters.clone(),
+                    generic_variant_types: e.generic_variant_types.clone(),
+                    monomorphization: e.monomorphization.clone(),
+                    conforming_to,
+                    methods: Vec::new(),
+                })
+            }
+            TypeDefinition::Proto(p) => {
+                let methods = p
+                    .methods
+                    .iter()
+                    .map(|(name, params, return_type)| {
+                        let mapped_params = params
+                            .iter()
+                            .map(|param| self.map_type_from_module(module, param, type_map))
+                            .collect::<SaResult<Vec<_>>>()?;
+                        let mapped_return = match return_type {
+                            Some(ret) => Some(self.map_type_from_module(module, ret, type_map)?),
+                            None => None,
+                        };
+                        Ok((name.clone(), mapped_params, mapped_return))
+                    })
+                    .collect::<SaResult<Vec<_>>>()?;
+
+                TypeDefinition::Proto(Proto {
+                    qualified_name: p.qualified_name.clone(),
+                    methods,
+                    attributes: p.attributes.clone(),
+                })
+            }
+        };
+
+        let new_id = self.symbol_table.add_type(mapped_def);
+        type_map.insert(type_id, new_id);
+        Ok(new_id)
+    }
+
+    fn map_type_from_module(
+        &mut self,
+        module: &Module,
+        ty: &Type,
+        type_map: &mut std::collections::HashMap<u32, u32>,
+    ) -> SaResult<Type> {
+        let mapped = match ty {
+            Type::Primitive(p) => Type::Primitive(*p),
+            Type::Reference(inner) => Type::Reference(Box::new(
+                self.map_type_from_module(module, inner, type_map)?,
+            )),
+            Type::Array(inner) => {
+                Type::Array(Box::new(self.map_type_from_module(module, inner, type_map)?))
+            }
+            Type::BoxType(inner) => Type::BoxType(Box::new(
+                self.map_type_from_module(module, inner, type_map)?,
+            )),
+            Type::Nullable(inner) => Type::Nullable(Box::new(
+                self.map_type_from_module(module, inner, type_map)?,
+            )),
+            Type::Struct(id) => {
+                let new_id = self.import_type_from_module(module, *id, type_map)?;
+                Type::Struct(new_id)
+            }
+            Type::Enum(id) => {
+                let new_id = self.import_type_from_module(module, *id, type_map)?;
+                Type::Enum(new_id)
+            }
+            Type::Proto(id) => {
+                let new_id = self.import_type_from_module(module, *id, type_map)?;
+                Type::Proto(new_id)
+            }
+        };
+
+        Ok(mapped)
     }
 }

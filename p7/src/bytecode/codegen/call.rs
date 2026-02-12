@@ -837,10 +837,13 @@ impl Generator {
 
         // Check if this is a struct initialization
         if let SymbolKind::Type(type_id) = symbol.kind {
-            if matches!(
-                self.symbol_table.get_type(type_id),
-                TypeDefinition::Struct(_)
-            ) {
+            let Some(type_def) = self.symbol_table.get_type_checked(type_id) else {
+                return Err(SemanticError::Other(format!(
+                    "Unknown type id {} for symbol '{}' at {}:{}",
+                    type_id, call_name, call_line, call_col
+                )));
+            };
+            if matches!(type_def, TypeDefinition::Struct(_)) {
                 return self.generate_struct_from_call(
                     FunctionCall {
                         callee: Box::new(Expression::Identifier(Identifier {

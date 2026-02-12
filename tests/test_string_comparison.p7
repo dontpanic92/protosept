@@ -1,0 +1,41 @@
+// Test string comparison operators
+import test.test;
+
+@test(expected_type = "int", expected_value = "1")
+fn test_string_eq_literal_true() -> int {
+    "alpha" == "alpha"
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_string_eq_literal_false() -> int {
+    "alpha" == "beta"
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_string_neq_literal_true() -> int {
+    "alpha" != "beta"
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_string_neq_literal_false() -> int {
+    "alpha" != "alpha"
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_string_eq_variables() -> int {
+    let a = "hello";
+    let b = "hello";
+    a == b
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_string_neq_variables() -> int {
+    let a = "hello";
+    let b = "world";
+    a != b
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_string_eq_empty() -> int {
+    "" == ""
+}

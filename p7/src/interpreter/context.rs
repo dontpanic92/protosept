@@ -112,6 +112,7 @@ macro_rules! comparison_op {
     ($self: ident, $op:tt) => {
         let b = $self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
         let a = $self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+        let is_equality_op = matches!(stringify!($op), "==" | "!=");
         match (a, b) {
             (Data::Int(a), Data::Int(b)) => {
                 $self.stack_frame_mut()?.stack.push(Data::Int((a $op b) as i32));
@@ -125,8 +126,10 @@ macro_rules! comparison_op {
             (Data::Float(a), Data::Int(b)) => {
                 $self.stack_frame_mut()?.stack.push(Data::Int((a $op (b as f64)) as i32));
             }
+            (Data::String(a), Data::String(b)) if is_equality_op => {
+                $self.stack_frame_mut()?.stack.push(Data::Int((a $op b) as i32));
+            }
             (Data::String(_), _) | (_, Data::String(_)) => {
-                // Comparison with strings not supported in v1
                 return Err(RuntimeError::Other("Comparison on string".to_string()));
             }
             (Data::StructRef(_), _) | (_, Data::StructRef(_)) => {
@@ -1114,7 +1117,7 @@ impl Context {
         self.stack.last().ok_or(RuntimeError::NoStackFrame)
     }
 
-    pub(crate) fn stack_frame_mut(&mut self) -> ContextResult<&mut StackFrame> {
+    pub fn stack_frame_mut(&mut self) -> ContextResult<&mut StackFrame> {
         self.stack.last_mut().ok_or(RuntimeError::NoStackFrame)
     }
 
