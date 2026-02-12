@@ -86,7 +86,9 @@ fn string_concat(ctx: &mut Context) -> ContextResult<()> {
 
     match (self_val, other_val) {
         (Data::String(a), Data::String(b)) => {
-            ctx.stack_frame_mut()?.stack.push(Data::String(format!("{}{}", a, b)));
+            ctx.stack_frame_mut()?
+                .stack
+                .push(Data::String(format!("{}{}", a, b)));
             Ok(())
         }
         (Data::String(_), other) => Err(RuntimeError::Other(format!(
@@ -111,7 +113,9 @@ fn display_int(ctx: &mut Context) -> ContextResult<()> {
 
     match value {
         Data::Int(v) => {
-            ctx.stack_frame_mut()?.stack.push(Data::String(v.to_string()));
+            ctx.stack_frame_mut()?
+                .stack
+                .push(Data::String(v.to_string()));
             Ok(())
         }
         _ => Err(RuntimeError::Other(format!(
@@ -132,7 +136,9 @@ fn display_float(ctx: &mut Context) -> ContextResult<()> {
 
     match value {
         Data::Float(v) => {
-            ctx.stack_frame_mut()?.stack.push(Data::String(v.to_string()));
+            ctx.stack_frame_mut()?
+                .stack
+                .push(Data::String(v.to_string()));
             Ok(())
         }
         _ => Err(RuntimeError::Other(format!(
@@ -154,7 +160,9 @@ fn display_bool(ctx: &mut Context) -> ContextResult<()> {
     match value {
         Data::Int(v) => {
             let text = if v == 0 { "false" } else { "true" };
-            ctx.stack_frame_mut()?.stack.push(Data::String(text.to_string()));
+            ctx.stack_frame_mut()?
+                .stack
+                .push(Data::String(text.to_string()));
             Ok(())
         }
         _ => Err(RuntimeError::Other(format!(
@@ -181,7 +189,9 @@ fn display_char(ctx: &mut Context) -> ContextResult<()> {
                     v
                 ))
             })?;
-            ctx.stack_frame_mut()?.stack.push(Data::String(ch.to_string()));
+            ctx.stack_frame_mut()?
+                .stack
+                .push(Data::String(ch.to_string()));
             Ok(())
         }
         _ => Err(RuntimeError::Other(format!(
@@ -557,9 +567,7 @@ fn array_set(ctx: &mut Context) -> ContextResult<()> {
                     }
 
                     let old = std::mem::replace(&mut elements[idx as usize], elem);
-                    ctx.stack_frame_mut()?
-                        .stack
-                        .push(Data::Some(Box::new(old)));
+                    ctx.stack_frame_mut()?.stack.push(Data::Some(Box::new(old)));
                     Ok(())
                 }
                 _ => Err(RuntimeError::Other(

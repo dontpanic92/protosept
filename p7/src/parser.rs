@@ -2,8 +2,8 @@ use std::ops::Deref;
 
 use crate::ast::{
     Attribute, Effect, EnumVariant, Expression, FunctionCall, FunctionDeclaration, Identifier,
-    InterpolatedStringPart, NamedPattern, Parameter, Pattern, ProtoMethod, Statement,
-    StructField, StructMethod, Type, TypeParameter,
+    InterpolatedStringPart, NamedPattern, Parameter, Pattern, ProtoMethod, Statement, StructField,
+    StructMethod, Type, TypeParameter,
 };
 use crate::errors::{ParseError, SourcePos};
 use crate::lexer::{InterpolatedStringPart as LexInterpolatedStringPart, Lexer, Token, TokenType};
@@ -39,12 +39,6 @@ impl Parser {
         Parser {
             tokens,
             position: 0,
-        }
-    }
-
-    fn unconsume(&mut self) {
-        if self.position > 0 {
-            self.position -= 1;
         }
     }
 
@@ -98,22 +92,6 @@ impl Parser {
                 }),
             }),
         }
-    }
-
-    fn get_current_pos(&self) -> SourcePos {
-        self.peek()
-            .map(|t| SourcePos {
-                line: t.line,
-                col: t.col,
-            })
-            .unwrap_or_else(|| {
-                self.peek_previous()
-                    .map(|t| SourcePos {
-                        line: t.line,
-                        col: t.col,
-                    })
-                    .unwrap_or(SourcePos { line: 0, col: 0 })
-            })
     }
 
     /// Helper: Consume a specific token type and return its position, or error

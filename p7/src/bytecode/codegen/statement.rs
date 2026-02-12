@@ -508,8 +508,9 @@ impl Generator {
             if let Some(sym) = imported_parent.symbols.get(*sym_id as usize) {
                 let resolved_kind = match sym.kind {
                     SymbolKind::Type(imported_type_id) => {
-                        if let Some(existing_symbol) =
-                            self.symbol_table.find_symbol_by_qualified_name(&sym.qualified_name)
+                        if let Some(existing_symbol) = self
+                            .symbol_table
+                            .find_symbol_by_qualified_name(&sym.qualified_name)
                         {
                             if let SymbolKind::Type(existing_type_id) = existing_symbol.kind {
                                 SymbolKind::Type(existing_type_id)
@@ -566,10 +567,7 @@ impl Generator {
         }
 
         let type_def = module.types.get(type_id as usize).ok_or_else(|| {
-            SemanticError::Other(format!(
-                "Type id {} not found in imported module",
-                type_id
-            ))
+            SemanticError::Other(format!("Type id {} not found in imported module", type_id))
         })?;
 
         let mapped_def = match type_def {
@@ -672,9 +670,9 @@ impl Generator {
             Type::Reference(inner) => Type::Reference(Box::new(
                 self.map_type_from_module(module, inner, type_map)?,
             )),
-            Type::Array(inner) => {
-                Type::Array(Box::new(self.map_type_from_module(module, inner, type_map)?))
-            }
+            Type::Array(inner) => Type::Array(Box::new(
+                self.map_type_from_module(module, inner, type_map)?,
+            )),
             Type::BoxType(inner) => Type::BoxType(Box::new(
                 self.map_type_from_module(module, inner, type_map)?,
             )),

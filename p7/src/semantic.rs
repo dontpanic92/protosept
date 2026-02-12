@@ -629,7 +629,6 @@ pub struct Variable {
 
 #[derive(Debug)]
 pub struct LexicalScope {
-    symbols: Vec<Symbol>,
     var_ids: Vec<u32>,
 }
 
@@ -709,7 +708,6 @@ impl LocalSymbolScope {
 
     pub fn push_scope(&mut self) {
         let scope = LexicalScope {
-            symbols: Vec::new(),
             var_ids: Vec::new(),
         };
         self.scopes.push(scope);

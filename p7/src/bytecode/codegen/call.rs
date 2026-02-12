@@ -320,8 +320,7 @@ impl Generator {
             SymbolKind::Function { func_id, .. } => func_id,
             SymbolKind::Type(_) => {
                 let qualified_name = format!("{}.{}", ident.name, field.name);
-                let ty =
-                    self.resolve_qualified_type_name(&qualified_name, call_line, call_col)?;
+                let ty = self.resolve_qualified_type_name(&qualified_name, call_line, call_col)?;
                 if let Type::Struct(type_id) = ty {
                     let callee_expr = Expression::FieldAccess {
                         object: Box::new(Expression::Identifier(ident.clone())),

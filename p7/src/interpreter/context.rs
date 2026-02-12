@@ -783,7 +783,7 @@ impl Context {
                         }
                     }
                 }
-                Instruction::BoxToProto(struct_type_id, proto_type_id) => {
+                Instruction::BoxToProto(struct_type_id, _proto_type_id) => {
                     // Convert box<T> to box<P> for dynamic dispatch
                     // Pop BoxRef, push ProtoBoxRef with type info
                     let box_ref = self
@@ -805,7 +805,7 @@ impl Context {
                         )));
                     }
                 }
-                Instruction::RefToProto(struct_type_id, proto_type_id) => {
+                Instruction::RefToProto(struct_type_id, _proto_type_id) => {
                     // Convert ref<T> to ref<P> for dynamic dispatch
                     // Pop StructRef, push ProtoRefRef with type info
                     let struct_ref = self
@@ -1297,7 +1297,7 @@ impl Context {
             }
             Data::ProtoBoxRef {
                 box_idx: old_idx,
-                concrete_type_id,
+                concrete_type_id: _concrete_type_id,
             } => match index_map.get(*old_idx as usize) {
                 Some(Some(new_idx)) => {
                     *old_idx = *new_idx;

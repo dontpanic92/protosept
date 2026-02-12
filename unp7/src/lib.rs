@@ -7,6 +7,7 @@ use p7::semantic::{SymbolKind, Type};
 #[derive(Debug)]
 struct InstEntry {
     offset: u32,
+    #[allow(dead_code)]
     size: u32,
     inst: Instruction,
 }

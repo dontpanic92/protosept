@@ -46,7 +46,7 @@ pub struct Generator {
     pub(super) module_provider: Box<dyn crate::ModuleProvider>,
     pub(super) imported_modules: std::collections::HashMap<String, Module>,
     pub(super) compiling_modules: std::collections::HashSet<String>,
-    pub(super) current_module_path: String,
+    pub(super) _current_module_path: String,
     // Track which variables have been moved (by their index in local scope)
     pub(super) moved_variables: std::collections::HashSet<u32>,
     // Stack of loop contexts for nested loops
@@ -81,7 +81,7 @@ impl Generator {
             module_provider,
             imported_modules: std::collections::HashMap::new(),
             compiling_modules: std::collections::HashSet::new(),
-            current_module_path: "$root".to_string(),
+            _current_module_path: "$root".to_string(),
             moved_variables: std::collections::HashSet::new(),
             loop_context_stack: Vec::new(),
             string_constants: Vec::new(),
@@ -244,7 +244,7 @@ impl Generator {
             module_provider,
             imported_modules: std::collections::HashMap::new(),
             compiling_modules: std::collections::HashSet::new(),
-            current_module_path: module_path.clone(),
+            _current_module_path: module_path.clone(),
             moved_variables: std::collections::HashSet::new(),
             loop_context_stack: Vec::new(),
             string_constants: Vec::new(),

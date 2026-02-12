@@ -34,20 +34,21 @@ impl Generator {
         let module_alias = parts.remove(0).to_string();
         let member_name = parts.join(".");
 
-        let symbol_id = self.symbol_table.find_symbol_in_scope(&module_alias).ok_or_else(|| {
-            SemanticError::TypeNotFound {
-                name: name.to_string(),
-                pos: SourcePos::at(line, col),
-            }
-        })?;
-
-        let symbol = self
+        let symbol_id = self
             .symbol_table
-            .get_symbol(symbol_id)
+            .find_symbol_in_scope(&module_alias)
             .ok_or_else(|| SemanticError::TypeNotFound {
                 name: name.to_string(),
                 pos: SourcePos::at(line, col),
             })?;
+
+        let symbol =
+            self.symbol_table
+                .get_symbol(symbol_id)
+                .ok_or_else(|| SemanticError::TypeNotFound {
+                    name: name.to_string(),
+                    pos: SourcePos::at(line, col),
+                })?;
 
         let module_id = match symbol.kind {
             SymbolKind::Module(module_id) => module_id,
@@ -55,7 +56,7 @@ impl Generator {
                 return Err(SemanticError::TypeNotFound {
                     name: name.to_string(),
                     pos: SourcePos::at(line, col),
-                })
+                });
             }
         };
 
@@ -68,25 +69,31 @@ impl Generator {
                 pos: SourcePos::at(line, col),
             })?;
 
-        let module = self.imported_modules.get(&module_path).cloned().ok_or_else(|| {
-            SemanticError::TypeNotFound {
+        let module = self
+            .imported_modules
+            .get(&module_path)
+            .cloned()
+            .ok_or_else(|| SemanticError::TypeNotFound {
                 name: name.to_string(),
                 pos: SourcePos::at(line, col),
-            }
-        })?;
+            })?;
 
         let (imported_type_id, qualified_name) = {
-            let root = module.symbols.get(0).ok_or_else(|| SemanticError::TypeNotFound {
-                name: name.to_string(),
-                pos: SourcePos::at(line, col),
-            })?;
-
-            let child_id = root.children.get(&member_name).ok_or_else(|| {
-                SemanticError::TypeNotFound {
+            let root = module
+                .symbols
+                .get(0)
+                .ok_or_else(|| SemanticError::TypeNotFound {
                     name: name.to_string(),
                     pos: SourcePos::at(line, col),
-                }
-            })?;
+                })?;
+
+            let child_id =
+                root.children
+                    .get(&member_name)
+                    .ok_or_else(|| SemanticError::TypeNotFound {
+                        name: name.to_string(),
+                        pos: SourcePos::at(line, col),
+                    })?;
 
             let member = module.symbols.get(*child_id as usize).ok_or_else(|| {
                 SemanticError::TypeNotFound {
@@ -101,13 +108,14 @@ impl Generator {
                     return Err(SemanticError::TypeNotFound {
                         name: name.to_string(),
                         pos: SourcePos::at(line, col),
-                    })
+                    });
                 }
             }
         };
 
-        if let Some(existing_symbol) =
-            self.symbol_table.find_symbol_by_qualified_name(&qualified_name)
+        if let Some(existing_symbol) = self
+            .symbol_table
+            .find_symbol_by_qualified_name(&qualified_name)
         {
             if let SymbolKind::Type(existing_type_id) = existing_symbol.kind {
                 return self.type_from_id(existing_type_id);
@@ -115,8 +123,7 @@ impl Generator {
         }
 
         let mut type_map = std::collections::HashMap::new();
-        let new_type_id =
-            self.import_type_from_module(&module, imported_type_id, &mut type_map)?;
+        let new_type_id = self.import_type_from_module(&module, imported_type_id, &mut type_map)?;
 
         let new_symbol = crate::semantic::Symbol::new(
             qualified_name.clone(),

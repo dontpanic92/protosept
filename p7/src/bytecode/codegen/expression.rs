@@ -587,7 +587,7 @@ impl Generator {
 
         let struct_type_id = self.extract_struct_type_id(&object_ty, &field)?;
 
-        let udt = self.symbol_table.get_udt(struct_type_id);
+        let udt = self.symbol_table.get_type(struct_type_id);
         if let TypeDefinition::Struct(struct_def) = udt {
             if let Some((idx, (_fname, ftype))) = struct_def
                 .fields
@@ -790,7 +790,7 @@ impl Generator {
         is_static_access: bool,
         object_ty: Type,
     ) -> SaResult<Type> {
-        let udt = self.symbol_table.get_udt(type_id);
+        let udt = self.symbol_table.get_type(type_id);
         let TypeDefinition::Enum(enum_def) = udt else {
             unimplemented!("Internal error: Type ID resolved to non-Enum UDT");
         };
@@ -836,7 +836,7 @@ impl Generator {
         is_static_access: bool,
         object_name: &str,
     ) -> SaResult<Type> {
-        let udt = self.symbol_table.get_udt(type_id);
+        let udt = self.symbol_table.get_type(type_id);
         let TypeDefinition::Struct(struct_def) = udt else {
             unimplemented!("Internal error: Type ID resolved to non-Struct UDT");
         };
