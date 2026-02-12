@@ -6,7 +6,7 @@ Status: Draft (v1 target)
 > The short name **p7** may still appear in tooling, file extensions,
 > and internal identifiers. Unless otherwise stated, "Protosept" and "p7" refer to the same language.
 
-Design Goals (North Star)
+## Design Goals
 
 *   **Statically Typed, Scripting Feel**: Concise abstractions and high-level ergonomics, backed by the rigor of a compiled, type-safe system.
 *   **Auditability First (Human-Centric Review)**: Code is read far more often than it is written, increasingly by humans reviewing AI-generated output. Syntax prioritizes clarity of *intent*, *data flow*, and *cost* over brevity. The "canonical" form of the code must be unambiguous.
@@ -73,9 +73,9 @@ Top-level executable statements are not allowed in v1. Execution begins when the
 
 ---
 
-## 1.1 Packages, modules, imports, visibility
+### 1.1 Packages, modules, imports, visibility
 
-### 1.1.1 Packages
+#### 1.1.1 Packages
 
 A **package** is the unit of compilation and dependency distribution.
 
@@ -83,7 +83,7 @@ A **package** is the unit of compilation and dependency distribution.
 - The compiler accepts a package name and a set of source files (modules).
 - A package may depend on other packages; dependencies are provided by host/tooling.
 
-### 1.1.2 Modules
+#### 1.1.2 Modules
 
 A **module** is a single source file.
 
@@ -92,7 +92,7 @@ A **module** is a single source file.
   - Recommended mapping: `/` becomes `.`.
   - Example: `src/util/string.p7` → `mypackage.src.util.string`.
 
-### 1.1.2a Builtin package
+##### 1.1.2.1 Builtin package
 
 The **builtin package** is a compiler-bundled package that is automatically loaded before user code.
 
@@ -107,7 +107,7 @@ The **builtin package** is a compiler-bundled package that is automatically load
 
 The builtin package provides the canonical declarations for types like `string`, allowing method calls such as `s.len_bytes()` to resolve through normal method resolution, while the compiler generates intrinsic code at compile time.
 
-### 1.1.3 Absolute module paths
+#### 1.1.3 Absolute module paths
 
 An **absolute module path** begins with a package name and uses `.` as a separator.
 
@@ -117,7 +117,7 @@ Examples:
 
 Qualified names may be used in any name position (types, expressions, etc.), except for leading-`.` relative paths which are restricted to `import` (§1.1.5).
 
-### 1.1.4 Import statements
+#### 1.1.4 Import statements
 
 `import` brings a module into scope.
 
@@ -144,7 +144,7 @@ list.new_list();
 Auth.login();
 ```
 
-### 1.1.5 Relative module paths (import-only)
+#### 1.1.5 Relative module paths (import-only)
 
 A relative module path begins with `.` and is permitted **only** in `import`.
 
@@ -158,7 +158,7 @@ import .helpers;          // `myapp.services.helpers`
 import .sub.utilities;    // `myapp.services.sub.utilities`
 ```
 
-### 1.1.6 Package-root relative imports (import-only)
+#### 1.1.6 Package-root relative imports (import-only)
 
 A **package-root relative** import path begins with `_` followed by `.`, and is permitted **only** in `import`.
 
@@ -176,7 +176,7 @@ import _.util.logging;      // resolves to `mypackage.util.logging`
 import _.config;            // resolves to `mypackage.config`
 ```
 
-### 1.1.7 Visibility
+#### 1.1.7 Visibility
 
 By default, declarations are module-private.
 
@@ -470,7 +470,7 @@ Types in v1:
 
 ---
 
-## 3.1 Primitive types
+### 3.1 Primitive types
 
 - `int`  
   Signed 64-bit two's-complement integer (i64). Integer overflow TRAPs (§15.1.1).
@@ -503,10 +503,10 @@ Types in v1:
 
 ---
 
-## 3.2 `string`
+### 3.2 `string`
 
 - `string` is a built-in **immutable value type** containing UTF-8 text.
-- `string` is a **builtin nominal type** with compiler-defined representation (§1.1.2a).
+- `string` is a **builtin nominal type** with compiler-defined representation (§1.1.2.1).
 - Its canonical declaration and method signatures are declared in the builtin package as an `@builtin()` struct (§12.6).
 - Iteration unit is `char`.
 
@@ -530,13 +530,13 @@ String literal syntax and escapes are defined in §4.3.
 
 ---
 
-## 3.3 `array<T>`
+### 3.3 `array<T>`
 
 - `array<T>` is a built-in **immutable value type**.
 - In-place mutation of a value array is not supported in v1.
 - Shared mutation/identity is provided via `box<array<T>>` with mutation APIs (§7.4, §3.3.3).
 
-### 3.3.1 Array literals
+#### 3.3.1 Array literals
 
 - `[e1, e2, ...]` constructs an `array<T>` where all elements have the same inferred type `T`. The element type is synthesized from the element expressions.
 - `[]` (empty array literal) requires an expected type to determine `T`; otherwise ERROR.
@@ -557,7 +557,7 @@ fn get_empty() -> array<float> {
 // let zs = [];                  // ERROR: cannot infer T (no elements, no context)
 ```
 
-### 3.3.2 Array indexing
+#### 3.3.2 Array indexing
 
 Two indexing forms:
 
@@ -571,7 +571,7 @@ Two indexing forms:
 
 [[TODO]] define full array API surface (`len`, `get`, etc.) and whether `get` is syntax sugar for a prelude function.
 
-### 3.3.3 Boxed array mutation (overview)
+#### 3.3.3 Boxed array mutation (overview)
 
 Mutation of an array requires boxing:
 - `box<array<T>>` represents a mutable, identity-bearing container.
@@ -580,11 +580,11 @@ v1 boxed-array mutation is via library operations (not indexing assignment). [[T
 
 ---
 
-## 3.4 Tuple types
+### 3.4 Tuple types
 
 Tuples are built-in **immutable value types** that group multiple values of potentially different types.
 
-### 3.4.1 Tuple type syntax
+#### 3.4.1 Tuple type syntax
 
 A tuple type is written as `(T1, T2, ..., Tn)` where `n >= 2`.
 
@@ -597,7 +597,7 @@ Special cases:
 - `()` is the **unit type** (not a tuple), with a single value `()`.
 - `(T)` is **not** a tuple type; it is interpreted as a parenthesized type expression (i.e., just `T`).
 
-### 3.4.2 Tuple literals
+#### 3.4.2 Tuple literals
 
 A tuple literal is written as `(e1, e2, ..., en)` where `n >= 2`.
 
@@ -612,7 +612,7 @@ Special cases:
 - `()` is the **unit literal** (not a tuple literal).
 - `(e)` is **not** a tuple literal; it is a parenthesized expression (grouping).
 
-### 3.4.3 Element access
+#### 3.4.3 Element access
 
 Tuple elements are accessed using dot notation with zero-based integer indices:
 - `t.0` accesses the first element
@@ -626,7 +626,7 @@ let x = p.0;  // x has type int, value 42
 let y = p.1;  // y has type string, value "test"
 ```
 
-### 3.4.4 Structural rules
+#### 3.4.4 Structural rules
 
 - Tuple types satisfy `Copy` iff all component types satisfy `Copy`.
 - Tuple types are **Send** when all component types are Send.
@@ -634,7 +634,7 @@ let y = p.1;  // y has type string, value "test"
 
 ---
 
-## 3.5 Nullable types: `?T`
+### 3.5 Nullable types: `?T`
 
 - `?T` is either `null` or a non-null `T`.
 - `null` is assignable only to `?T`.
@@ -642,7 +642,7 @@ let y = p.1;  // y has type string, value "test"
 
 ---
 
-## 3.6 Borrowed view types: `ref<T>`
+### 3.6 Borrowed view types: `ref<T>`
 
 `ref<T>` is a **read-only view** of an existing addressable location that holds a `T` (§7).
 
@@ -653,7 +653,7 @@ let y = p.1;  // y has type string, value "test"
 
 ---
 
-## 3.7 Owned heap handle types: `box<T>`
+### 3.7 Owned heap handle types: `box<T>`
 
 `box<T>` is an **owned heap-allocated identity container** holding a `T`.
 
@@ -663,7 +663,7 @@ let y = p.1;  // y has type string, value "test"
 
 ---
 
-## 3.8 Read-only heap handle types: `robox<T>`
+### 3.8 Read-only heap handle types: `robox<T>`
 
 `robox<T>` is a **read-only heap-allocated identity container** holding a `T`.
 
@@ -722,7 +722,7 @@ Escape sequences:
 
 Any other `\`-escape sequence is an ERROR.
 
-### 4.3a Interpolated string literals
+#### 4.3.1 Interpolated string literals
 
 An interpolated string literal is written with a leading `f` prefix and a string literal:
 
@@ -752,7 +752,7 @@ All normal string escape sequences from §4.3 apply to the literal text segments
 
 **Typing rule (no implicit conversion):**
 For each interpolation hole expression `ei` with type `Ti`:
-- `Ti` MUST satisfy `Display` (§6.4b). Otherwise it is a compile-time ERROR.
+- `Ti` MUST satisfy `Display` (§6.4.2). Otherwise it is a compile-time ERROR.
 - The `Display.display(ref self) -> string` method is used to obtain the textual representation of the hole value.
 - The resulting interpolated string expression has type `string`.
 
@@ -929,7 +929,7 @@ This rule applies uniformly to:
 
 Using `structural_copy(x)` when `T` is not structural-copyable is ERROR.
 
-### 6.2a The `structural_eq` compiler intrinsic
+#### 6.2.1 The `structural_eq` compiler intrinsic
 
 `structural_eq<T>(a: ref<T>, b: ref<T>) -> bool` is a compiler intrinsic that performs structural equality comparison of two values through references.
 
@@ -1045,9 +1045,8 @@ This enables `copy(some_expr)` to work uniformly whether `some_expr` is a variab
 **Rationale:**
 - `Copy` is a proto with a method; calling `copy(x)` invokes that method via the standard method-call mechanism with receiver temporary materialization.
 
----
 
-### 6.4a The `Eq` static proto
+#### 6.4.1 The `Eq` static proto
 
 `Eq` is a built-in **static proto** that enables equality testing via the `==` and `!=` operators.
 
@@ -1070,7 +1069,7 @@ proto Eq {
 **Types satisfying `Eq` (`T: Eq`):**
 
 A type `T` satisfies `Eq` iff:
-1. `T` is structural-eqable (§6.2a), AND
+1. `T` is structural-eqable (§6.2.1), AND
 2. `T` explicitly opts in via `struct[Eq, ...] ...` or `enum[Eq, ...] ...` (for user-defined types), OR
 3. `T` is a built-in type that satisfies `Eq` by default.
 
@@ -1096,11 +1095,10 @@ Listing `Eq` in a struct/enum conformance when the structural-eqable requirement
 - Enables equality on non-Copy types without requiring value-level dereference
 - `box<T>` and `robox<T>` use identity equality regardless of `T` to maintain clear semantics
 
----
 
-### 6.4b The `Display` proto (built-in formatting proto)
+#### 6.4.2 The `Display` proto (built-in formatting proto)
 
-`Display` is a built-in proto used for user-facing string formatting (notably, interpolated string literals; see §4.3a).
+`Display` is a built-in proto used for user-facing string formatting (notably, interpolated string literals; see §4.3.1).
 
 **Proto declaration:**
 
@@ -1127,7 +1125,7 @@ A type `T` satisfies `Display` iff:
 - Allows convenient formatting in interpolated strings (e.g., `f"{x}"` where `x: int`) without introducing implicit conversion or assignability between unrelated types (e.g., `int` is still not assignable to `string`).
 - Keeps formatting behavior explicit and discoverable via a named proto and method (`Display.display`).
 
-## 6.5 The `Send` static proto
+### 6.5 The `Send` static proto
 
 `Send` is a built-in **static proto** indicating a deep-copyable pure value with no shared identity/aliasing.
 
@@ -1396,7 +1394,7 @@ The equality operators `==` and `!=` test structural equality and inequality.
 **Typing:**
 - `a == b` is well-typed iff:
   - The types of `a` and `b` unify to some type `T`
-  - `T: Eq` (the type satisfies the `Eq` proto; see §6.4a)
+  - `T: Eq` (the type satisfies the `Eq` proto; see §6.4.1)
 - The result type is `bool`
 - `a != b` has the same typing rules as `a == b`
 
@@ -1440,8 +1438,8 @@ r1 == r2  // true (compare referent values, not addresses)
 ```
 
 **Cross-references:**
-- `Eq` proto definition: §6.4a
-- `structural_eq` intrinsic: §6.2a
+- `Eq` proto definition: §6.4.1
+- `structural_eq` intrinsic: §6.2.1
 - Match pattern equality: §9.6.1
 
 ### 9.4 `loop` expressions
@@ -2116,7 +2114,7 @@ Layout rules:
 - Struct alignment is the max alignment of its fields.
 - Total size is padded to a multiple of the struct alignment.
 
-The compiler MUST compute and preserve layout metadata (`size`, `align`, and per-field `offset`) for `@repr(C)` structs in the compiled artifact when those structs appear in any `@ffi` signature (§19.6a, §23.6).
+The compiler MUST compute and preserve layout metadata (`size`, `align`, and per-field `offset`) for `@repr(C)` structs in the compiled artifact when those structs appear in any `@ffi` signature (§19.6.1, §23.6).
 
 Restrictions (v1):
 - All fields of an `@repr(C)` struct MUST be FFI-safe types (§23.3). Otherwise ERROR.
@@ -2718,7 +2716,7 @@ Compiled artifact MUST preserve, for each attributed declaration:
 - name (including module qualification when modules exist)
 - ordered list of attribute instances
 
-### 19.6a FFI metadata (normative)
+#### 19.6.1 FFI metadata (normative)
 
 When the FFI extension is enabled by the host (§23.1), the compiled artifact MUST preserve enough metadata to support universal FFI call marshalling at runtime.
 
@@ -3177,7 +3175,7 @@ For a declaration `@ffi(name = N, lib = L, ...)`, the **FFI key** is:
 - If `lib` is `Some(L)`: `L + ":" + N`
 - If `lib` is `null`: `N`
 
-The compiled artifact MUST preserve the resolved FFI key (§19.6a).
+The compiled artifact MUST preserve the resolved FFI key (§19.6.1).
 
 ### 23.3 FFI-safe types (v1)
 
@@ -3186,7 +3184,7 @@ FFI-safe types are types that may appear in `@ffi` function signatures.
 FFI-safe (v1):
 - Scalars:
   - Core primitives: `int`, `float`, `bool`, `unit`, `ptr`
-  - Fixed-width FFI scalars from `std.ffi` (§23.3a)
+  - Fixed-width FFI scalars from `std.ffi` (§23.3.1)
 - `@repr(transparent)` tuple structs whose single field type is FFI-safe
 - `@repr(C)` structs whose fields are all FFI-safe (recursively). These are C POD structs.
 
@@ -3196,7 +3194,7 @@ Not FFI-safe (v1):
 
 Using a non-FFI-safe type in a `@ffi` signature is ERROR.
 
-### 23.3a `std.ffi` fixed-width scalar types (normative)
+#### 23.3.1 `std.ffi` fixed-width scalar types (normative)
 
 To support C POD structs and universal FFI marshalling without expanding the core language primitive set, fixed-width scalar types are provided by the host in the `std.ffi` module when the FFI extension is enabled.
 
@@ -3209,7 +3207,7 @@ When §23 is enabled, the host MUST make module `std.ffi` available for import (
 - `f32` — IEEE-754 binary32
 - `f64` — IEEE-754 binary64
 
-These types are FFI-safe and may appear in `@repr(C)` structs and `@ffi` signatures. The compiled artifact MUST preserve their exact size/alignment as part of signature/layout metadata (§19.6a).
+These types are FFI-safe and may appear in `@repr(C)` structs and `@ffi` signatures. The compiled artifact MUST preserve their exact size/alignment as part of signature/layout metadata (§19.6.1).
 
 Note: The core `int` and `float` types remain `i64` and `f64` respectively; `std.ffi` types exist specifically to express C ABI widths.
 
@@ -3233,7 +3231,7 @@ Hosts MAY implement one or both resolution models.
 ### 23.6 Universal call marshalling (normative)
 
 When invoking an `@ffi` function, the runtime MUST:
-- use the recorded monomorphic signature and representation metadata (§19.6a, §12.7)
+- use the recorded monomorphic signature and representation metadata (§19.6.1, §12.7)
 - marshal arguments according to the selected ABI (§23.2.1) and type layouts
 - call the resolved native symbol
 - marshal the return value back into a Protosept value
@@ -3251,7 +3249,7 @@ If marshalling cannot be performed (unsupported ABI, missing layout metadata, un
 3) Enablement mechanisms for extensions (§21, §22)
 4) Host ABI: concrete API surfaces for calling, fibers, threads (§17, §21.4, §22)
 5) Specify prelude location/definition of `box<T>.new` intrinsic method (§7.4)
-6) Specify representation/ABI attributes for FFI: `@repr(transparent)` and `@repr(C)`; define compiled layout metadata requirements (§12.7, §19.6a, §23)
+6) Specify representation/ABI attributes for FFI: `@repr(transparent)` and `@repr(C)`; define compiled layout metadata requirements (§12.7, §19.6.1, §23)
 7) Define universal marshalling surface for strings/arrays/callbacks under FFI (beyond POD + ptr) (§23)
 
 ---
