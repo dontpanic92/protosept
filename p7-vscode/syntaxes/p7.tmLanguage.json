@@ -1,0 +1,93 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "p7",
+  "scopeName": "source.p7",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#attributes" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.p7",
+          "begin": "//",
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.p7" } },
+          "end": "$"
+        },
+        {
+          "name": "comment.block.p7",
+          "begin": "/\\*",
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.begin.p7" } },
+          "end": "\\*/",
+          "endCaptures": { "0": { "name": "punctuation.definition.comment.end.p7" } }
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.p7",
+          "begin": "\"",
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.p7" } },
+          "end": "\"",
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.p7" } },
+          "patterns": [
+            {
+              "name": "constant.character.escape.p7",
+              "match": "\\\\(\\\\|\"|n|r|t|0|u\\{[0-9A-Fa-f]{1,6}\\})"
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.p7",
+          "match": "\\b\\d[\\d_]*(?:\\.\\d[\\d_]*)?\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.p7",
+          "match": "\\b(if|else|match|try|throw|loop|while|break|continue|return)\\b"
+        },
+        {
+          "name": "keyword.declaration.p7",
+          "match": "\\b(fn|struct|enum|proto|let|var|pub|import|as)\\b"
+        },
+        {
+          "name": "keyword.operator.p7",
+          "match": "\\b(ref|box|null)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.p7",
+          "match": "\\b(?:struct|enum|proto)\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        },
+        {
+          "name": "entity.name.function.p7",
+          "match": "\\bfn\\s+([A-Za-z_][A-Za-z0-9_]*)"
+        }
+      ]
+    },
+    "attributes": {
+      "patterns": [
+        {
+          "name": "meta.annotation.p7",
+          "match": "@[A-Za-z_][A-Za-z0-9_]*"
+        }
+      ]
+    }
+  }
+}

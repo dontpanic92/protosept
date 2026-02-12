@@ -1,0 +1,35 @@
+{
+  "name": "protosept",
+  "displayName": "Protosept",
+  "description": "Language support for p7 (Protosept).",
+  "version": "0.1.0",
+  "publisher": "protosept",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "p7",
+        "aliases": [
+          "p7",
+          "Protosept"
+        ],
+        "extensions": [
+          ".p7"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "p7",
+        "scopeName": "source.p7",
+        "path": "./syntaxes/p7.tmLanguage.json"
+      }
+    ]
+  }
+}
