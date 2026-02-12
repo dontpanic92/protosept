@@ -1,0 +1,24 @@
+// Test interpolated string literals
+import test.test;
+
+@test(expected_type = "string", expected_value = "hello Ada")
+fn test_interpolation_basic() -> string {
+    let name = "Ada";
+    f"hello {name}"
+}
+
+@test(expected_type = "string", expected_value = "n=3")
+fn test_interpolation_int() -> string {
+    let n = 3;
+    f"n={n}"
+}
+
+@test(expected_type = "string", expected_value = "{x}")
+fn test_interpolation_escaped_braces() -> string {
+    f"{{x}}"
+}
+
+@test(expected_type = "string", expected_value = "plain")
+fn test_interpolation_no_holes() -> string {
+    f"plain"
+}

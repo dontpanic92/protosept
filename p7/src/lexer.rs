@@ -37,6 +37,7 @@ pub enum TokenType {
     Integer(i64),
     Float(f64),
     StringLiteral(String),
+    InterpolatedString(Vec<InterpolatedStringPart>),
 
     // Operators
     Plus,
@@ -77,6 +78,12 @@ pub enum TokenType {
     EOF,
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub enum InterpolatedStringPart {
+    Literal(String),
+    Expr(String),
+}
+
 impl TokenType {
     pub fn discriminant(&self) -> std::mem::Discriminant<TokenType> {
         std::mem::discriminant(self)
@@ -87,9 +94,11 @@ impl TokenType {
 pub enum LexerError {
     UnexpectedCharacter(char, (usize, usize)),
     UnterminatedString((usize, usize)),
+    UnterminatedInterpolation((usize, usize)),
     InvalidNumber(String, (usize, usize)),
     InvalidEscapeSequence(String, (usize, usize)),
     InvalidUnicodeEscape(String, (usize, usize)),
+    InvalidInterpolation(String, (usize, usize)),
 }
 
 impl std::error::Error for LexerError {}
@@ -106,6 +115,13 @@ impl std::fmt::Display for LexerError {
             }
             LexerError::UnterminatedString((line, col)) => {
                 write!(f, "Unterminated string at line: {} column: {}", line, col)
+            }
+            LexerError::UnterminatedInterpolation((line, col)) => {
+                write!(
+                    f,
+                    "Unterminated interpolation at line: {} column: {}",
+                    line, col
+                )
             }
             LexerError::InvalidNumber(num, (line, col)) => {
                 write!(
@@ -126,6 +142,13 @@ impl std::fmt::Display for LexerError {
                     f,
                     "Invalid unicode escape: {} at line: {} column: {}",
                     val, line, col
+                )
+            }
+            LexerError::InvalidInterpolation(msg, (line, col)) => {
+                write!(
+                    f,
+                    "Invalid interpolation: {} at line: {} column: {}",
+                    msg, line, col
                 )
             }
         }
@@ -340,6 +363,293 @@ impl Lexer {
         Ok(result)
     }
 
+    fn read_interpolated_string(&mut self) -> Result<Vec<InterpolatedStringPart>, LexerError> {
+        if self.peek_char() != Some('f') || self.peek_char2() != Some('"') {
+            return Err(LexerError::InvalidInterpolation(
+                "expected f\" for interpolated string".to_string(),
+                (self.line, self.col),
+            ));
+        }
+
+        if self.position >= self.input.len().saturating_sub(2) {
+            return Err(LexerError::UnterminatedString((self.line, self.col)));
+        }
+
+        let mut parts = Vec::new();
+        let mut current = String::new();
+
+        self.read_char(); // Skip 'f'
+        self.read_char(); // Skip opening "
+
+        while let Some(c) = self.peek_char() {
+            if c == '"' {
+                break;
+            }
+            if c == '\n' {
+                return Err(LexerError::UnterminatedString((self.line, self.col)));
+            }
+            if c == '\\' {
+                self.read_char(); // Skip backslash
+                match self.peek_char() {
+                    Some('\\') => {
+                        current.push('\\');
+                        self.read_char();
+                    }
+                    Some('"') => {
+                        current.push('"');
+                        self.read_char();
+                    }
+                    Some('n') => {
+                        current.push('\n');
+                        self.read_char();
+                    }
+                    Some('r') => {
+                        current.push('\r');
+                        self.read_char();
+                    }
+                    Some('t') => {
+                        current.push('\t');
+                        self.read_char();
+                    }
+                    Some('0') => {
+                        current.push('\0');
+                        self.read_char();
+                    }
+                    Some('u') => {
+                        self.read_char(); // Skip 'u'
+                        if self.peek_char() != Some('{') {
+                            return Err(LexerError::InvalidEscapeSequence(
+                                "\\u".to_string(),
+                                (self.line, self.col),
+                            ));
+                        }
+                        self.read_char(); // Skip '{'
+
+                        let mut hex_digits = String::new();
+                        while let Some(c) = self.peek_char() {
+                            if c == '}' {
+                                break;
+                            }
+                            if !c.is_ascii_hexdigit() {
+                                return Err(LexerError::InvalidUnicodeEscape(
+                                    format!("\\u{{{}}}", hex_digits),
+                                    (self.line, self.col),
+                                ));
+                            }
+                            hex_digits.push(c);
+                            self.read_char();
+                        }
+
+                        if self.peek_char() != Some('}') {
+                            return Err(LexerError::UnterminatedString((self.line, self.col)));
+                        }
+                        self.read_char(); // Skip '}'
+
+                        if hex_digits.is_empty() || hex_digits.len() > MAX_UNICODE_ESCAPE_DIGITS {
+                            return Err(LexerError::InvalidUnicodeEscape(
+                                format!("\\u{{{}}}", hex_digits),
+                                (self.line, self.col),
+                            ));
+                        }
+
+                        let code_point = u32::from_str_radix(&hex_digits, 16).map_err(|_| {
+                            LexerError::InvalidUnicodeEscape(
+                                format!("\\u{{{}}}", hex_digits),
+                                (self.line, self.col),
+                            )
+                        })?;
+
+                        let ch = char::from_u32(code_point).ok_or_else(|| {
+                            LexerError::InvalidUnicodeEscape(
+                                format!("\\u{{{:x}}}", code_point),
+                                (self.line, self.col),
+                            )
+                        })?;
+
+                        current.push(ch);
+                    }
+                    Some(other) => {
+                        return Err(LexerError::InvalidEscapeSequence(
+                            format!("\\{}", other),
+                            (self.line, self.col),
+                        ));
+                    }
+                    None => {
+                        return Err(LexerError::UnterminatedString((self.line, self.col)));
+                    }
+                }
+                continue;
+            }
+
+            if c == '{' {
+                if self.peek_char2() == Some('{') {
+                    current.push('{');
+                    self.read_char();
+                    self.read_char();
+                    continue;
+                }
+
+                if !current.is_empty() {
+                    parts.push(InterpolatedStringPart::Literal(current));
+                    current = String::new();
+                }
+
+                self.read_char(); // Skip '{'
+                let expr = self.read_interpolation_expr()?;
+                parts.push(InterpolatedStringPart::Expr(expr));
+                continue;
+            }
+
+            if c == '}' {
+                if self.peek_char2() == Some('}') {
+                    current.push('}');
+                    self.read_char();
+                    self.read_char();
+                    continue;
+                }
+                return Err(LexerError::InvalidInterpolation(
+                    "unmatched '}'".to_string(),
+                    (self.line, self.col),
+                ));
+            }
+
+            current.push(c);
+            self.read_char();
+        }
+
+        if self.peek_char() != Some('"') {
+            return Err(LexerError::UnterminatedString((self.line, self.col)));
+        }
+
+        if !current.is_empty() {
+            parts.push(InterpolatedStringPart::Literal(current));
+        }
+
+        self.read_char(); // Skip closing "
+        Ok(parts)
+    }
+
+    fn read_interpolation_expr(&mut self) -> Result<String, LexerError> {
+        let mut expr = String::new();
+        let mut depth = 1;
+        let mut in_string = false;
+        let mut in_char = false;
+        let mut in_line_comment = false;
+        let mut in_block_comment = false;
+
+        while let Some(c) = self.peek_char() {
+            if in_line_comment {
+                expr.push(c);
+                self.read_char();
+                if c == '\n' {
+                    in_line_comment = false;
+                }
+                continue;
+            }
+
+            if in_block_comment {
+                if c == '*' && self.peek_char2() == Some('/') {
+                    expr.push('*');
+                    self.read_char();
+                    expr.push('/');
+                    self.read_char();
+                    in_block_comment = false;
+                    continue;
+                }
+                expr.push(c);
+                self.read_char();
+                continue;
+            }
+
+            if in_string {
+                expr.push(c);
+                self.read_char();
+                if c == '\\' {
+                    if let Some(next) = self.peek_char() {
+                        expr.push(next);
+                        self.read_char();
+                    }
+                    continue;
+                }
+                if c == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+
+            if in_char {
+                expr.push(c);
+                self.read_char();
+                if c == '\\' {
+                    if let Some(next) = self.peek_char() {
+                        expr.push(next);
+                        self.read_char();
+                    }
+                    continue;
+                }
+                if c == '\'' {
+                    in_char = false;
+                }
+                continue;
+            }
+
+            if c == '"' {
+                in_string = true;
+                expr.push(c);
+                self.read_char();
+                continue;
+            }
+
+            if c == '\'' {
+                in_char = true;
+                expr.push(c);
+                self.read_char();
+                continue;
+            }
+
+            if c == '/' && self.peek_char2() == Some('/') {
+                in_line_comment = true;
+                expr.push('/');
+                self.read_char();
+                expr.push('/');
+                self.read_char();
+                continue;
+            }
+
+            if c == '/' && self.peek_char2() == Some('*') {
+                in_block_comment = true;
+                expr.push('/');
+                self.read_char();
+                expr.push('*');
+                self.read_char();
+                continue;
+            }
+
+            if c == '{' {
+                depth += 1;
+                expr.push(c);
+                self.read_char();
+                continue;
+            }
+
+            if c == '}' {
+                depth -= 1;
+                if depth == 0 {
+                    self.read_char();
+                    return Ok(expr);
+                }
+                expr.push(c);
+                self.read_char();
+                continue;
+            }
+
+            expr.push(c);
+            self.read_char();
+        }
+
+        Err(LexerError::UnterminatedInterpolation((self.line, self.col)))
+    }
+
     pub fn next_token(&mut self) -> Token {
         self.skip_whitespace();
 
@@ -487,6 +797,29 @@ impl Lexer {
             }
             Some('"') => match self.read_string() {
                 Ok(string) => TokenType::StringLiteral(string),
+                Err(err) => {
+                    self.errors.push(err);
+                    TokenType::EOF
+                }
+            },
+
+            Some('f') if self.peek_char2() == Some('"') => match self.read_interpolated_string() {
+                Ok(parts) => {
+                    let has_expr = parts
+                        .iter()
+                        .any(|part| matches!(part, InterpolatedStringPart::Expr(_)));
+                    if has_expr {
+                        TokenType::InterpolatedString(parts)
+                    } else {
+                        let mut literal = String::new();
+                        for part in parts {
+                            if let InterpolatedStringPart::Literal(chunk) = part {
+                                literal.push_str(&chunk);
+                            }
+                        }
+                        TokenType::StringLiteral(literal)
+                    }
+                }
                 Err(err) => {
                     self.errors.push(err);
                     TokenType::EOF

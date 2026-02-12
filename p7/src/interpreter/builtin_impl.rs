@@ -5,6 +5,13 @@ use crate::{
 
 pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("string.len_bytes".to_string(), string_len_bytes);
+    ctx.register_host_function("string.display".to_string(), string_display);
+    ctx.register_host_function("string.concat".to_string(), string_concat);
+    ctx.register_host_function("display.int".to_string(), display_int);
+    ctx.register_host_function("display.float".to_string(), display_float);
+    ctx.register_host_function("display.bool".to_string(), display_bool);
+    ctx.register_host_function("display.char".to_string(), display_char);
+    ctx.register_host_function("display.unit".to_string(), display_unit);
     ctx.register_host_function("array.new".to_string(), array_new);
     ctx.register_host_function("array.index".to_string(), array_index);
     ctx.register_host_function("array.get".to_string(), array_get);
@@ -36,6 +43,173 @@ fn string_len_bytes(ctx: &mut Context) -> ContextResult<()> {
         _ => Err(RuntimeError::Other(format!(
             "string.len_bytes expected string, found {:?}",
             string_val
+        ))),
+    }
+}
+
+fn string_display(ctx: &mut Context) -> ContextResult<()> {
+    let string_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::Other(
+            "string.display: missing self parameter".to_string(),
+        ))?;
+
+    match string_val {
+        Data::String(s) => {
+            ctx.stack_frame_mut()?.stack.push(Data::String(s));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(format!(
+            "string.display expected string, found {:?}",
+            string_val
+        ))),
+    }
+}
+
+fn string_concat(ctx: &mut Context) -> ContextResult<()> {
+    let other_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::Other(
+            "string.concat: missing other parameter".to_string(),
+        ))?;
+    let self_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::Other(
+            "string.concat: missing self parameter".to_string(),
+        ))?;
+
+    match (self_val, other_val) {
+        (Data::String(a), Data::String(b)) => {
+            ctx.stack_frame_mut()?.stack.push(Data::String(format!("{}{}", a, b)));
+            Ok(())
+        }
+        (Data::String(_), other) => Err(RuntimeError::Other(format!(
+            "string.concat expected string, found {:?}",
+            other
+        ))),
+        (other, _) => Err(RuntimeError::Other(format!(
+            "string.concat expected string, found {:?}",
+            other
+        ))),
+    }
+}
+
+fn display_int(ctx: &mut Context) -> ContextResult<()> {
+    let value = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::Other(
+            "display.int: missing value".to_string(),
+        ))?;
+
+    match value {
+        Data::Int(v) => {
+            ctx.stack_frame_mut()?.stack.push(Data::String(v.to_string()));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(format!(
+            "display.int expected int, found {:?}",
+            value
+        ))),
+    }
+}
+
+fn display_float(ctx: &mut Context) -> ContextResult<()> {
+    let value = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::Other(
+            "display.float: missing value".to_string(),
+        ))?;
+
+    match value {
+        Data::Float(v) => {
+            ctx.stack_frame_mut()?.stack.push(Data::String(v.to_string()));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(format!(
+            "display.float expected float, found {:?}",
+            value
+        ))),
+    }
+}
+
+fn display_bool(ctx: &mut Context) -> ContextResult<()> {
+    let value = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::Other(
+            "display.bool: missing value".to_string(),
+        ))?;
+
+    match value {
+        Data::Int(v) => {
+            let text = if v == 0 { "false" } else { "true" };
+            ctx.stack_frame_mut()?.stack.push(Data::String(text.to_string()));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(format!(
+            "display.bool expected bool, found {:?}",
+            value
+        ))),
+    }
+}
+
+fn display_char(ctx: &mut Context) -> ContextResult<()> {
+    let value = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::Other(
+            "display.char: missing value".to_string(),
+        ))?;
+
+    match value {
+        Data::Int(v) => {
+            let ch = char::from_u32(v as u32).ok_or_else(|| {
+                RuntimeError::Other(format!(
+                    "display.char expected valid unicode scalar, found {}",
+                    v
+                ))
+            })?;
+            ctx.stack_frame_mut()?.stack.push(Data::String(ch.to_string()));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(format!(
+            "display.char expected char, found {:?}",
+            value
+        ))),
+    }
+}
+
+fn display_unit(ctx: &mut Context) -> ContextResult<()> {
+    let value = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::Other(
+            "display.unit: missing value".to_string(),
+        ))?;
+
+    match value {
+        Data::Int(_) => {
+            ctx.stack_frame_mut()?
+                .stack
+                .push(Data::String("()".to_string()));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(format!(
+            "display.unit expected unit, found {:?}",
+            value
         ))),
     }
 }

@@ -138,11 +138,20 @@ pub struct EnumVariant {
 pub type StatementBlock = Vec<Statement>;
 
 #[derive(Debug, PartialEq, Clone)]
+pub enum InterpolatedStringPart {
+    Literal(String),
+    Expr(Expression),
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
     Identifier(Identifier),
     IntegerLiteral(i64),
     FloatLiteral(f64),
     StringLiteral(String),
+    InterpolatedString {
+        parts: Vec<InterpolatedStringPart>,
+    },
     BooleanLiteral(bool),
     NullLiteral,
     Unary {
@@ -312,6 +321,7 @@ impl Expression {
         match self {
             Expression::Identifier(identifier) => identifier.name.clone(),
             Expression::NullLiteral => "null".to_string(),
+            Expression::InterpolatedString { .. } => "interpolated_string".to_string(),
             Expression::ForceUnwrap { operand, .. } => format!("{}!", operand.get_name()),
             Expression::FunctionCall(function_call) => function_call.callee.get_name(),
             Expression::FieldAccess { object, field } => {
@@ -344,6 +354,7 @@ impl Expression {
         match self {
             Expression::Identifier(identifier) => (identifier.line, identifier.col),
             Expression::ForceUnwrap { token, .. } => (token.line, token.col),
+            Expression::InterpolatedString { .. } => (0, 0),
             Expression::FunctionCall(function_call) => function_call.callee.get_pos(),
             Expression::FieldAccess { object: _, field } => (field.line, field.col),
             Expression::Ref(expr) => expr.get_pos(),

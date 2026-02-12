@@ -1,15 +1,14 @@
-use crate::ast::Identifier;
+use crate::ast::{Expression, FunctionCall, Identifier, InterpolatedStringPart};
 use crate::errors::SemanticError;
 use crate::errors::SourcePos;
 use crate::lexer::Token;
 use crate::{
-    ast::Expression,
     bytecode::Instruction,
     lexer::TokenType,
     semantic::{PrimitiveType, Type, TypeDefinition},
 };
 
-use super::{Generator, LoopContext, SaResult};
+use super::{Generator, SaResult};
 
 impl Generator {
     /// Creates a SourcePos from line and column numbers
@@ -113,6 +112,7 @@ impl Generator {
                 Ok(Type::Primitive(PrimitiveType::Float))
             }
             Expression::StringLiteral(value) => self.generate_string_literal(value),
+            Expression::InterpolatedString { parts } => self.generate_interpolated_string(parts),
             Expression::BooleanLiteral(value) => {
                 self.builder.ldi(if value { 1 } else { 0 });
                 Ok(Type::Primitive(PrimitiveType::Bool))
@@ -175,6 +175,56 @@ impl Generator {
                 self.generate_force_unwrap(*operand, token)
             }
         }
+    }
+
+    fn generate_interpolated_string(
+        &mut self,
+        parts: Vec<InterpolatedStringPart>,
+    ) -> SaResult<Type> {
+        let concat_id = self.add_string_constant("string.concat".to_string());
+        let mut has_value = false;
+
+        for part in parts {
+            let part_ty = match part {
+                InterpolatedStringPart::Literal(value) => self.generate_string_literal(value)?,
+                InterpolatedStringPart::Expr(expr) => {
+                    let display_call = Expression::FunctionCall(FunctionCall {
+                        callee: Box::new(Expression::FieldAccess {
+                            object: Box::new(expr),
+                            field: Identifier {
+                                name: "display".to_string(),
+                                line: 0,
+                                col: 0,
+                            },
+                        }),
+                        arguments: vec![],
+                    });
+
+                    self.generate_expression(display_call)?
+                }
+            };
+
+            if part_ty != Type::Primitive(PrimitiveType::String) {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: self.type_to_string(&part_ty),
+                    rhs: "string".to_string(),
+                    pos: None,
+                });
+            }
+
+            if has_value {
+                self.builder.call_host_function(concat_id);
+            } else {
+                has_value = true;
+            }
+        }
+
+        if !has_value {
+            let empty_id = self.add_string_constant(String::new());
+            self.builder.lds(empty_id);
+        }
+
+        Ok(Type::Primitive(PrimitiveType::String))
     }
 
     /// Generate an expression with an expected type hint.

@@ -140,11 +140,38 @@ impl Generator {
                 self.builder.call_host_function(string_id);
                 Ok(function_def.return_type.clone())
             }
-            _ => {
-                return Err(SemanticError::FunctionNotFound {
-                    name: format!("{:?}.{}", prim_ty, field.name),
-                    pos: field.pos(),
-                });
+            PrimitiveType::Int
+            | PrimitiveType::Float
+            | PrimitiveType::Bool
+            | PrimitiveType::Char
+            | PrimitiveType::Unit => {
+                if field.name != "display" {
+                    return Err(SemanticError::FunctionNotFound {
+                        name: format!("{:?}.{}", prim_ty, field.name),
+                        pos: field.pos(),
+                    });
+                }
+
+                if !arguments.is_empty() {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "0 args expected".to_string(),
+                        rhs: format!("{} provided", arguments.len()),
+                        pos: SourcePos::at(call_line, call_col),
+                    });
+                }
+
+                let intrinsic_name = match prim_ty {
+                    PrimitiveType::Int => "display.int",
+                    PrimitiveType::Float => "display.float",
+                    PrimitiveType::Bool => "display.bool",
+                    PrimitiveType::Char => "display.char",
+                    PrimitiveType::Unit => "display.unit",
+                    PrimitiveType::String => unreachable!(),
+                };
+
+                let string_id = self.add_string_constant(intrinsic_name.to_string());
+                self.builder.call_host_function(string_id);
+                Ok(Type::Primitive(PrimitiveType::String))
             }
         }
     }

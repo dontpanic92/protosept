@@ -6,12 +6,24 @@ struct builtin();
 
 struct intrinsic(pub name: string);
 
+proto Display {
+    fn display(ref self) -> string;
+}
+
 @builtin()
 pub struct string() {
 
     // Return the byte length (UTF-8 encoded) of the string
     @intrinsic(name="string.len_bytes")
     pub fn len_bytes(self: ref<string>) -> int;
+
+    // Convert to string for Display
+    @intrinsic(name="string.display")
+    pub fn display(ref self) -> string;
+
+    // Concatenate two strings
+    @intrinsic(name="string.concat")
+    pub fn concat(ref self, other: string) -> string;
 }
 
 @builtin()

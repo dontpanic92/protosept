@@ -2,11 +2,11 @@ use std::ops::Deref;
 
 use crate::ast::{
     Attribute, Effect, EnumVariant, Expression, FunctionCall, FunctionDeclaration, Identifier,
-    NamedPattern, Parameter, Pattern, ProtoMethod, Statement, StructField, StructMethod, Type,
-    TypeParameter,
+    InterpolatedStringPart, NamedPattern, Parameter, Pattern, ProtoMethod, Statement,
+    StructField, StructMethod, Type, TypeParameter,
 };
 use crate::errors::{ParseError, SourcePos};
-use crate::lexer::{Token, TokenType};
+use crate::lexer::{InterpolatedStringPart as LexInterpolatedStringPart, Lexer, Token, TokenType};
 
 const UNARY_OPERATIONS: &[TokenType] = &[
     TokenType::Not,
@@ -271,6 +271,10 @@ impl Parser {
                     self.consume();
                     Expression::StringLiteral(value.clone())
                 }
+                TokenType::InterpolatedString(parts) => {
+                    self.consume();
+                    self.parse_interpolated_string(parts.clone())?
+                }
                 TokenType::Null => {
                     self.consume();
                     Expression::NullLiteral
@@ -383,6 +387,85 @@ impl Parser {
         };
 
         self.parse_expression_suffix(expression)
+    }
+
+    fn parse_interpolated_string(
+        &mut self,
+        parts: Vec<LexInterpolatedStringPart>,
+    ) -> ParseResult<Expression> {
+        let mut ast_parts = Vec::new();
+
+        for part in parts {
+            match part {
+                LexInterpolatedStringPart::Literal(text) => {
+                    ast_parts.push(InterpolatedStringPart::Literal(text));
+                }
+                LexInterpolatedStringPart::Expr(source) => {
+                    let expr = self.parse_interpolated_expression(source)?;
+                    ast_parts.push(InterpolatedStringPart::Expr(expr));
+                }
+            }
+        }
+
+        let has_expr = ast_parts
+            .iter()
+            .any(|part| matches!(part, InterpolatedStringPart::Expr(_)));
+
+        if !has_expr {
+            let mut combined = String::new();
+            for part in ast_parts {
+                if let InterpolatedStringPart::Literal(text) = part {
+                    combined.push_str(&text);
+                }
+            }
+            return Ok(Expression::StringLiteral(combined));
+        }
+
+        Ok(Expression::InterpolatedString { parts: ast_parts })
+    }
+
+    fn parse_interpolated_expression(&mut self, source: String) -> ParseResult<Expression> {
+        if source.trim().is_empty() {
+            return Err(ParseError::UnexpectedToken {
+                found: "empty interpolation expression".to_string(),
+                pos: None,
+            });
+        }
+
+        let mut lexer = Lexer::new(source);
+        let mut tokens = Vec::new();
+
+        loop {
+            let token = lexer.next_token();
+            let is_eof = matches!(token.token_type, TokenType::EOF);
+            tokens.push(token);
+            if is_eof {
+                break;
+            }
+        }
+
+        if let Some(err) = lexer.errors.first() {
+            return Err(ParseError::UnexpectedToken {
+                found: format!("interpolated expression lexer error: {}", err),
+                pos: None,
+            });
+        }
+
+        let mut parser = Parser::new(tokens);
+        let expr = parser.parse_expression()?;
+
+        if !parser.peek_match(TokenType::EOF) {
+            let token = parser.peek().unwrap();
+            return Err(ParseError::UnexpectedToken {
+                found: format!("{:?}", token.token_type),
+                pos: Some(SourcePos {
+                    line: token.line,
+                    col: token.col,
+                }),
+            });
+        }
+
+        Ok(expr)
     }
 
     fn parse_function_call(&mut self, identifier: Expression) -> ParseResult<Expression> {
