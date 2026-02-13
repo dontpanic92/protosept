@@ -92,6 +92,10 @@ impl Generator {
     }
 
     pub fn generate(&mut self, statements: Vec<Statement>) -> SaResult<Module> {
+        // Eagerly load the builtin module so that builtin intrinsic functions
+        // (e.g. __script_dir__) are in scope for all user code.
+        self.load_builtin();
+
         for statement in statements {
             self.generate_statement(statement)?;
         }
@@ -170,6 +174,11 @@ impl Generator {
         if let Some(source) = self.module_provider.load_module(MODULE_PATH) {
             match self.compile_module(MODULE_PATH, source) {
                 Ok(module) => {
+                    // Import top-level public functions from the builtin module
+                    // into the main symbol table so they can be called without
+                    // a module qualifier (e.g. `__script_dir__()`).
+                    self.import_builtin_functions(&module);
+
                     // Store the compiled module
                     self.imported_modules
                         .insert(MODULE_PATH.to_string(), module);
@@ -183,6 +192,43 @@ impl Generator {
                 "Builtin module '{}' not found in module provider",
                 MODULE_PATH
             );
+        }
+    }
+
+    /// Import top-level public intrinsic functions from the builtin module into
+    /// the main generator's symbol table so they are callable without a module
+    /// qualifier (e.g. `__script_dir__()`).
+    fn import_builtin_functions(&mut self, module: &Module) {
+        let Some(root) = module.symbols.get(0) else {
+            return;
+        };
+
+        for (_name, child_id) in &root.children {
+            let Some(sym) = module.symbols.get(*child_id as usize) else {
+                continue;
+            };
+            let SymbolKind::Function { func_id, address } = &sym.kind else {
+                continue;
+            };
+            let Some(func) = module.functions.get(*func_id as usize) else {
+                continue;
+            };
+            // Only import intrinsic functions (those are the ones we can actually
+            // execute at runtime via InvokeHost).
+            if func.intrinsic_name.is_none() {
+                continue;
+            }
+            // Register the function in the main symbol table
+            let new_func_id = self.symbol_table.add_function(func.clone());
+            let new_symbol = crate::semantic::Symbol::new(
+                sym.name.clone(),
+                sym.qualified_name.clone(),
+                SymbolKind::Function {
+                    func_id: new_func_id,
+                    address: *address,
+                },
+            );
+            self.symbol_table.insert_symbol(new_symbol);
         }
     }
 

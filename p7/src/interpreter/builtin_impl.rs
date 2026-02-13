@@ -21,6 +21,22 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("array.clear".to_string(), array_clear);
     ctx.register_host_function("array.pop".to_string(), array_pop);
     ctx.register_host_function("array.set".to_string(), array_set);
+    ctx.register_host_function("builtin.entry_script_dir".to_string(), builtin_entry_script_dir);
+}
+
+fn builtin_entry_script_dir(ctx: &mut Context) -> ContextResult<()> {
+    match ctx.script_dir() {
+        Some(dir) => {
+            let dir_string = dir.to_string();
+            ctx.stack_frame_mut()?
+                .stack
+                .push(Data::Some(Box::new(Data::String(dir_string))));
+        }
+        None => {
+            ctx.stack_frame_mut()?.stack.push(Data::Null);
+        }
+    }
+    Ok(())
 }
 
 fn string_len_bytes(ctx: &mut Context) -> ContextResult<()> {

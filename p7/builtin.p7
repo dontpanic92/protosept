@@ -66,3 +66,8 @@ pub struct array<T>() {
     @intrinsic(name="array.set")
     pub fn set(box self, i: int, elem: T) -> ?T;
 }
+
+// Return the containing directory of the entry script, or null if the script
+// did not originate from a filesystem path (e.g. REPL, in-memory).
+@intrinsic(name="builtin.entry_script_dir")
+pub fn __entry_script_dir__() -> ?string;

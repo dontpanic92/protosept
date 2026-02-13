@@ -1,6 +1,9 @@
 @intrinsic(name="std.io.println")
 pub fn[throws] println(s: string);
 
+@intrinsic(name="std.io.read_file")
+pub fn read_file(path: string) -> ?string;
+
 pub fn[throws] println2(s: string) {
     println(s)
 }

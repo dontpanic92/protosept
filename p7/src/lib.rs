@@ -138,7 +138,25 @@ pub fn run(
     module: bytecode::Module,
     entrypoint: &str,
 ) -> Result<interpreter::context::Data, Proto7Error> {
+    run_with_options(module, entrypoint, RunOptions::default())
+}
+
+/// Options for configuring the runtime execution environment.
+#[derive(Debug, Clone, Default)]
+pub struct RunOptions {
+    /// The containing directory of the entry script, if it originates from a
+    /// filesystem path.  When set, the built-in `__script_dir__` identifier
+    /// evaluates to `Some(dir)` at runtime; otherwise it is `null`.
+    pub script_dir: Option<String>,
+}
+
+pub fn run_with_options(
+    module: bytecode::Module,
+    entrypoint: &str,
+    options: RunOptions,
+) -> Result<interpreter::context::Data, Proto7Error> {
     let mut context = interpreter::context::Context::new();
+    context.set_script_dir(options.script_dir);
     context.load_module(module);
     context.push_function(entrypoint, Vec::new());
     context.resume().map_err(|e| Proto7Error::RuntimeError(e))?;
@@ -167,4 +185,14 @@ pub fn compile_and_run_with_provider(
 ) -> Result<interpreter::context::Data, Proto7Error> {
     let module = compile_with_provider(contents, provider)?;
     run(module, entrypoint)
+}
+
+pub fn compile_and_run_with_provider_and_options(
+    contents: String,
+    entrypoint: &str,
+    provider: Box<dyn ModuleProvider>,
+    options: RunOptions,
+) -> Result<interpreter::context::Data, Proto7Error> {
+    let module = compile_with_provider(contents, provider)?;
+    run_with_options(module, entrypoint, options)
 }

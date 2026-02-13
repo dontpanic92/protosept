@@ -196,6 +196,8 @@ pub struct Context {
     host_functions: HashMap<String, HostFunction>,
     // Imported modules registry: module_path -> module_index in modules Vec
     imported_modules: HashMap<String, usize>,
+    // Optional containing directory of the entry script (filesystem-only)
+    script_dir: Option<String>,
 }
 
 impl Context {
@@ -210,11 +212,23 @@ impl Context {
             vtable: HashMap::new(),
             host_functions: HashMap::new(),
             imported_modules: HashMap::new(),
+            script_dir: None,
         };
 
         // Register builtin host functions
         ctx.register_builtin_host_functions();
         ctx
+    }
+
+    /// Set the containing directory of the entry script (filesystem-only).
+    /// When set, `__script_dir__` evaluates to `Some(dir)` at runtime.
+    pub fn set_script_dir(&mut self, dir: Option<String>) {
+        self.script_dir = dir;
+    }
+
+    /// Get the script directory, if set.
+    pub fn script_dir(&self) -> Option<&str> {
+        self.script_dir.as_deref()
     }
 
     /// Register all builtin host functions

@@ -4,8 +4,40 @@ use p7::{
     errors::Proto7Error,
     interpreter::context::Data as P7Value,
     semantic::SymbolKind,
+    RunOptions,
 };
 use std::{fs, path::PathBuf};
+
+use crate::module_provider::FileSystemModuleProvider;
+
+/// Composite module provider: tries in-memory modules first, then falls back
+/// to filesystem resolution (for std.* and other on-disk modules).
+#[derive(Clone)]
+struct CompositeModuleProvider {
+    in_mem: InMemoryModuleProvider,
+    fs: FileSystemModuleProvider,
+}
+
+impl CompositeModuleProvider {
+    fn new(in_mem: InMemoryModuleProvider, test_file: &PathBuf) -> Self {
+        Self {
+            in_mem,
+            fs: FileSystemModuleProvider::new(test_file.as_path()),
+        }
+    }
+}
+
+impl p7::ModuleProvider for CompositeModuleProvider {
+    fn load_module(&self, module_path: &str) -> Option<String> {
+        self.in_mem
+            .load_module(module_path)
+            .or_else(|| self.fs.load_module(module_path))
+    }
+
+    fn clone_boxed(&self) -> Box<dyn p7::ModuleProvider> {
+        Box::new(self.clone())
+    }
+}
 
 // Define the test modules that will be provided in-memory
 const TEST_MODULE_SOURCE: &str = r#"
@@ -125,9 +157,10 @@ fn find_test_cases(module: &p7::bytecode::Module) -> Vec<TestCase> {
 fn run_test_case(
     module: p7::bytecode::Module,
     test_case: &TestCase,
+    options: RunOptions,
 ) -> Result<TestResult, Proto7Error> {
     let disassembly = unp7::disassemble_module(&module);
-    let p7_result = match p7::run(module, &test_case.function_name) {
+    let p7_result = match p7::run_with_options(module, &test_case.function_name, options) {
         Ok(value) => value,
         Err(e) => {
             println!("Disassembly of the module before error:\n{}", disassembly);
@@ -190,12 +223,19 @@ fn run_test_case(
 fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestResult)>> {
     let content = fs::read_to_string(file_path)?;
 
-    // Create module provider with the test module
-    // The module is registered as "test" which contains symbols like "test" and "test2"
-    let mut module_provider = InMemoryModuleProvider::new();
-    module_provider.add_module("test".to_string(), TEST_MODULE_SOURCE.to_string());
-    module_provider.add_module("foo".to_string(), FOO_MODULE_SOURCE.to_string());
-    module_provider.add_module("foo.bar_mod".to_string(), FOO_BAR_MOD_SOURCE.to_string());
+    // Compute the script directory for __script_dir__
+    let script_dir = file_path
+        .parent()
+        .and_then(|p| p.canonicalize().ok())
+        .or_else(|| file_path.parent().map(|p| p.to_path_buf()))
+        .map(|p| p.to_string_lossy().into_owned());
+
+    // Create a composite module provider: in-memory test modules + filesystem std
+    let mut in_mem = InMemoryModuleProvider::new();
+    in_mem.add_module("test".to_string(), TEST_MODULE_SOURCE.to_string());
+    in_mem.add_module("foo".to_string(), FOO_MODULE_SOURCE.to_string());
+    in_mem.add_module("foo.bar_mod".to_string(), FOO_BAR_MOD_SOURCE.to_string());
+    let module_provider = CompositeModuleProvider::new(in_mem, file_path);
 
     // Compile-fail tests: add `// compile_fail` anywhere in the file.
     if content
@@ -254,7 +294,7 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
             }
         };
 
-        match run_test_case(test_module, &test_case) {
+        match run_test_case(test_module, &test_case, RunOptions { script_dir: script_dir.clone() }) {
             Ok(result) => results.push((test_case.function_name.clone(), result)),
             Err(e) => results.push((
                 test_case.function_name.clone(),

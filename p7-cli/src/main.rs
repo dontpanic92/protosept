@@ -57,7 +57,18 @@ fn run_script(script_path: &Path, _script_args: &[String]) -> Result<(), String>
     let contents = read_script(script_path)?;
     let provider = FileSystemModuleProvider::new(script_path);
 
-    p7::compile_and_run_with_provider(contents, "main", Box::new(provider))
+    // Compute the containing directory of the script for __script_dir__
+    let script_dir = script_path
+        .parent()
+        .and_then(|p| p.canonicalize().ok())
+        .or_else(|| script_path.parent().map(|p| p.to_path_buf()))
+        .map(|p| p.to_string_lossy().into_owned());
+
+    let options = p7::RunOptions {
+        script_dir,
+    };
+
+    p7::compile_and_run_with_provider_and_options(contents, "main", Box::new(provider), options)
         .map(|_result| ())
         .map_err(|e| format!("Error: {e}"))
 }
