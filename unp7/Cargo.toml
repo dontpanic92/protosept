@@ -2,6 +2,7 @@
 name = "unp7"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 p7 = { path = "../p7" }

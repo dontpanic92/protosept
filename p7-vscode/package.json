@@ -3,6 +3,7 @@
   "displayName": "Protosept",
   "description": "Language support for p7 (Protosept).",
   "version": "0.1.0",
+  "license": "MIT",
   "publisher": "protosept",
   "engines": {
     "vscode": "^1.85.0"

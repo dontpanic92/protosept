@@ -198,6 +198,10 @@ The VS Code extension lives in `p7-vscode/` and currently provides:
 - basic bracket/comment configuration
 - a TextMate grammar for syntax highlighting
 
+## License
+
+MIT. See `LICENSE`.
+
 To try it locally, open `p7-vscode/` in VS Code and use the extension development workflow (Run → Start Debugging).
 
 ## Status / known limitations
