@@ -2,4 +2,5 @@
 .idx
 .vscode
 *.md
+!README.md
 !specs/*.md
