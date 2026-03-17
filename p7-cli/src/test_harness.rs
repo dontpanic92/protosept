@@ -279,20 +279,8 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
 
     let mut results = Vec::new();
     for test_case in test_cases {
-        // Clone module for each test
-        let test_module = match p7::compile_with_provider(
-            content.as_str().to_string(),
-            Box::new(module_provider.clone()),
-        ) {
-            Ok(m) => m,
-            Err(e) => {
-                results.push((
-                    test_case.function_name.clone(),
-                    TestResult::Failure(FailureReason::ExecutionError(e)),
-                ));
-                continue;
-            }
-        };
+        // Reuse the already-compiled module (clone is cheap compared to recompilation)
+        let test_module = module.clone();
 
         match run_test_case(test_module, &test_case, RunOptions { script_dir: script_dir.clone() }) {
             Ok(result) => results.push((test_case.function_name.clone(), result)),
