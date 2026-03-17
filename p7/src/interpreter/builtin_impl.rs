@@ -14,6 +14,7 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("string.index_of".to_string(), string_index_of);
     ctx.register_host_function("string.starts_with".to_string(), string_starts_with);
     ctx.register_host_function("string.contains".to_string(), string_contains);
+    ctx.register_host_function("string.ends_with".to_string(), string_ends_with);
     ctx.register_host_function("display.int".to_string(), display_int);
     ctx.register_host_function("display.float".to_string(), display_float);
     ctx.register_host_function("display.bool".to_string(), display_bool);
@@ -845,6 +846,22 @@ fn string_contains(ctx: &mut Context) -> ContextResult<()> {
         }
         _ => Err(RuntimeError::Other(
             "string.contains: invalid argument types".to_string(),
+        )),
+    }
+}
+
+fn string_ends_with(ctx: &mut Context) -> ContextResult<()> {
+    let suffix_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let self_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+
+    match (self_val, suffix_val) {
+        (Data::String(s), Data::String(suffix)) => {
+            let result = if s.ends_with(&suffix) { 1 } else { 0 };
+            ctx.stack_frame_mut()?.stack.push(Data::Int(result));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "string.ends_with: invalid argument types".to_string(),
         )),
     }
 }
