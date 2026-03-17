@@ -275,6 +275,12 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
         Instruction::IsNull => format!("{}  is_null", offset_hex),
         Instruction::ForceUnwrap => format!("{}  force_unwrap", offset_hex),
         Instruction::NullCoalesce => format!("{}  null_coalesce", offset_hex),
+        Instruction::MakeClosure(func_addr, capture_count) => {
+            format!("{}  make_closure func@{} captures={}", offset_hex, func_addr, capture_count)
+        }
+        Instruction::CallClosure(arg_count) => {
+            format!("{}  call_closure args={}", offset_hex, arg_count)
+        }
     }
 }
 

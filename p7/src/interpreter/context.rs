@@ -41,6 +41,11 @@ pub enum Data {
     Null,
     /// Some(value) for nullable types
     Some(Box<Data>),
+    /// Closure value: function address + captured values
+    Closure {
+        func_addr: u32,
+        captures: Vec<Data>,
+    },
 }
 
 impl From<i64> for Data {
@@ -104,6 +109,9 @@ macro_rules! arithmetic_op {
                 // Arithmetic on nullable values is invalid.
                 return Err(RuntimeError::Other("Arithmetic on nullable value".to_string()));
             }
+            (Data::Closure { .. }, _) | (_, Data::Closure { .. }) => {
+                return Err(RuntimeError::Other("Arithmetic on closure".to_string()));
+            }
         }
     };
 }
@@ -160,6 +168,9 @@ macro_rules! comparison_op {
             }
             (Data::Null, _) | (_, Data::Null) | (Data::Some(_), _) | (_, Data::Some(_)) => {
                 return Err(RuntimeError::Other("Comparison on nullable value".to_string()));
+            }
+            (Data::Closure { .. }, _) | (_, Data::Closure { .. }) => {
+                return Err(RuntimeError::Other("Comparison on closure".to_string()));
             }
         }
     };
@@ -483,6 +494,11 @@ impl Context {
                                     "Cannot negate nullable value".to_string(),
                                 ));
                             }
+                            Data::Closure { .. } => {
+                                return Err(RuntimeError::Other(
+                                    "Cannot negate closure".to_string(),
+                                ));
+                            }
                         }
                     } else {
                         unimplemented!();
@@ -529,6 +545,11 @@ impl Context {
                             Data::Null | Data::Some(_) => {
                                 return Err(RuntimeError::Other(
                                     "Cannot apply logical NOT to nullable value".to_string(),
+                                ));
+                            }
+                            Data::Closure { .. } => {
+                                return Err(RuntimeError::Other(
+                                    "Cannot apply logical NOT to closure".to_string(),
                                 ));
                             }
                         }
@@ -1119,6 +1140,67 @@ impl Context {
                         }
                     }
                 }
+
+                Instruction::MakeClosure(func_addr, capture_count) => {
+                    let mut captures = Vec::new();
+                    for _ in 0..capture_count {
+                        let val = self
+                            .stack_frame_mut()?
+                            .stack
+                            .pop()
+                            .ok_or(RuntimeError::StackUnderflow)?;
+                        captures.push(val);
+                    }
+                    captures.reverse();
+                    self.stack_frame_mut()?.stack.push(Data::Closure {
+                        func_addr,
+                        captures,
+                    });
+                }
+
+                Instruction::CallClosure(arg_count) => {
+                    // Pop arguments
+                    let mut args = Vec::new();
+                    for _ in 0..arg_count {
+                        let val = self
+                            .stack_frame_mut()?
+                            .stack
+                            .pop()
+                            .ok_or(RuntimeError::StackUnderflow)?;
+                        args.push(val);
+                    }
+                    args.reverse();
+
+                    // Pop the closure value
+                    let closure = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+
+                    match closure {
+                        Data::Closure { func_addr, captures } => {
+                            let current_module_idx =
+                                self.stack.last().map(|f| f.module_idx).unwrap_or(0);
+                            // Create new frame. Params = captures + args
+                            let mut params = captures;
+                            params.extend(args);
+                            let frame = StackFrame {
+                                params,
+                                locals: Vec::new(),
+                                stack: Vec::new(),
+                                pc: func_addr as usize,
+                                module_idx: current_module_idx,
+                            };
+                            self.stack.push(frame);
+                        }
+                        _ => {
+                            return Err(RuntimeError::Other(
+                                "CallClosure on non-closure value".to_string(),
+                            ));
+                        }
+                    }
+                }
             }
         }
 
@@ -1226,15 +1308,25 @@ impl Context {
                 }
             }
             Data::StructRef(idx) => {
-                // Structs on the heap are always reachable (they're not GC'd)
-                // But we need to mark any boxes they contain
                 if let Some(struct_obj) = self.heap.get(*idx as usize) {
                     for field_data in &struct_obj.fields {
                         self.mark_data(field_data, marked);
                     }
                 }
             }
-            // Other data types don't contain references
+            Data::Array(elements) => {
+                for elem in elements {
+                    self.mark_data(elem, marked);
+                }
+            }
+            Data::Some(inner) => {
+                self.mark_data(inner, marked);
+            }
+            Data::Closure { captures, .. } => {
+                for capture in captures {
+                    self.mark_data(capture, marked);
+                }
+            }
             _ => {}
         }
     }
@@ -1337,6 +1429,15 @@ impl Context {
                     );
                 }
             },
+            Data::Array(elements) => {
+                Self::update_data_vec(elements, index_map);
+            }
+            Data::Some(inner) => {
+                Self::update_data(inner, index_map);
+            }
+            Data::Closure { captures, .. } => {
+                Self::update_data_vec(captures, index_map);
+            }
             _ => {}
         }
     }

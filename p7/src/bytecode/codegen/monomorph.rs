@@ -487,7 +487,6 @@ impl Generator {
                 ParsedType::Nullable(Box::new(self.substitute_parsed_type(inner, substitution)))
             }
             ParsedType::Generic { base, type_args } => {
-                // Recursively substitute in type arguments
                 let substituted_args: Vec<ParsedType> = type_args
                     .iter()
                     .map(|arg| self.substitute_parsed_type(arg, substitution))
@@ -495,6 +494,21 @@ impl Generator {
                 ParsedType::Generic {
                     base: base.clone(),
                     type_args: substituted_args,
+                }
+            }
+            ParsedType::Function {
+                param_types,
+                return_type,
+            } => {
+                let substituted_params: Vec<ParsedType> = param_types
+                    .iter()
+                    .map(|p| self.substitute_parsed_type(p, substitution))
+                    .collect();
+                let substituted_ret =
+                    self.substitute_parsed_type(return_type, substitution);
+                ParsedType::Function {
+                    param_types: substituted_params,
+                    return_type: Box::new(substituted_ret),
                 }
             }
         }

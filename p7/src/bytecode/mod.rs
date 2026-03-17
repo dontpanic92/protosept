@@ -188,6 +188,15 @@ pub enum Instruction {
     // Expects: [..., nullable, default] -> [..., value or default]
     #[brw(magic = 44u8)]
     NullCoalesce,
+
+    /// Create a closure value from a function address and captured values.
+    /// Pops capture_count values from the stack, creates Closure with func_addr.
+    #[brw(magic = 45u8)]
+    MakeClosure(u32, u32), // (func_addr, capture_count)
+
+    /// Call a closure value. Pops arg_count arguments, then the closure value.
+    #[brw(magic = 46u8)]
+    CallClosure(u32), // arg_count
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {

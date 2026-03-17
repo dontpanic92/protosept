@@ -266,7 +266,11 @@ impl Parser {
                     Expression::Block(statements)
                 }
                 TokenType::OpenParen => {
-                    // Parse parenthesized expression
+                    // Check if this is a closure: (params) => expr
+                    if self.is_closure_start() {
+                        return self.parse_closure_expression();
+                    }
+                    // Otherwise, parenthesized expression
                     self.consume(); // consume '('
                     let expr = self.parse_expression()?;
                     self.consume_match(TokenType::CloseParen)?;
@@ -568,6 +572,74 @@ impl Parser {
         }
 
         Ok(left)
+    }
+
+    /// Check if the current position starts a closure: `(` followed by `)` `=>` or
+    /// `identifier` `:` (parameter list pattern).
+    fn is_closure_start(&self) -> bool {
+        // Must start with '('
+        if !self.peek_match(TokenType::OpenParen) {
+            return false;
+        }
+        // Look ahead past the '(' 
+        let mut depth = 1;
+        let mut offset = 1; // start after '('
+        loop {
+            match self.peek_ahead(offset) {
+                Some(t) => {
+                    match t.token_type {
+                        TokenType::OpenParen => depth += 1,
+                        TokenType::CloseParen => {
+                            depth -= 1;
+                            if depth == 0 {
+                                // Found matching ')'. Check if next token is '=>'
+                                if let Some(next) = self.peek_ahead(offset + 1) {
+                                    return next.token_type == TokenType::FatRightArrow;
+                                }
+                                return false;
+                            }
+                        }
+                        _ => {}
+                    }
+                    offset += 1;
+                }
+                None => return false,
+            }
+        }
+    }
+
+    fn parse_closure_expression(&mut self) -> ParseResult<Expression> {
+        let open_pos = self.consume_expecting(TokenType::OpenParen)?;
+        let pos = (open_pos.0, open_pos.1);
+
+        // Parse parameter list
+        let mut parameters = Vec::new();
+        if !self.peek_match(TokenType::CloseParen) {
+            loop {
+                let param_name = self.parse_identifier()?;
+                self.consume_match(TokenType::Colon)?;
+                let param_type = self.parse_type()?;
+                parameters.push(Parameter {
+                    name: param_name,
+                    arg_type: param_type,
+                    default_value: None,
+                });
+                if self.consume_match(TokenType::Comma).is_err() {
+                    break;
+                }
+            }
+        }
+        self.consume_match(TokenType::CloseParen)?;
+        self.consume_match(TokenType::FatRightArrow)?;
+
+        // Parse body expression (can be block or single expr)
+        let body = self.parse_expression()?;
+
+        Ok(Expression::Closure {
+            parameters,
+            body: Box::new(body),
+            pos,
+        })
     }
 
     fn parse_if_expression(&mut self) -> ParseResult<Expression> {
@@ -1423,6 +1495,32 @@ impl Parser {
                     let ty = self.parse_type()?;
                     self.consume_match(TokenType::CloseBracket)?;
                     Ok(Type::Array(Box::new(ty)))
+                }
+                TokenType::Fn => {
+                    // fn(T1, T2) -> R function type
+                    self.consume(); // consume 'fn'
+                    self.consume_match(TokenType::OpenParen)?;
+                    let mut param_types = Vec::new();
+                    if !self.peek_match(TokenType::CloseParen) {
+                        param_types.push(self.parse_type()?);
+                        while self.consume_match(TokenType::Comma).is_ok() {
+                            param_types.push(self.parse_type()?);
+                        }
+                    }
+                    self.consume_match(TokenType::CloseParen)?;
+                    let return_type = if self.consume_match(TokenType::RightArrow).is_ok() {
+                        self.parse_type()?
+                    } else {
+                        Type::Identifier(Identifier {
+                            name: "unit".to_string(),
+                            line: 0,
+                            col: 0,
+                        })
+                    };
+                    Ok(Type::Function {
+                        param_types,
+                        return_type: Box::new(return_type),
+                    })
                 }
                 TokenType::Identifier(_) => {
                     let mut ident = self.parse_identifier()?;

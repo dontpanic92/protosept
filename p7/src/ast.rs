@@ -41,6 +41,11 @@ pub enum Type {
         type_args: Vec<Type>,
     },
     Nullable(Box<Type>),
+    /// Function type: fn(T1, T2) -> R or fn[effects](T1, T2) -> R
+    Function {
+        param_types: Vec<Type>,
+        return_type: Box<Type>,
+    },
 }
 
 impl Type {
@@ -63,6 +68,17 @@ impl Type {
             }
             Type::Nullable(n) => {
                 format!("?{}", n.get_name())
+            }
+            Type::Function {
+                param_types,
+                return_type,
+            } => {
+                let params = param_types
+                    .iter()
+                    .map(|t| t.get_name())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("fn({}) -> {}", params, return_type.get_name())
             }
         }
     }
@@ -240,6 +256,13 @@ pub enum Expression {
     ForceUnwrap {
         operand: Box<Expression>,
         token: Token,
+    },
+
+    // Closure literal: (p1: T1, p2: T2) => expr or (p1: T1) => { block }
+    Closure {
+        parameters: Vec<Parameter>,
+        body: Box<Expression>,
+        pos: (usize, usize),
     },
 }
 

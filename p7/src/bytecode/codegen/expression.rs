@@ -5,7 +5,7 @@ use crate::lexer::Token;
 use crate::{
     bytecode::Instruction,
     lexer::TokenType,
-    semantic::{PrimitiveType, Type, TypeDefinition},
+    semantic::{LocalSymbolScope, PrimitiveType, Type, TypeDefinition, Variable},
 };
 
 use super::{Generator, SaResult};
@@ -174,6 +174,11 @@ impl Generator {
             Expression::ForceUnwrap { operand, token } => {
                 self.generate_force_unwrap(*operand, token)
             }
+            Expression::Closure {
+                parameters,
+                body,
+                pos,
+            } => self.generate_closure(parameters, *body, pos),
         }
     }
 
@@ -1098,5 +1103,204 @@ impl Generator {
         self.builder.call_host_function(string_id);
 
         Ok(element_type)
+    }
+
+    fn generate_closure(
+        &mut self,
+        parameters: Vec<crate::ast::Parameter>,
+        body: Expression,
+        _pos: (usize, usize),
+    ) -> SaResult<Type> {
+        // Resolve parameter types
+        let params: Vec<Variable> = parameters
+            .iter()
+            .map(|p| {
+                self.get_semantic_type(&p.arg_type).map(|ty| Variable {
+                    name: p.name.name.clone(),
+                    ty,
+                    is_mutable: false,
+                })
+            })
+            .collect::<SaResult<Vec<_>>>()?;
+
+        let param_types: Vec<Type> = params.iter().map(|v| v.ty.clone()).collect();
+        let param_names: std::collections::HashSet<String> =
+            params.iter().map(|v| v.name.clone()).collect();
+
+        // Collect free variables: names referenced in body that exist in the
+        // enclosing scope but are not closure parameters
+        let mut free_vars: Vec<(String, Type, bool)> = Vec::new(); // (name, type, is_param)
+        let mut seen = std::collections::HashSet::new();
+        let referenced = Self::collect_identifiers(&body);
+
+        if let Some(scope) = &self.local_scope {
+            for name in &referenced {
+                if param_names.contains(name) || seen.contains(name) {
+                    continue;
+                }
+                if let Some(var_id) = scope.find_variable(name) {
+                    let ty = scope.get_variable_type(var_id).clone();
+                    free_vars.push((name.clone(), ty, false));
+                    seen.insert(name.clone());
+                } else if let Some(param_id) = scope.find_param(name) {
+                    let ty = scope.get_param_type(param_id).clone();
+                    free_vars.push((name.clone(), ty, true));
+                    seen.insert(name.clone());
+                }
+            }
+        }
+
+        let capture_count = free_vars.len() as u32;
+
+        // Build the closure's parameter list: captures first, then declared params
+        let mut closure_params: Vec<Variable> = free_vars
+            .iter()
+            .map(|(name, ty, _)| Variable {
+                name: name.clone(),
+                ty: ty.clone(),
+                is_mutable: false,
+            })
+            .collect();
+        closure_params.extend(params);
+
+        // Emit jump to skip over the closure body
+        let jump_placeholder = self.builder.next_address();
+        self.builder.jmp(0);
+
+        let func_addr = self.builder.next_address() as u32;
+
+        // Generate closure body with captures + params in scope
+        let saved_scope = self.local_scope.take();
+        self.local_scope = Some(LocalSymbolScope::new(closure_params));
+
+        let body_type = self.generate_expression(body)?;
+        self.builder.ret();
+
+        self.local_scope = saved_scope;
+
+        // Patch the jump
+        let after_body = self.builder.next_address() as u32;
+        self.builder.patch_jump_address(jump_placeholder as u32, after_body);
+
+        // Push captured values onto the stack (in order)
+        for (name, _ty, is_param) in &free_vars {
+            if let Some(scope) = &self.local_scope {
+                if *is_param {
+                    if let Some(param_id) = scope.find_param(name) {
+                        self.builder.ldpar(param_id);
+                    }
+                } else {
+                    if let Some(var_id) = scope.find_variable(name) {
+                        self.builder.ldvar(var_id);
+                    }
+                }
+            }
+        }
+
+        self.builder.make_closure(func_addr, capture_count);
+
+        Ok(Type::Function {
+            params: param_types,
+            return_type: Box::new(body_type),
+        })
+    }
+
+    /// Collect all identifier names referenced in an expression (shallow scan)
+    fn collect_identifiers(expr: &Expression) -> Vec<String> {
+        let mut names = Vec::new();
+        Self::collect_identifiers_recursive(expr, &mut names);
+        names
+    }
+
+    fn collect_identifiers_recursive(expr: &Expression, names: &mut Vec<String>) {
+        match expr {
+            Expression::Identifier(id) => {
+                names.push(id.name.clone());
+            }
+            Expression::Binary { left, right, .. } => {
+                Self::collect_identifiers_recursive(left, names);
+                Self::collect_identifiers_recursive(right, names);
+            }
+            Expression::Unary { right, .. } => {
+                Self::collect_identifiers_recursive(right, names);
+            }
+            Expression::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::collect_identifiers_recursive(condition, names);
+                Self::collect_identifiers_recursive(then_branch, names);
+                if let Some(eb) = else_branch {
+                    Self::collect_identifiers_recursive(eb, names);
+                }
+            }
+            Expression::FunctionCall(call) => {
+                Self::collect_identifiers_recursive(&call.callee, names);
+                for (_, arg) in &call.arguments {
+                    Self::collect_identifiers_recursive(arg, names);
+                }
+            }
+            Expression::FieldAccess { object, .. } => {
+                Self::collect_identifiers_recursive(object, names);
+            }
+            Expression::Block(stmts) => {
+                for stmt in stmts {
+                    match stmt {
+                        crate::ast::Statement::Expression(e) => {
+                            Self::collect_identifiers_recursive(e, names);
+                        }
+                        crate::ast::Statement::Let { expression, .. } => {
+                            Self::collect_identifiers_recursive(expression, names);
+                        }
+                        crate::ast::Statement::Return(e) => {
+                            Self::collect_identifiers_recursive(e, names);
+                        }
+                        crate::ast::Statement::Throw(e) => {
+                            Self::collect_identifiers_recursive(e, names);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Expression::ArrayLiteral { elements, .. } => {
+                for elem in elements {
+                    Self::collect_identifiers_recursive(elem, names);
+                }
+            }
+            Expression::ArrayIndex { array, index, .. } => {
+                Self::collect_identifiers_recursive(array, names);
+                Self::collect_identifiers_recursive(index, names);
+            }
+            Expression::ForceUnwrap { operand, .. } => {
+                Self::collect_identifiers_recursive(operand, names);
+            }
+            Expression::Ref(inner) => {
+                Self::collect_identifiers_recursive(inner, names);
+            }
+            Expression::Cast { expression, .. } => {
+                Self::collect_identifiers_recursive(expression, names);
+            }
+            Expression::Loop { body, .. } | Expression::While { body, .. } => {
+                Self::collect_identifiers_recursive(body, names);
+            }
+            Expression::Closure { body, .. } => {
+                Self::collect_identifiers_recursive(body, names);
+            }
+            Expression::Try { try_block, else_arms } => {
+                Self::collect_identifiers_recursive(try_block, names);
+                for arm in else_arms {
+                    Self::collect_identifiers_recursive(&arm.expression, names);
+                }
+            }
+            Expression::Match { scrutinee, arms } => {
+                Self::collect_identifiers_recursive(scrutinee, names);
+                for arm in arms {
+                    Self::collect_identifiers_recursive(&arm.expression, names);
+                }
+            }
+            _ => {}
+        }
     }
 }

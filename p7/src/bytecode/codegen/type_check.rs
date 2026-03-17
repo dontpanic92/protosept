@@ -257,6 +257,20 @@ impl Generator {
                     }
                 }
             }
+            ParsedType::Function {
+                param_types,
+                return_type,
+            } => {
+                let params = param_types
+                    .iter()
+                    .map(|pt| self.get_semantic_type(pt))
+                    .collect::<SaResult<Vec<Type>>>()?;
+                let ret = self.get_semantic_type(return_type)?;
+                Ok(Type::Function {
+                    params,
+                    return_type: Box::new(ret),
+                })
+            }
         }
     }
 
@@ -498,6 +512,10 @@ impl Generator {
             }
             Type::BoxType(inner) => format!("box<{}>", self.type_to_string(inner)),
             Type::Nullable(inner) => format!("?{}", self.type_to_string(inner)),
+            Type::Function { params, return_type } => {
+                let param_strs: Vec<String> = params.iter().map(|p| self.type_to_string(p)).collect();
+                format!("fn({}) -> {}", param_strs.join(", "), self.type_to_string(return_type))
+            }
         }
     }
 }

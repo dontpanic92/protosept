@@ -744,6 +744,37 @@ impl Generator {
         call_line: usize,
         call_col: usize,
     ) -> SaResult<Type> {
+        // Check if the callee is a local variable of function type (closure call)
+        if let Some(scope) = &self.local_scope {
+            if let Some(var_id) = scope.find_variable(&call_name) {
+                let var_type = scope.get_variable_type(var_id).clone();
+                if let Type::Function { params: _, return_type } = var_type {
+                    // Load the closure value first (it sits below the arguments on the stack)
+                    self.builder.ldvar(var_id);
+                    // Generate arguments
+                    let arg_count = arguments.len() as u32;
+                    for (_, arg_expr) in arguments {
+                        self.generate_expression(arg_expr)?;
+                    }
+                    // Call it
+                    self.builder.call_closure(arg_count);
+                    return Ok(*return_type);
+                }
+            }
+            if let Some(param_id) = scope.find_param(&call_name) {
+                let param_type = scope.get_param_type(param_id).clone();
+                if let Type::Function { params: _, return_type } = param_type {
+                    self.builder.ldpar(param_id);
+                    let arg_count = arguments.len() as u32;
+                    for (_, arg_expr) in arguments {
+                        self.generate_expression(arg_expr)?;
+                    }
+                    self.builder.call_closure(arg_count);
+                    return Ok(*return_type);
+                }
+            }
+        }
+
         // Handle box(expr) intrinsic
         if call_name == "box" {
             return self.generate_box_intrinsic(arguments, call_line, call_col);

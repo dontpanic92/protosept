@@ -184,6 +184,11 @@ pub enum Type {
     Struct(TypeId),
     Proto(TypeId),
     Nullable(Box<Type>),
+    /// Function type: fn(T1, T2) -> R
+    Function {
+        params: Vec<Type>,
+        return_type: Box<Type>,
+    },
 }
 
 impl Type {
@@ -241,6 +246,9 @@ impl Type {
             }
             // Arrays and Protos: not copy-treated by default in v1
             Type::Array(_) | Type::Proto(_) => false,
+            // Function types (closures): copy-treated only if all captures are Copy
+            // For now (non-capturing closures), always copy-treated
+            Type::Function { .. } => true,
         }
     }
 }
@@ -256,6 +264,10 @@ impl Clone for Type {
             Type::Struct(s) => Type::Struct(*s),
             Type::Proto(p) => Type::Proto(*p),
             Type::Nullable(n) => Type::Nullable(n.clone()),
+            Type::Function { params, return_type } => Type::Function {
+                params: params.clone(),
+                return_type: return_type.clone(),
+            },
         }
     }
 }
@@ -271,6 +283,10 @@ impl PartialEq for Type {
             (Type::Struct(a), Type::Struct(b)) => *a == *b,
             (Type::Proto(a), Type::Proto(b)) => *a == *b,
             (Type::Nullable(a), Type::Nullable(b)) => *a == *b,
+            (
+                Type::Function { params: pa, return_type: ra },
+                Type::Function { params: pb, return_type: rb },
+            ) => pa == pb && ra == rb,
             _ => false,
         }
     }
@@ -290,6 +306,10 @@ impl std::hash::Hash for Type {
             Type::Struct(s) => s.hash(state),
             Type::Proto(p) => p.hash(state),
             Type::Nullable(n) => n.hash(state),
+            Type::Function { params, return_type } => {
+                params.hash(state);
+                return_type.hash(state);
+            }
         }
     }
 }
@@ -312,6 +332,10 @@ impl ToString for Type {
             Type::Struct(s) => format!("struct({})", s.to_string()),
             Type::Proto(p) => format!("proto({})", p.to_string()),
             Type::Nullable(n) => format!("?{}", n.to_string()),
+            Type::Function { params, return_type } => {
+                let param_strs: Vec<String> = params.iter().map(|p| p.to_string()).collect();
+                format!("fn({}) -> {}", param_strs.join(", "), return_type.to_string())
+            }
         }
     }
 }

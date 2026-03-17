@@ -691,6 +691,14 @@ impl Generator {
                 let new_id = self.import_type_from_module(module, *id, type_map)?;
                 Type::Proto(new_id)
             }
+            Type::Function { params, return_type } => Type::Function {
+                params: params.iter()
+                    .map(|p| self.map_type_from_module(module, p, type_map))
+                    .collect::<SaResult<Vec<_>>>()?,
+                return_type: Box::new(
+                    self.map_type_from_module(module, return_type, type_map)?,
+                ),
+            },
         };
 
         Ok(mapped)

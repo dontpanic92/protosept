@@ -231,6 +231,14 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::NullCoalesce);
     }
 
+    pub fn make_closure(&mut self, func_addr: u32, capture_count: u32) {
+        self.add_instruction(Instruction::MakeClosure(func_addr, capture_count));
+    }
+
+    pub fn call_closure(&mut self, arg_count: u32) {
+        self.add_instruction(Instruction::CallClosure(arg_count));
+    }
+
     pub fn get_bytecode(&self) -> Vec<u8> {
         self.writer.get_ref().clone()
     }
