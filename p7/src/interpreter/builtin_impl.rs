@@ -13,6 +13,7 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("string.split".to_string(), string_split);
     ctx.register_host_function("string.index_of".to_string(), string_index_of);
     ctx.register_host_function("string.starts_with".to_string(), string_starts_with);
+    ctx.register_host_function("string.contains".to_string(), string_contains);
     ctx.register_host_function("display.int".to_string(), display_int);
     ctx.register_host_function("display.float".to_string(), display_float);
     ctx.register_host_function("display.bool".to_string(), display_bool);
@@ -829,5 +830,21 @@ fn array_remove(ctx: &mut Context) -> ContextResult<()> {
             }
         }
         _ => Err(RuntimeError::Other("array.remove: invalid arguments".to_string())),
+    }
+}
+
+fn string_contains(ctx: &mut Context) -> ContextResult<()> {
+    let needle_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let self_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+
+    match (self_val, needle_val) {
+        (Data::String(s), Data::String(needle)) => {
+            let result = if s.contains(&needle) { 1 } else { 0 };
+            ctx.stack_frame_mut()?.stack.push(Data::Int(result));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "string.contains: invalid argument types".to_string(),
+        )),
     }
 }

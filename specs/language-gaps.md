@@ -66,15 +66,6 @@ match result {
 // Current: must use wildcard binding, no payload access
 ```
 
-### 9. No `string.contains(needle)` method
-**Impact: LOW** — Common string operation not available as a builtin. Must use
-`index_of(needle) >= 0` as workaround.
-
-### 10. No implicit return (trailing expression without semicolon)
-**Impact: LOW** — The spec mentions trailing expression as implicit return, but
-in practice `return expr;` is always needed. Implicit returns from blocks would
-reduce ceremony.
-
 ---
 
 ## Resolved Issues
@@ -91,3 +82,5 @@ reduce ceremony.
 | 10 | Negative int literals | Was already working |
 | 12 | `int` is i32 not i64 | Fixed: changed to i64 throughout |
 | 14 | Single-file organization | Fixed: cross-module builtin resolution |
+| 9* | `string.contains()` | Fixed: added as builtin intrinsic |
+| 10* | Implicit return | Was already working (parser `BlockValue`) |

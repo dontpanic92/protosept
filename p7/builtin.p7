@@ -49,6 +49,10 @@ pub struct string() {
     // Return true (1) if the string starts with the given prefix.
     @intrinsic(name="string.starts_with")
     pub fn starts_with(ref self, prefix: string) -> bool;
+
+    // Return true (1) if the string contains the given substring.
+    @intrinsic(name="string.contains")
+    pub fn contains(ref self, needle: string) -> bool;
 }
 
 @builtin()
