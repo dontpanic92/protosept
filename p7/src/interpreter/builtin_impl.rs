@@ -7,6 +7,12 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("string.len_bytes".to_string(), string_len_bytes);
     ctx.register_host_function("string.display".to_string(), string_display);
     ctx.register_host_function("string.concat".to_string(), string_concat);
+    ctx.register_host_function("string.len_chars".to_string(), string_len_chars);
+    ctx.register_host_function("string.substring".to_string(), string_substring);
+    ctx.register_host_function("string.char_at".to_string(), string_char_at);
+    ctx.register_host_function("string.split".to_string(), string_split);
+    ctx.register_host_function("string.index_of".to_string(), string_index_of);
+    ctx.register_host_function("string.starts_with".to_string(), string_starts_with);
     ctx.register_host_function("display.int".to_string(), display_int);
     ctx.register_host_function("display.float".to_string(), display_float);
     ctx.register_host_function("display.bool".to_string(), display_bool);
@@ -596,6 +602,180 @@ fn array_set(ctx: &mut Context) -> ContextResult<()> {
         )),
         _ => Err(RuntimeError::Other(
             "array.set: first argument must be a box reference".to_string(),
+        )),
+    }
+}
+
+fn string_len_chars(ctx: &mut Context) -> ContextResult<()> {
+    let string_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::Other(
+            "string.len_chars: missing self parameter".to_string(),
+        ))?;
+
+    match string_val {
+        Data::String(s) => {
+            let char_len = s.chars().count() as i32;
+            ctx.stack_frame_mut()?.stack.push(Data::Int(char_len));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(format!(
+            "string.len_chars expected string, found {:?}",
+            string_val
+        ))),
+    }
+}
+
+fn string_substring(ctx: &mut Context) -> ContextResult<()> {
+    let end_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let start_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let self_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+
+    match (self_val, start_val, end_val) {
+        (Data::String(s), Data::Int(start), Data::Int(end)) => {
+            let char_count = s.chars().count() as i32;
+            let clamped_start = start.max(0).min(char_count) as usize;
+            let clamped_end = end.max(0).min(char_count) as usize;
+
+            let result: String = if clamped_start >= clamped_end {
+                String::new()
+            } else {
+                s.chars().skip(clamped_start).take(clamped_end - clamped_start).collect()
+            };
+            ctx.stack_frame_mut()?.stack.push(Data::String(result));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "string.substring: invalid argument types".to_string(),
+        )),
+    }
+}
+
+fn string_char_at(ctx: &mut Context) -> ContextResult<()> {
+    let index_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let self_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+
+    match (self_val, index_val) {
+        (Data::String(s), Data::Int(idx)) => {
+            if idx < 0 {
+                ctx.stack_frame_mut()?.stack.push(Data::Null);
+                return Ok(());
+            }
+            match s.chars().nth(idx as usize) {
+                Some(ch) => {
+                    ctx.stack_frame_mut()?
+                        .stack
+                        .push(Data::Some(Box::new(Data::String(ch.to_string()))));
+                }
+                None => {
+                    ctx.stack_frame_mut()?.stack.push(Data::Null);
+                }
+            }
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "string.char_at: invalid argument types".to_string(),
+        )),
+    }
+}
+
+fn string_split(ctx: &mut Context) -> ContextResult<()> {
+    let delim_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let self_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+
+    match (self_val, delim_val) {
+        (Data::String(s), Data::String(delim)) => {
+            let parts: Vec<Data> = s
+                .split(&delim)
+                .map(|part| Data::String(part.to_string()))
+                .collect();
+            ctx.stack_frame_mut()?.stack.push(Data::Array(parts));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "string.split: invalid argument types".to_string(),
+        )),
+    }
+}
+
+fn string_index_of(ctx: &mut Context) -> ContextResult<()> {
+    let needle_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let self_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+
+    match (self_val, needle_val) {
+        (Data::String(s), Data::String(needle)) => {
+            // Find byte offset, then convert to char index
+            let result = match s.find(&needle) {
+                Some(byte_pos) => s[..byte_pos].chars().count() as i32,
+                None => -1,
+            };
+            ctx.stack_frame_mut()?.stack.push(Data::Int(result));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "string.index_of: invalid argument types".to_string(),
+        )),
+    }
+}
+
+fn string_starts_with(ctx: &mut Context) -> ContextResult<()> {
+    let prefix_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let self_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+
+    match (self_val, prefix_val) {
+        (Data::String(s), Data::String(prefix)) => {
+            let result = if s.starts_with(&prefix) { 1 } else { 0 };
+            ctx.stack_frame_mut()?.stack.push(Data::Int(result));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "string.starts_with: invalid argument types".to_string(),
         )),
     }
 }

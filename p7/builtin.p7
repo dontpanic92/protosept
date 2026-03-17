@@ -24,6 +24,31 @@ pub struct string() {
     // Concatenate two strings
     @intrinsic(name="string.concat")
     pub fn concat(ref self, other: string) -> string;
+
+    // Return the number of Unicode characters in the string
+    @intrinsic(name="string.len_chars")
+    pub fn len_chars(ref self) -> int;
+
+    // Return a substring from start (inclusive) to end (exclusive) by char index.
+    // Clamping: start < 0 becomes 0, end > len_chars becomes len_chars.
+    @intrinsic(name="string.substring")
+    pub fn substring(ref self, start: int, end: int) -> string;
+
+    // Return the character at char index i as a single-character string, or null.
+    @intrinsic(name="string.char_at")
+    pub fn char_at(ref self, i: int) -> ?string;
+
+    // Split the string by delimiter, returning an array of substrings.
+    @intrinsic(name="string.split")
+    pub fn split(ref self, delimiter: string) -> array<string>;
+
+    // Return the char-index of the first occurrence of needle, or -1 if not found.
+    @intrinsic(name="string.index_of")
+    pub fn index_of(ref self, needle: string) -> int;
+
+    // Return true (1) if the string starts with the given prefix.
+    @intrinsic(name="string.starts_with")
+    pub fn starts_with(ref self, prefix: string) -> bool;
 }
 
 @builtin()
