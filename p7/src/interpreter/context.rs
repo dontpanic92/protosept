@@ -129,29 +129,36 @@ macro_rules! comparison_op {
             (Data::String(a), Data::String(b)) if is_equality_op => {
                 $self.stack_frame_mut()?.stack.push(Data::Int((a $op b) as i64));
             }
+            // Null equality comparisons
+            (Data::Null, Data::Null) if is_equality_op => {
+                $self.stack_frame_mut()?.stack.push(Data::Int(("null" $op "null") as i64));
+            }
+            (Data::Null, Data::Some(_)) | (Data::Some(_), Data::Null) if is_equality_op => {
+                $self.stack_frame_mut()?.stack.push(Data::Int(("null" $op "some") as i64));
+            }
+            (Data::Some(_), Data::Some(_)) if is_equality_op => {
+                // Two Some values: consider them equal for null-checking purposes
+                // (the type system ensures this is only used for == null / != null)
+                $self.stack_frame_mut()?.stack.push(Data::Int(("some" $op "some") as i64));
+            }
             (Data::String(_), _) | (_, Data::String(_)) => {
                 return Err(RuntimeError::Other("Comparison on string".to_string()));
             }
             (Data::StructRef(_), _) | (_, Data::StructRef(_)) => {
-                // Comparison with struct refs not supported
                 return Err(RuntimeError::UnexpectedStructRef);
             }
             (Data::BoxRef(_), _) | (_, Data::BoxRef(_))
             | (Data::ProtoBoxRef { .. }, _) | (_, Data::ProtoBoxRef { .. })
             | (Data::ProtoRefRef { .. }, _) | (_, Data::ProtoRefRef { .. }) => {
-                // Comparison with box/proto refs not supported
                 return Err(RuntimeError::Other("Comparison on box/proto reference".to_string()));
             }
             (Data::Exception(_), _) | (_, Data::Exception(_)) => {
-                // Comparison with exceptions not supported
                 return Err(RuntimeError::Other("Comparison on exception value".to_string()));
             }
             (Data::Array(_), _) | (_, Data::Array(_)) => {
-                // Comparison with arrays not supported
                 return Err(RuntimeError::Other("Comparison on array".to_string()));
             }
             (Data::Null, _) | (_, Data::Null) | (Data::Some(_), _) | (_, Data::Some(_)) => {
-                // Comparison with nullable values not supported directly
                 return Err(RuntimeError::Other("Comparison on nullable value".to_string()));
             }
         }

@@ -1730,9 +1730,15 @@ impl Parser {
                     });
                 }
                 self.consume();
-                let expr = self.parse_expression()?;
-                self.consume_match(TokenType::Semicolon)?;
-                Ok(Statement::Return(Box::new(expr)))
+                // Support bare `return;` (unit return) by checking for semicolon
+                if self.peek().map(|t| &t.token_type) == Some(&TokenType::Semicolon) {
+                    self.consume(); // consume the semicolon
+                    Ok(Statement::Return(Box::new(Expression::IntegerLiteral(0))))
+                } else {
+                    let expr = self.parse_expression()?;
+                    self.consume_match(TokenType::Semicolon)?;
+                    Ok(Statement::Return(Box::new(expr)))
+                }
             }
             Some(TokenType::Throw) => {
                 if is_pub {

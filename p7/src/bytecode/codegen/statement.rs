@@ -136,7 +136,7 @@ impl Generator {
         Ok(Type::Primitive(PrimitiveType::Unit))
     }
 
-    fn generate_enum_decl(
+    pub(super) fn generate_enum_decl(
         &mut self,
         is_pub: bool,
         name: Identifier,
@@ -226,7 +226,7 @@ impl Generator {
         Ok(Type::Primitive(PrimitiveType::Unit))
     }
 
-    fn generate_struct_decl(
+    pub(super) fn generate_struct_decl(
         &mut self,
         is_pub: bool,
         name: Identifier,
@@ -330,7 +330,7 @@ impl Generator {
         Ok(Type::Primitive(PrimitiveType::Unit))
     }
 
-    fn generate_proto_decl(
+    pub(super) fn generate_proto_decl(
         &mut self,
         is_pub: bool,
         name: Identifier,
@@ -434,7 +434,7 @@ impl Generator {
         Ok(Type::Primitive(PrimitiveType::Unit))
     }
 
-    fn generate_import(&mut self, module_path: String, alias: Option<String>) -> SaResult<Type> {
+    pub(super) fn generate_import(&mut self, module_path: String, alias: Option<String>) -> SaResult<Type> {
         // Import semantics: try module first, then symbol from parent module
         let segments: Vec<&str> = module_path.split('.').filter(|s| !s.is_empty()).collect();
         if segments.is_empty() {

@@ -630,14 +630,38 @@ impl Generator {
         let lhs_ty = self.generate_expression(left)?;
         let rhs_ty = self.generate_expression(right)?;
 
+        let is_comparison = matches!(
+            operator.token_type,
+            TokenType::Equals
+                | TokenType::NotEquals
+                | TokenType::GreaterThan
+                | TokenType::GreaterThanOrEqual
+                | TokenType::LessThan
+                | TokenType::LessThanOrEqual
+        );
+        let is_equality = matches!(
+            operator.token_type,
+            TokenType::Equals | TokenType::NotEquals
+        );
+
         let result_ty = if lhs_ty == rhs_ty {
             lhs_ty.clone()
         } else {
-            // Allow implicit int <-> float promotion
             match (&lhs_ty, &rhs_ty) {
+                // Allow implicit int <-> float promotion
                 (Type::Primitive(PrimitiveType::Int), Type::Primitive(PrimitiveType::Float))
                 | (Type::Primitive(PrimitiveType::Float), Type::Primitive(PrimitiveType::Int)) => {
                     Type::Primitive(PrimitiveType::Float)
+                }
+                // Allow null comparisons: ?T == null or null == ?T
+                (Type::Nullable(_), Type::Nullable(_)) if is_equality => {
+                    lhs_ty.clone()
+                }
+                // Allow string + string for concatenation
+                (Type::Primitive(PrimitiveType::String), Type::Primitive(PrimitiveType::String))
+                    if operator.token_type == TokenType::Plus =>
+                {
+                    Type::Primitive(PrimitiveType::String)
                 }
                 _ => {
                     return Err(self.type_mismatch_error(
@@ -650,17 +674,15 @@ impl Generator {
             }
         };
 
-        let is_comparison = matches!(
-            operator.token_type,
-            TokenType::Equals
-                | TokenType::NotEquals
-                | TokenType::GreaterThan
-                | TokenType::GreaterThanOrEqual
-                | TokenType::LessThan
-                | TokenType::LessThanOrEqual
-        );
-
-        self.emit_binary_instruction(&operator.token_type);
+        // For string + string, emit concat intrinsic instead of Add instruction
+        if operator.token_type == TokenType::Plus
+            && matches!(result_ty, Type::Primitive(PrimitiveType::String))
+        {
+            let host_fn_idx = self.add_string_constant("string.concat".to_string());
+            self.builder.call_host_function(host_fn_idx);
+        } else {
+            self.emit_binary_instruction(&operator.token_type);
+        }
 
         if is_comparison {
             Ok(Type::Primitive(PrimitiveType::Bool))

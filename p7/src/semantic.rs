@@ -527,6 +527,18 @@ impl SymbolTable {
         self.symbol_chain.pop();
     }
 
+    /// Push an existing symbol (by ID) onto the symbol chain for scoping.
+    /// Used in two-pass compilation: pass 1 registers the symbol, pass 2 pushes
+    /// it back onto the chain to generate the body.
+    pub fn push_existing_symbol(&mut self, symbol_id: SymbolId) {
+        self.symbol_chain.push(symbol_id);
+    }
+
+    /// Find a symbol by name in the current scope chain, returning its ID.
+    pub fn find_symbol(&self, name: &str) -> Option<SymbolId> {
+        self.find_symbol_in_scope(name)
+    }
+
     pub fn find_symbol_by_qualified_name(&self, qualified_name: &str) -> Option<&Symbol> {
         self.symbols
             .iter()

@@ -27,6 +27,8 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("array.clear".to_string(), array_clear);
     ctx.register_host_function("array.pop".to_string(), array_pop);
     ctx.register_host_function("array.set".to_string(), array_set);
+    ctx.register_host_function("array.insert".to_string(), array_insert);
+    ctx.register_host_function("array.remove".to_string(), array_remove);
     ctx.register_host_function("builtin.entry_script_dir".to_string(), builtin_entry_script_dir);
 }
 
@@ -777,5 +779,55 @@ fn string_starts_with(ctx: &mut Context) -> ContextResult<()> {
         _ => Err(RuntimeError::Other(
             "string.starts_with: invalid argument types".to_string(),
         )),
+    }
+}
+
+fn array_insert(ctx: &mut Context) -> ContextResult<()> {
+    let elem = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let index = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let box_ref = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+
+    match (box_ref, index) {
+        (Data::BoxRef(box_idx), Data::Int(idx)) => {
+            let boxed_data = ctx.box_heap.get_mut(box_idx as usize).ok_or_else(|| {
+                RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
+            })?;
+            match boxed_data {
+                Data::Array(elements) => {
+                    let len = elements.len() as i64;
+                    let clamped = idx.max(0).min(len) as usize;
+                    elements.insert(clamped, elem);
+                    Ok(())
+                }
+                _ => Err(RuntimeError::Other("array.insert: boxed value must be an array".to_string())),
+            }
+        }
+        _ => Err(RuntimeError::Other("array.insert: invalid arguments".to_string())),
+    }
+}
+
+fn array_remove(ctx: &mut Context) -> ContextResult<()> {
+    let index = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let box_ref = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+
+    match (box_ref, index) {
+        (Data::BoxRef(box_idx), Data::Int(idx)) => {
+            let boxed_data = ctx.box_heap.get_mut(box_idx as usize).ok_or_else(|| {
+                RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
+            })?;
+            match boxed_data {
+                Data::Array(elements) => {
+                    if idx < 0 || (idx as usize) >= elements.len() {
+                        ctx.stack_frame_mut()?.stack.push(Data::Null);
+                        return Ok(());
+                    }
+                    let removed = elements.remove(idx as usize);
+                    ctx.stack_frame_mut()?.stack.push(Data::Some(Box::new(removed)));
+                    Ok(())
+                }
+                _ => Err(RuntimeError::Other("array.remove: boxed value must be an array".to_string())),
+            }
+        }
+        _ => Err(RuntimeError::Other("array.remove: invalid arguments".to_string())),
     }
 }

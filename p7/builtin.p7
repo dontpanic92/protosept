@@ -90,6 +90,16 @@ pub struct array<T>() {
     // Returns null if out-of-bounds
     @intrinsic(name="array.set")
     pub fn set(box self, i: int, elem: T) -> ?T;
+
+    // Insert element at index i, shifting subsequent elements right.
+    // If i >= len, appends to end. If i < 0, inserts at 0.
+    @intrinsic(name="array.insert")
+    pub fn insert(box self, i: int, elem: T);
+
+    // Remove and return element at index i, shifting subsequent elements left.
+    // Returns null if index is out-of-bounds.
+    @intrinsic(name="array.remove")
+    pub fn remove(box self, i: int) -> ?T;
 }
 
 // Return the containing directory of the entry script, or null if the script
