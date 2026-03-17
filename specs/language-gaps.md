@@ -1,114 +1,93 @@
-# Protosept Language Gaps — Findings from NaviText Implementation
+# Protosept Language Gaps
 
-## Problem
-While building a TUI text editor in Protosept, several language/runtime gaps
-were encountered. This document catalogs them for review before implementing fixes.
+Tracked findings from building NaviText and other real-world usage.
+Items are removed once fixed; new items added as discovered.
 
-## Findings
+Last updated: 2026-03-17
 
-### 1. No forward function references (compiler limitation)
-**Impact: HIGH** — Functions must be defined before use. `main()` must be the
-last function in the file. Mutual recursion is impossible. This forced careful
-manual ordering of ~15 functions and made the code harder to organize.
+---
 
-**Expected:** Functions in the same module should be callable regardless of
-declaration order (two-pass compilation).
+## Open Issues
 
-### 2. No bare `return;` in unit functions
-**Impact: MEDIUM** — `return;` (without a value) is a parse error. Early returns
-from void functions require restructuring into flag-based patterns:
-```p7
-// Wanted:
-fn toggle(path: string, list: box<array<string>>) {
-    // ...find and remove...
-    return;  // ERROR: Unexpected token: Semicolon
-}
-
-// Had to write:
-fn toggle(path: string, list: box<array<string>>) {
-    var found_idx = 0 - 1;
-    // ...search...
-    if found_idx >= 0 { remove(...); } else { add(...); }
-}
-```
-
-### 3. Null comparison broken for non-primitive nullable types
-**Impact: MEDIUM** — `if content != null` fails with "Type mismatch: ?string != ?unit"
-when `content: ?string`. Works for `?int`. Had to use `??` workaround:
-```p7
-// Wanted:
-if content != null { let text = content!; ... }
-
-// Had to write:
-let text = content ?? "";
-```
-
-### 4. Box dereference rejected for non-primitive types
+### 1. Box dereference rejected for non-primitive types
 **Impact: MEDIUM** — `*box<array<T>>` fails at compile time ("only primitive types
 supported"). Inconsistent: `boxed.len()` and `boxed[i]` work (auto-borrow handles it),
 but explicit `*boxed` doesn't. This blocks patterns like `(*boxed)[i]`.
 
-**Workaround:** `boxed[i]` works directly (the compiler has a special path for
-indexing on boxed arrays).
+**Workaround:** `boxed[i]` works directly (compiler special-cases indexing on
+boxed arrays). Method calls also work via auto-borrow.
 
-### 5. No `else if` chains (or unclear support)
-**Impact: MEDIUM** — Key handling required deeply nested if/else or flat sequential
-if statements. Neither is clean:
+### 2. No `for` loop with index
+**Impact: MEDIUM** — Every array iteration requires:
 ```p7
-// Sequential ifs (all evaluated even after match):
-if key == 7 { ... }
-if key == 8 { ... }
-if key == 1 { ... }
-
-// Nested else (pyramid of doom):
-if key == 7 { ... } else { if key == 8 { ... } else { if key == 1 { ... } } }
+var i = 0;
+while i < count {
+    let item = arr[i];
+    // ...
+    i = i + 1;
+}
 ```
+An indexed `for` (e.g., `for item in arr { ... }` or `for i, item in arr { ... }`)
+would eliminate most `while` loops and the manual index boilerplate.
 
-### 6. No closures/lambdas (known v1 limitation)
-**Impact: MEDIUM** — Forced a stateful polling model for TUI events instead of
-callbacks. Required thread-local storage on the Rust side.
-
-### 7. Verbose string concatenation
-**Impact: MEDIUM** — No `+` operator for strings. Building strings requires
-chained `.concat()` calls:
-```p7
-// Repeatedly building strings:
-var text = "";
-text = text.concat("  ");
-text = text.concat(name);
-text = text.concat(" ");
-// vs: text = text + "  " + name + " "
-```
-String interpolation (`f"..."`) helps but can't be used for incremental building
-in loops.
-
-### 8. No array insert/remove at index
-**Impact: MEDIUM** — Had to implement `insert_line` and `remove_line` manually by
-copying to a temp array. ~25 lines of boilerplate each. These should be builtin
-array methods on `box<array<T>>`.
-
-### 9. No `for` loop with index
-**Impact: LOW-MEDIUM** — Every array iteration required manual `var i = 0; while i < count { ...; i = i + 1; }` (5 lines of overhead per loop). An indexed for
-or `for i, elem in arr` would eliminate most `while` loops.
-
-### 10. Negative int literals
-**Impact: LOW** — Unclear if `-1` works as a literal. Had to write `0 - 1` to be safe.
-If the parser supports unary minus on literals, this is just a documentation issue.
-
-### 11. No `match` on integers in practice
-**Impact: LOW** — The spec supports integer match patterns, but key code dispatch
-would benefit from it. Used sequential `if` chains instead (unclear if match on
-int works reliably in current compiler).
-
-### 12. `int` is i32 at runtime but spec says i64
-**Impact: LOW** — Spec says `int` is i64, but `Data::Int(i32)` in the runtime.
-Not a problem for the editor, but could surprise users with overflow on larger values.
-
-### 13. No type aliases
+### 3. No type aliases
 **Impact: LOW** — `box<array<string>>` appears 30+ times in function signatures.
-A `type Lines = box<array<string>>` would improve readability.
+A `type Lines = box<array<string>>` would improve readability significantly.
 
-### 14. Single-file organization pressure
-**Impact: LOW** — The combination of no forward references + uncertain cross-module
-struct support pushed all editor logic into one ~730-line file. Multi-file
-organization felt risky.
+### 4. No `match` on integers reliably
+**Impact: LOW** — The spec supports integer match patterns, but key code dispatch
+in the editor uses sequential `if` chains. Unclear if `match` on `int` works
+reliably in the current compiler for all cases.
+
+### 5. No `+=`, `-=`, `*=` compound assignment
+**Impact: MEDIUM** — Mutable variable updates require repeating the variable name:
+```p7
+cursor_col = cursor_col + 1;  // instead of cursor_col += 1;
+```
+Very common pattern in the editor event loop.
+
+### 6. No `for` loop over ranges
+**Impact: MEDIUM** — Counting loops require manual `while` with a counter variable.
+A `for i in 0..n { ... }` range syntax would be cleaner and less error-prone.
+
+### 7. No `int.to_string()` / `int.display()` method
+**Impact: LOW** — Cannot convert int to string except via string interpolation
+`f"{n}"`. A direct `n.to_string()` or `n.display()` method would be useful
+for building strings programmatically.
+
+### 8. No enum payload destructuring in `match`
+**Impact: MEDIUM** — Cannot extract payload values from enum variants in match arms:
+```p7
+// Wanted:
+match result {
+    Result.Ok(value) => value,
+    Result.Err(msg) => default,
+}
+// Current: must use wildcard binding, no payload access
+```
+
+### 9. No `string.contains(needle)` method
+**Impact: LOW** — Common string operation not available as a builtin. Must use
+`index_of(needle) >= 0` as workaround.
+
+### 10. No implicit return (trailing expression without semicolon)
+**Impact: LOW** — The spec mentions trailing expression as implicit return, but
+in practice `return expr;` is always needed. Implicit returns from blocks would
+reduce ceremony.
+
+---
+
+## Resolved Issues
+
+| # | Issue | Resolution |
+|---|-------|-----------|
+| 1 | No forward function references | Fixed: two-pass compilation |
+| 2 | No bare `return;` | Fixed: parser accepts `return;` |
+| 3 | Null comparison for `?string` | Fixed: `==`/`!=` works between any nullable types |
+| 5 | No `else if` chains | Was already working (parser recursion) |
+| 6 | No closures/lambdas | Fixed: full closure support with captures |
+| 7 | Verbose string concatenation | Fixed: `+` operator for strings |
+| 8 | No array insert/remove | Fixed: `insert()` and `remove()` builtins |
+| 10 | Negative int literals | Was already working |
+| 12 | `int` is i32 not i64 | Fixed: changed to i64 throughout |
+| 14 | Single-file organization | Fixed: cross-module builtin resolution |
