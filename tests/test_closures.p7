@@ -1,0 +1,138 @@
+// Tests for closures: literals, function types, captures, higher-order functions
+import test.test;
+
+// ===== Non-capturing closures =====
+
+@test(expected_type = "int", expected_value = "10")
+fn test_closure_basic() -> int {
+    let double = (x: int) => x * 2;
+    double(5)
+}
+
+@test(expected_type = "int", expected_value = "7")
+fn test_closure_two_params() -> int {
+    let add = (a: int, b: int) => a + b;
+    add(3, 4)
+}
+
+@test(expected_type = "string", expected_value = "hello world")
+fn test_closure_string_concat() -> string {
+    let greet = (name: string) => "hello " + name;
+    greet("world")
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_closure_no_params() -> int {
+    let zero = () => 0;
+    zero()
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_closure_block_body() -> int {
+    let compute = (x: int) => {
+        let y = x * 2;
+        y + 2
+    };
+    compute(20)
+}
+
+// ===== Higher-order functions =====
+
+fn apply(f: fn(int) -> int, x: int) -> int {
+    return f(x);
+}
+
+fn apply2(f: fn(int, int) -> int, a: int, b: int) -> int {
+    return f(a, b);
+}
+
+@test(expected_type = "int", expected_value = "25")
+fn test_closure_as_argument() -> int {
+    apply((x: int) => x * x, 5)
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_closure_as_argument_addition() -> int {
+    apply((x: int) => x + 10, 32)
+}
+
+@test(expected_type = "int", expected_value = "12")
+fn test_closure_two_param_argument() -> int {
+    apply2((a: int, b: int) => a * b, 3, 4)
+}
+
+@test(expected_type = "int", expected_value = "30")
+fn test_closure_stored_then_passed() -> int {
+    let triple = (x: int) => x * 3;
+    apply(triple, 10)
+}
+
+// ===== Closures with captures =====
+
+@test(expected_type = "int", expected_value = "15")
+fn test_closure_capture_int() -> int {
+    let factor = 3;
+    let multiply = (x: int) => x * factor;
+    multiply(5)
+}
+
+@test(expected_type = "string", expected_value = "hello world")
+fn test_closure_capture_string() -> string {
+    let greeting = "hello";
+    let greet = (name: string) => greeting + " " + name;
+    greet("world")
+}
+
+@test(expected_type = "int", expected_value = "13")
+fn test_closure_capture_multiple() -> int {
+    let a = 10;
+    let b = 3;
+    let sum_with = (x: int) => x + a + b;
+    sum_with(0)
+}
+
+@test(expected_type = "int", expected_value = "15")
+fn test_closure_capture_higher_order() -> int {
+    let offset = 5;
+    let add_offset = (x: int) => x + offset;
+    apply(add_offset, 10)
+}
+
+// ===== Closure captures with box (shared mutation) =====
+
+@test(expected_type = "int", expected_value = "3")
+fn test_closure_capture_box_mutation() -> int {
+    let items = box([1, 2]);
+    let add_item = (x: int) => {
+        items.push(x);
+    };
+    add_item(3);
+    items.len()
+}
+
+@test(expected_type = "int", expected_value = "6")
+fn test_closure_capture_box_shared() -> int {
+    let items = box([1, 2, 3]);
+    let count = () => items.len();
+    items.push(4);
+    items.push(5);
+    items.push(6);
+    count()
+}
+
+// ===== Function type as variable =====
+
+@test(expected_type = "int", expected_value = "9")
+fn test_fn_type_variable() -> int {
+    let f: fn(int) -> int = (x: int) => x * x;
+    f(3)
+}
+
+@test(expected_type = "int", expected_value = "50")
+fn test_fn_type_reassign() -> int {
+    var op: fn(int) -> int = (x: int) => x * 2;
+    let a = op(10);
+    op = (x: int) => x * 3;
+    let b = op(10);
+    a + b
+}
