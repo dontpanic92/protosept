@@ -465,6 +465,7 @@ Types in v1:
 - Borrowed view: `ref<T>` (Input: `&T`)
 - Owned heap handle: `box<T>` (Input: `^T`)
 - Read-only heap handle: `robox<T>`
+- Function types: `fn(T1, T2, ...) -> R`, `fn[effects](T1, T2, ...) -> R` (§3.9)
 - User-defined: `struct Name(...)`, `enum Name(...)`, `proto Name { ... }`
 - Compile-time generics: `T`, `array<T>`, `box<T>`, `robox<T>`, etc. (§20)
 
@@ -686,6 +687,53 @@ let y = p.1;  // y has type string, value "test"
   - Function return when the return type is `robox<T>`.
   - Contextual branch/join with expected type `robox<T>`.
 - The reverse coercion `robox<T> -> box<T>` is **not** allowed (ERROR). There is no v1 mechanism for downcast.
+
+### 3.9 Function types
+
+A function type describes a callable value — a closure (§9.7) or, in the future, a function reference.
+
+**Syntax:**
+```
+fn(T1, T2, ...) -> R
+fn[effect1, effect2, ...](T1, T2, ...) -> R
+```
+
+- Parameter types are listed positionally; parameter names are not part of the function type.
+- `-> R` specifies the return type. If omitted, the return type is `unit`.
+- The effect set follows the same rules as function declarations (§11.2): effects are a **set**, order is not semantically significant, and duplicates are ERROR.
+
+A function type with no effect list (or an empty effect list) denotes a **pure** callable — it may not throw, suspend, or perform any declared effect.
+
+**Examples:**
+```p7
+fn(int) -> int                          // pure: int → int
+fn(string, int) -> bool                 // pure: (string, int) → bool
+fn[throws](string) -> string            // may throw any enum
+fn[throws<FileError>](string) -> string // may throw FileError
+fn[suspend]() -> unit                   // may suspend
+fn[throws, suspend]() -> int            // may throw and suspend
+fn() -> unit                            // pure: no params, returns unit
+```
+
+**Effect compatibility (assignability):**
+
+A value of a function type with *fewer* effects is assignable to a function type with *more* effects (effect widening), because a callable that never performs an effect trivially satisfies a contract that *permits* the effect:
+
+| Value type | Target type | Allowed? |
+|---|---|---|
+| `fn(T) -> R` (pure) | `fn[throws](T) -> R` | YES (widening) |
+| `fn[throws<E>](T) -> R` | `fn[throws](T) -> R` | YES (typed → untyped) |
+| `fn[throws](T) -> R` | `fn(T) -> R` | ERROR (narrowing) |
+| `fn[throws](T) -> R` | `fn[throws<E>](T) -> R` | ERROR (cannot guarantee only `E`) |
+
+This mirrors the propagation compatibility rules for typed throws (§14.4) and follows from the principle that *fewer effects ⊆ more effects*.
+
+**Value-flow rules:**
+
+Function-typed values (closures) follow the standard value-flow rule (§6.1):
+- A closure is `Copy` iff all its captured values satisfy `Copy`.
+- A closure is structural-copyable iff all its captured values are structural-copyable.
+- A closure satisfies `Send` iff all its captured values satisfy `Send`.
 
 ---
 
@@ -1183,7 +1231,7 @@ A `ref<T>` value MUST NOT be:
 - stored into an array element
 - stored into any heap-allocated value (including inside `box<...>`)
 - stored in globals/statics
-- captured by closures (if/when closures exist)
+- captured by closures (§9.7)
 - passed across host interop boundaries as a persistent value
 
 Consequences:
@@ -1309,6 +1357,7 @@ Expressions include:
 - `loop` expressions
 - `try` expressions
 - `match` expressions
+- closure literals (§9.7)
 
 `yield` is only available under the Fiber extension (§21).
 
@@ -1383,7 +1432,7 @@ Operator precedence (highest to lowest):
 10) Assignment: `=` (right-associative). Assignment is a statement form; it does not yield a value.
 
 Notes:
-- `if ... else ...`, `try`, `match`, and `loop` are expression forms written with blocks and bind looser than any operator above.
+- `if ... else ...`, `try`, `match`, `loop`, and closure literals (`(...) => ...`) are expression forms written with blocks and bind looser than any operator above.
 - `if` without `else` is statement-only and does not participate in operator precedence.
 - Prefix `!x` (logical NOT) and postfix `x!` (force unwrap) are distinct by position.
 
@@ -1623,6 +1672,165 @@ fn classify(x: int) -> int {
     0 => 0,
     n: _ => n,
   }
+}
+```
+
+### 9.7 Closure literals
+
+A closure literal creates an anonymous callable value. Closures are first-class values: they can be bound to variables, passed as arguments, returned from functions, and stored in data structures.
+
+#### 9.7.1 Syntax
+
+```
+(p1: T1, p2: T2, ...) => expr
+(p1: T1, p2: T2, ...) => { block }
+[effect1, effect2, ...] (p1: T1, p2: T2, ...) => expr
+[effect1, effect2, ...] (p1: T1, p2: T2, ...) => { block }
+```
+
+- Parameters use the same `name: Type` syntax as function declarations; all parameter types MUST be explicit in v1.
+- The body is either a single expression or a block (following the same rules as block expressions, §9.1).
+- The return type is inferred from the body expression. To constrain the return type, annotate the binding with a function type (§3.9): `let f: fn(int) -> int = (x: int) => x + 1;`.
+- The optional effect list uses the same `[effect1, effect2, ...]` syntax as function declarations (§11.2), placed before the parameter list. Effects are a **set**: order is not significant, duplicates are ERROR.
+
+**Effect rules:**
+
+- A closure with **no effect list** has an **empty effect set** — it is pure and MUST NOT throw, suspend, or perform any declared effect.
+- If a closure body may throw (via `throw` or by calling a throwing function with `try` propagation), the closure MUST declare `throws` or `throws<E>` in its effect list.
+- If a closure body may suspend (via `yield`), the closure MUST declare `suspend` in its effect list.
+
+This maintains the same explicitness guarantee as named functions: the effect set of a callable is always visible from its declaration.
+
+**Disambiguating `=>` from `match` arms:**
+
+The `=>` token also appears in `match` and `try ... else { ... }` arm syntax (§9.6, §14.2). Ambiguity does not arise because:
+- In `match` / `try ... else` arms, the pattern appears to the left of `=>` without a preceding `(params)` or `[effects]` form.
+- Closure literals require a parenthesized parameter list (possibly empty) immediately before `=>`, optionally preceded by an effect list in brackets.
+
+#### 9.7.2 Typing
+
+A closure literal `(p1: T1, ...) => body` with effect set `E` has type `fn[E](T1, ...) -> R`, where `R` is the type of the body expression or the tail expression of the body block.
+
+A closure with no effect list has type `fn(T1, ...) -> R`.
+
+Closures support bidirectional typing (§0.1):
+- **Synthesize (↑)**: When all parameter types are explicit, the closure's type is synthesized from its parameter types, inferred return type, and declared effects.
+- **Check (↓)**: A closure may be checked against an expected function type. In v1, all parameter types must still be explicit; the expected type is used only to verify compatibility (not to infer parameter types).
+
+[[TODO]] Consider allowing parameter type inference from expected type in a future version.
+
+#### 9.7.3 Capture semantics
+
+Closures may reference bindings from enclosing scopes. These references are called **captures**.
+
+**By-value capture (v1):**
+
+All captures in v1 use **by-value** semantics. When a closure captures a binding, the value flows into the closure at the point of closure creation, following the standard value-flow rule (§6.1):
+- If the captured value's type satisfies `Copy`, the value is copied into the closure.
+- Otherwise, the value is **moved** into the closure and the original binding becomes invalid (ERROR if subsequently used).
+
+**Capture restrictions:**
+
+- `ref<T>` values MUST NOT be captured (§7.3). A closure that references a `ref<T>` binding from an enclosing scope is ERROR.
+- `box<T>` values may be captured. Because `box<T>` is structural-copyable and satisfies `Copy` (§6.3), capturing a `box<T>` copies the handle into the closure. Both the closure and the enclosing scope share the same heap cell — mutations through either handle are visible through the other.
+- `robox<T>` values may be captured (same handle-copy semantics as `box<T>`).
+
+**Implicit capture set:**
+
+The compiler determines the capture set from the free variables in the closure body. There is no explicit capture list syntax in v1.
+
+[[TODO]] Consider explicit capture list syntax (e.g., `[captures] (params) => body`) for auditability in a future version.
+
+#### 9.7.4 Calling closures
+
+A closure value is called with standard call syntax:
+
+```p7
+let f = (x: int) => x + 1;
+let result = f(5);   // 6
+```
+
+Effectful closures obey the same call-site explicitness rules as named functions:
+
+- **Throwing closures** MUST be called under `try` (§14.3). A bare call to a closure whose type includes `throws` or `throws<E>` is ERROR.
+- **Suspending closures** follow the same restrictions as suspending functions (§21.2): they may only be called from within a function (or closure) that also has the `suspend` effect.
+
+```p7
+let parse: fn[throws<ParseError>](string) -> int = ...;
+let n = try parse("42");   // ok: wrapped in try
+// let m = parse("42");    // ERROR: throwing callable must be called under try
+```
+
+#### 9.7.5 Examples
+
+**Pure closure:**
+```p7
+let double = (x: int) => x * 2;
+let result = double(5);   // 10
+
+let add = (a: int, b: int) => a + b;
+let sum = add(3, 4);      // 7
+```
+
+**Throwing closure with `try` at call site:**
+```p7
+enum ParseError(
+  InvalidFormat,
+);
+
+fn[throws<ParseError>] parse_int(s: string) -> int { ... }
+
+let safe_parse = [throws<ParseError>] (s: string) => {
+  try parse_int(s)
+};
+
+fn handle_input(s: string) -> int {
+  try safe_parse(s) else {
+    _: ParseError.InvalidFormat => 0,
+  }
+}
+```
+
+**Suspending closure:**
+```p7
+let task = [suspend] () => {
+  yield;
+  // ... continues after resume
+  yield;
+};
+
+// task has type fn[suspend]() -> unit
+// can be spawned:
+spawn task();
+```
+
+**Closure capturing a `box<T>`:**
+```p7
+struct Counter(value: int);
+
+let c = box(Counter(0));
+let increment = () => {
+  c.value = c.value + 1;
+};
+
+increment();           // mutates the boxed Counter
+increment();
+let n = c.value;       // 2 — both `c` and the closure share the same box
+```
+
+**Closure as a function parameter:**
+```p7
+fn apply(f: fn(int) -> int, x: int) -> int {
+  return f(x);
+}
+
+let result = apply((x: int) => x * x, 10);   // 100
+```
+
+**Throwing closure passed to a higher-order function:**
+```p7
+fn try_apply(f: fn[throws](int) -> int, x: int) -> ?int {
+  try f(x) else null
 }
 ```
 
@@ -2236,7 +2444,7 @@ enum Option<T>(
 
 Rules:
 - `expr` MUST have an `enum` type.
-- `throw` is a **contextual keyword**: it is permitted only in functions with `throws` or `throws<E>` in their effect set (§11.2).
+- `throw` is a **contextual keyword**: it is permitted only in functions or closures with `throws` or `throws<E>` in their effect set (§11.2, §9.7).
 - In functions with `throws<E>`, the thrown enum type MUST be exactly `E`.
 - Outside a function with a `throws` effect, `throw` has no special meaning and may be used as an ordinary identifier.
 
@@ -2308,15 +2516,17 @@ Exhaustiveness:
 - The pattern-matching handler form MUST be exhaustive (same as `match`, §9.6.4).
 - Include a wildcard arm `_ => ...` to handle all error variants.
 
-### 14.3 Calling functions with `throws` effect (explicitness rule)
+### 14.3 Calling callables with `throws` effect (explicitness rule)
 
-If a call may throw (i.e., the callee has `throws` or `throws<E>` in its effect set), the call MUST appear inside a `try` form. Bare calls are ERROR, even within functions that themselves have a `throws` effect.
+If a call may throw (i.e., the callee — whether a named function or a closure — has `throws` or `throws<E>` in its effect set), the call MUST appear inside a `try` form. Bare calls are ERROR, even within functions or closures that themselves have a `throws` effect.
 
-In a function without a `throws` effect:
+This rule applies uniformly to named function calls and closure calls (§9.7.4).
+
+In a function or closure without a `throws` effect:
 - only the handle form is allowed: `try call else ...`
 - the propagate form is ERROR.
 
-In a function with a `throws` or `throws<E>` effect:
+In a function or closure with a `throws` or `throws<E>` effect:
 - either propagate or handle form is allowed.
 
 ### 14.4 Propagation compatibility rules for typed throws
@@ -3035,9 +3245,9 @@ When disabled, functions with the `suspend` effect and `yield` are ERROR.
 
 [[TODO]] define how to enable (flag/import/host config).
 
-### 21.2 Functions with `suspend` effect
+### 21.2 Functions and closures with `suspend` effect
 
-A function with the `suspend` effect (declared as `fn[suspend]` or `fn[suspend, ...]`) may suspend via `yield;`.
+A function or closure with the `suspend` effect (declared as `fn[suspend]` or `[suspend] (...) => ...`) may suspend via `yield;`.
 
 Example:
 ```p7
@@ -3051,21 +3261,26 @@ fn[throws, suspend] async_operation() -> int {
   if error_condition { throw SomeError.Failed; }
   return 42;
 }
+
+// Closure with suspend effect
+let task = [suspend] () => {
+  yield;
+};
 ```
 
 Borrow restriction (v1):
-- In a function with the `suspend` effect, use of `ref<...>` is forbidden:
+- In a function or closure with the `suspend` effect, use of `ref<...>` is forbidden:
   - parameters of type `ref<T>` are ERROR
   - locals of type `ref<T>` are ERROR
   - `ref(x)` expression is ERROR
 Rationale: avoids views living across suspension points without lifetime tracking.
 
 Direct calling restriction (recommended):
-- Functions with the `suspend` effect may be called directly only from within other functions with the `suspend` effect. [[TODO]] finalize.
+- Callables with the `suspend` effect may be called directly only from within other callables that also have the `suspend` effect. [[TODO]] finalize.
 
 ### 21.3 `yield;`
 
-`yield;` is a **contextual keyword**: in statement position within a function with the `suspend` effect, it suspends the current fiber. Elsewhere, it may be used as an ordinary identifier.
+`yield;` is a **contextual keyword**: in statement position within a function or closure with the `suspend` effect, it suspends the current fiber. Elsewhere, it may be used as an ordinary identifier.
 
 - `yield;` suspends the current fiber.
 - On resume, execution continues after the `yield;`.
@@ -3089,7 +3304,7 @@ spawn f(args...);
 ```
 
 Rules:
-- `f` MUST refer to a function with the `suspend` effect.
+- `f` MUST refer to a function or closure with the `suspend` effect.
 - `spawn` is a statement returning `unit` in v1.
 
 Semantics:
@@ -3118,8 +3333,9 @@ spawn_thread f(args...);
 ```
 
 Rules:
-- `f` is a (non-suspend) function.
+- `f` is a (non-suspend) function or closure.
 - All argument types MUST satisfy `Send`.
+- If `f` is a closure, the closure itself MUST satisfy `Send` (i.e., all captured values must satisfy `Send`; §3.9).
 - `spawn_thread` is a statement returning `unit`.
 
 Semantics:
@@ -3251,6 +3467,9 @@ If marshalling cannot be performed (unsupported ABI, missing layout metadata, un
 5) Specify prelude location/definition of `box<T>.new` intrinsic method (§7.4)
 6) Specify representation/ABI attributes for FFI: `@repr(transparent)` and `@repr(C)`; define compiled layout metadata requirements (§12.7, §19.6.1, §23)
 7) Define universal marshalling surface for strings/arrays/callbacks under FFI (beyond POD + ptr) (§23)
+8) Closure parameter type inference from expected type (§9.7.2)
+9) Explicit capture list syntax for closures (§9.7.3)
+10) Function reference expressions — obtaining a value of function type from a named function declaration (§3.9)
 
 ---
 End.
