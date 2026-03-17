@@ -356,11 +356,13 @@ impl Generator {
         result
     }
 
-    /// Create a new generator for compiling imported modules (skips builtin preload to avoid recursion)
+    /// Create a new generator for compiling imported modules
     fn new_for_module(
         module_provider: Box<dyn crate::ModuleProvider>,
         module_path: String,
     ) -> Self {
+        // When compiling the builtin module itself, skip preloading builtins
+        let is_builtin = module_path == "builtin";
         let mut generator = Generator {
             builder: ByteCodeBuilder::new(),
             symbol_table: SymbolTable::new(),
@@ -374,7 +376,7 @@ impl Generator {
             loop_context_stack: Vec::new(),
             string_constants: Vec::new(),
             current_self_type: None,
-            is_compiling_builtin: true, // Skip builtin preload to avoid infinite recursion
+            is_compiling_builtin: is_builtin,
             enclosing_type_params: Vec::new(),
         };
         // Override root module metadata with this module_path
