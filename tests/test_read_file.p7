@@ -1,11 +1,11 @@
-// Test read_file API and __script_dir__() built-in intrinsic function
+// Test read_file API and __entry_script_dir__() built-in intrinsic function
 import test.test;
 import std.io;
 
 // Test: __script_dir__() is non-null when run from a filesystem-backed script
 @test(expected_type = "string", expected_value = "has_dir")
 fn test_script_dir_is_non_null() -> string {
-    let dir: ?string = __script_dir__();
+    let dir: ?string = __entry_script_dir__();
     let result = dir ?? "no_dir";
     if result == "no_dir" {
         "no_dir"
@@ -17,7 +17,7 @@ fn test_script_dir_is_non_null() -> string {
 // Test: read_file returns Some(contents) for an existing file
 @test(expected_type = "string", expected_value = "Hello from file!")
 fn test_read_file_existing() -> string {
-    let dir = __script_dir__() ?? ".";
+    let dir = __entry_script_dir__() ?? ".";
     let path = f"{dir}/fixtures/hello.txt";
     let content = io.read_file(path);
     content ?? "READ_FAILED"
