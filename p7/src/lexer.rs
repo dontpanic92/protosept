@@ -181,24 +181,25 @@ impl Lexer {
     }
 
     fn read_char(&mut self) {
-        if self.peek_char() == Some('\n') {
-            self.line += 1;
-            self.col = 1;
-        } else {
-            self.col += 1;
-        }
-
-        if self.position < self.input.len() {
-            self.position += 1;
+        if let Some(c) = self.peek_char() {
+            if c == '\n' {
+                self.line += 1;
+                self.col = 1;
+            } else {
+                self.col += 1;
+            }
+            self.position += c.len_utf8();
         }
     }
 
     fn peek_char(&self) -> Option<char> {
-        self.input.chars().nth(self.position)
+        self.input[self.position..].chars().next()
     }
 
     fn peek_char2(&self) -> Option<char> {
-        self.input.chars().nth(self.position + 1)
+        let mut chars = self.input[self.position..].chars();
+        chars.next();
+        chars.next()
     }
 
     fn skip_whitespace(&mut self) {
