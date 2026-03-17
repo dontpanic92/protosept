@@ -58,7 +58,7 @@ fn string_len_bytes(ctx: &mut Context) -> ContextResult<()> {
 
     match string_val {
         Data::String(s) => {
-            let byte_len = s.len() as i32;
+            let byte_len = s.len() as i64;
             ctx.stack_frame_mut()?.stack.push(Data::Int(byte_len));
             Ok(())
         }
@@ -384,7 +384,7 @@ fn array_len(ctx: &mut Context) -> ContextResult<()> {
 
     match array {
         Data::Array(elements) => {
-            let len = elements.len() as i32;
+            let len = elements.len() as i64;
             ctx.stack_frame_mut()?.stack.push(Data::Int(len));
             Ok(())
         }
@@ -418,7 +418,7 @@ fn array_slice(ctx: &mut Context) -> ContextResult<()> {
 
     match (array, start, end) {
         (Data::Array(elements), Data::Int(start_idx), Data::Int(end_idx)) => {
-            let len = elements.len() as i32;
+            let len = elements.len() as i64;
 
             // Clamp start and end indices
             let clamped_start = start_idx.max(0).min(len) as usize;
@@ -617,7 +617,7 @@ fn string_len_chars(ctx: &mut Context) -> ContextResult<()> {
 
     match string_val {
         Data::String(s) => {
-            let char_len = s.chars().count() as i32;
+            let char_len = s.chars().count() as i64;
             ctx.stack_frame_mut()?.stack.push(Data::Int(char_len));
             Ok(())
         }
@@ -647,7 +647,7 @@ fn string_substring(ctx: &mut Context) -> ContextResult<()> {
 
     match (self_val, start_val, end_val) {
         (Data::String(s), Data::Int(start), Data::Int(end)) => {
-            let char_count = s.chars().count() as i32;
+            let char_count = s.chars().count() as i64;
             let clamped_start = start.max(0).min(char_count) as usize;
             let clamped_end = end.max(0).min(char_count) as usize;
 
@@ -744,7 +744,7 @@ fn string_index_of(ctx: &mut Context) -> ContextResult<()> {
         (Data::String(s), Data::String(needle)) => {
             // Find byte offset, then convert to char index
             let result = match s.find(&needle) {
-                Some(byte_pos) => s[..byte_pos].chars().count() as i32,
+                Some(byte_pos) => s[..byte_pos].chars().count() as i64,
                 None => -1,
             };
             ctx.stack_frame_mut()?.stack.push(Data::Int(result));

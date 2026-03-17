@@ -104,7 +104,7 @@ impl Generator {
         match expression {
             Expression::Identifier(identifier) => self.generate_identifier(identifier),
             Expression::IntegerLiteral(value) => {
-                self.builder.ldi(value as i32);
+                self.builder.ldi(value);
                 Ok(Type::Primitive(PrimitiveType::Int))
             }
             Expression::FloatLiteral(value) => {
@@ -811,7 +811,7 @@ impl Generator {
 
         if let Some((variant_index, (_, field_types))) = variant_opt {
             if field_types.is_empty() {
-                self.builder.ldi(variant_index as i32);
+                self.builder.ldi(variant_index as i64);
                 Ok(object_ty)
             } else {
                 Err(SemanticError::TypeMismatch {
@@ -1004,7 +1004,7 @@ impl Generator {
         };
 
         // Push element count onto stack
-        self.builder.ldi(elements.len() as i32);
+        self.builder.ldi(elements.len() as i64);
 
         // Call array.new host function
         let string_id = self.add_string_constant("array.new".to_string());

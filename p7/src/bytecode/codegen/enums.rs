@@ -74,7 +74,7 @@ impl Generator {
 
         // For payload variants, generate code to create the enum value
         // First, push the variant index
-        self.builder.ldi(variant_index as i32);
+        self.builder.ldi(variant_index as i64);
 
         // Then push all the field values
         for (arg_opt, expected_type) in arguments.iter().zip(field_types.iter()) {

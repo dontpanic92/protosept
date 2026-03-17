@@ -189,7 +189,7 @@ fn run_test_case(
 
     let is_match = match &p7_result {
         P7Value::Int(actual_val) => expected_value_str
-            .parse::<i32>()
+            .parse::<i64>()
             .map_or(false, |expected_val| *actual_val == expected_val),
         P7Value::Float(actual_val) => expected_value_str
             .parse::<f64>()

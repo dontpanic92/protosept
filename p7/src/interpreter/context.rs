@@ -15,7 +15,7 @@ pub type HostFunction = fn(&mut Context) -> ContextResult<()>;
 
 #[derive(Debug, Clone)]
 pub enum Data {
-    Int(i32),
+    Int(i64),
     Float(f64),
     String(String),
     /// Reference to a heap-allocated struct (index into Context.heap).
@@ -34,7 +34,7 @@ pub enum Data {
         concrete_type_id: u32,
     },
     /// Exception value (enum variant ID) - used for try-catch as special return value
-    Exception(i32),
+    Exception(i64),
     /// Array value - immutable collection of Data values
     Array(Vec<Data>),
     /// Null value for nullable types
@@ -43,8 +43,8 @@ pub enum Data {
     Some(Box<Data>),
 }
 
-impl From<i32> for Data {
-    fn from(value: i32) -> Self {
+impl From<i64> for Data {
+    fn from(value: i64) -> Self {
         Data::Int(value)
     }
 }
@@ -115,19 +115,19 @@ macro_rules! comparison_op {
         let is_equality_op = matches!(stringify!($op), "==" | "!=");
         match (a, b) {
             (Data::Int(a), Data::Int(b)) => {
-                $self.stack_frame_mut()?.stack.push(Data::Int((a $op b) as i32));
+                $self.stack_frame_mut()?.stack.push(Data::Int((a $op b) as i64));
             }
             (Data::Float(a), Data::Float(b)) => {
-                $self.stack_frame_mut()?.stack.push(Data::Int((a $op b) as i32));
+                $self.stack_frame_mut()?.stack.push(Data::Int((a $op b) as i64));
             }
             (Data::Int(a), Data::Float(b)) => {
-                $self.stack_frame_mut()?.stack.push(Data::Int(((a as f64) $op b) as i32));
+                $self.stack_frame_mut()?.stack.push(Data::Int(((a as f64) $op b) as i64));
             }
             (Data::Float(a), Data::Int(b)) => {
-                $self.stack_frame_mut()?.stack.push(Data::Int((a $op (b as f64)) as i32));
+                $self.stack_frame_mut()?.stack.push(Data::Int((a $op (b as f64)) as i64));
             }
             (Data::String(a), Data::String(b)) if is_equality_op => {
-                $self.stack_frame_mut()?.stack.push(Data::Int((a $op b) as i32));
+                $self.stack_frame_mut()?.stack.push(Data::Int((a $op b) as i64));
             }
             (Data::String(_), _) | (_, Data::String(_)) => {
                 return Err(RuntimeError::Other("Comparison on string".to_string()));
@@ -481,19 +481,19 @@ impl Context {
                         unimplemented!();
                     }
                 }
-                Instruction::And => self.binary_op_int(|a, b| (a != 0 && b != 0) as i32)?,
-                Instruction::Or => self.binary_op_int(|a, b| (a != 0 || b != 0) as i32)?,
+                Instruction::And => self.binary_op_int(|a, b| (a != 0 && b != 0) as i64)?,
+                Instruction::Or => self.binary_op_int(|a, b| (a != 0 || b != 0) as i64)?,
                 Instruction::Not => {
                     if let Some(data) = self.stack_frame_mut()?.stack.pop() {
                         match data {
                             Data::Int(i) => self
                                 .stack_frame_mut()?
                                 .stack
-                                .push(Data::Int((i == 0) as i32)),
+                                .push(Data::Int((i == 0) as i64)),
                             Data::Float(f) => self
                                 .stack_frame_mut()?
                                 .stack
-                                .push(Data::Int((f == 0.0) as i32)),
+                                .push(Data::Int((f == 0.0) as i64)),
                             Data::String(_) => {
                                 return Err(RuntimeError::Other(
                                     "Cannot apply logical NOT to string".to_string(),
@@ -1137,7 +1137,7 @@ impl Context {
 
     fn binary_op_int<F>(&mut self, op: F) -> ContextResult<()>
     where
-        F: Fn(i32, i32) -> i32,
+        F: Fn(i64, i64) -> i64,
     {
         let b = self
             .stack_frame_mut()?

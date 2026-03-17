@@ -10,7 +10,7 @@ use crate::semantic::{Symbol, SymbolKind};
 #[derive(Debug, Clone)]
 pub enum Instruction {
     #[brw(magic = 0u8)]
-    Ldi(i32),
+    Ldi(i64),
 
     #[brw(magic = 1u8)]
     Ldf(f64),
