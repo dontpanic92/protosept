@@ -15,6 +15,7 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("string.starts_with".to_string(), string_starts_with);
     ctx.register_host_function("string.contains".to_string(), string_contains);
     ctx.register_host_function("string.ends_with".to_string(), string_ends_with);
+    ctx.register_host_function("string.repeat".to_string(), string_repeat);
     ctx.register_host_function("display.int".to_string(), display_int);
     ctx.register_host_function("display.float".to_string(), display_float);
     ctx.register_host_function("display.bool".to_string(), display_bool);
@@ -862,6 +863,26 @@ fn string_ends_with(ctx: &mut Context) -> ContextResult<()> {
         }
         _ => Err(RuntimeError::Other(
             "string.ends_with: invalid argument types".to_string(),
+        )),
+    }
+}
+
+fn string_repeat(ctx: &mut Context) -> ContextResult<()> {
+    let n_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let self_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+
+    match (self_val, n_val) {
+        (Data::String(s), Data::Int(n)) => {
+            let result = if n <= 0 {
+                String::new()
+            } else {
+                s.repeat(n as usize)
+            };
+            ctx.stack_frame_mut()?.stack.push(Data::String(result));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "string.repeat: invalid argument types".to_string(),
         )),
     }
 }

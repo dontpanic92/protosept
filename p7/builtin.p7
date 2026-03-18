@@ -57,6 +57,10 @@ pub struct string() {
     // Return true (1) if the string ends with the given suffix.
     @intrinsic(name="string.ends_with")
     pub fn ends_with(ref self, suffix: string) -> bool;
+
+    // Repeat the string n times.
+    @intrinsic(name="string.repeat")
+    pub fn repeat(ref self, n: int) -> string;
 }
 
 @builtin()
