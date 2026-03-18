@@ -364,7 +364,12 @@ impl Generator {
             })?
             .clone();
 
-        let ret_type = function_def.return_type.clone();
+        // Map the return type from the imported module's type table to the current
+        // module's type table.  Without this, TypeIds in the return type (e.g. a
+        // struct defined in the imported module) would refer to the wrong entries.
+        let imported_module = self.imported_modules.get(&module_path).unwrap().clone();
+        let mut type_map = std::collections::HashMap::new();
+        let ret_type = self.map_type_from_module(&imported_module, &function_def.return_type, &mut type_map)?;
 
         // Process arguments
         let ordered_exprs = self.process_arguments(

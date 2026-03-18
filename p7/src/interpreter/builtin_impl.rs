@@ -32,7 +32,11 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("array.set".to_string(), array_set);
     ctx.register_host_function("array.insert".to_string(), array_insert);
     ctx.register_host_function("array.remove".to_string(), array_remove);
+    ctx.register_host_function("array.index_of".to_string(), array_index_of);
     ctx.register_host_function("builtin.entry_script_dir".to_string(), builtin_entry_script_dir);
+    ctx.register_host_function("builtin.min".to_string(), builtin_min);
+    ctx.register_host_function("builtin.max".to_string(), builtin_max);
+    ctx.register_host_function("builtin.clamp".to_string(), builtin_clamp);
 }
 
 fn builtin_entry_script_dir(ctx: &mut Context) -> ContextResult<()> {
@@ -884,5 +888,73 @@ fn string_repeat(ctx: &mut Context) -> ContextResult<()> {
         _ => Err(RuntimeError::Other(
             "string.repeat: invalid argument types".to_string(),
         )),
+    }
+}
+
+fn array_index_of(ctx: &mut Context) -> ContextResult<()> {
+    // Pop elem (search target), then self (array)
+    let elem = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let array = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+
+    match array {
+        Data::Array(elements) => {
+            let mut found = -1i64;
+            for (i, e) in elements.iter().enumerate() {
+                if *e == elem {
+                    found = i as i64;
+                    break;
+                }
+            }
+            ctx.stack_frame_mut()?.stack.push(Data::Int(found));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "array.index_of: first argument must be an array".to_string(),
+        )),
+    }
+}
+
+fn builtin_min(ctx: &mut Context) -> ContextResult<()> {
+    let b = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let a = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    match (a, b) {
+        (Data::Int(a), Data::Int(b)) => {
+            ctx.stack_frame_mut()?.stack.push(Data::Int(a.min(b)));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other("min: arguments must be int".to_string())),
+    }
+}
+
+fn builtin_max(ctx: &mut Context) -> ContextResult<()> {
+    let b = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let a = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    match (a, b) {
+        (Data::Int(a), Data::Int(b)) => {
+            ctx.stack_frame_mut()?.stack.push(Data::Int(a.max(b)));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other("max: arguments must be int".to_string())),
+    }
+}
+
+fn builtin_clamp(ctx: &mut Context) -> ContextResult<()> {
+    let hi = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let lo = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let value = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    match (value, lo, hi) {
+        (Data::Int(v), Data::Int(lo), Data::Int(hi)) => {
+            ctx.stack_frame_mut()?.stack.push(Data::Int(v.clamp(lo, hi)));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other("clamp: arguments must be int".to_string())),
     }
 }

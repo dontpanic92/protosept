@@ -350,9 +350,9 @@ impl Generator {
                 self.builder.neg();
                 Ok(ty)
             }
-            TokenType::Not => {
+            TokenType::Not | TokenType::Exclamation => {
                 self.builder.not();
-                Ok(ty)
+                Ok(Type::Primitive(PrimitiveType::Bool))
             }
             TokenType::Multiply => self.generate_deref(ty, &operator),
             _ => unimplemented!(),
@@ -643,6 +643,8 @@ impl Generator {
                 | TokenType::GreaterThanOrEqual
                 | TokenType::LessThan
                 | TokenType::LessThanOrEqual
+                | TokenType::And
+                | TokenType::Or
         );
         let is_equality = matches!(
             operator.token_type,

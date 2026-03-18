@@ -112,9 +112,25 @@ pub struct array<T>() {
     // Returns null if index is out-of-bounds.
     @intrinsic(name="array.remove")
     pub fn remove(box self, i: int) -> ?T;
+
+    // Return the index of the first element equal to `elem`, or -1 if not found.
+    @intrinsic(name="array.index_of")
+    pub fn index_of(ref self, elem: T) -> int;
 }
 
 // Return the containing directory of the entry script, or null if the script
 // did not originate from a filesystem path (e.g. REPL, in-memory).
 @intrinsic(name="builtin.entry_script_dir")
 pub fn __entry_script_dir__() -> ?string;
+
+// Return the smaller of two integers.
+@intrinsic(name="builtin.min")
+pub fn min(a: int, b: int) -> int;
+
+// Return the larger of two integers.
+@intrinsic(name="builtin.max")
+pub fn max(a: int, b: int) -> int;
+
+// Clamp value to [lo, hi] range.
+@intrinsic(name="builtin.clamp")
+pub fn clamp(value: int, lo: int, hi: int) -> int;

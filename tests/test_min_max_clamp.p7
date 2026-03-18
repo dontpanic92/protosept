@@ -1,0 +1,25 @@
+import test.test;
+
+@test(expected_type = "int", expected_value = "3")
+fn test_min() -> int { return min(3, 7); }
+
+@test(expected_type = "int", expected_value = "3")
+fn test_min_reversed() -> int { return min(7, 3); }
+
+@test(expected_type = "int", expected_value = "7")
+fn test_max() -> int { return max(3, 7); }
+
+@test(expected_type = "int", expected_value = "7")
+fn test_max_reversed() -> int { return max(7, 3); }
+
+@test(expected_type = "int", expected_value = "5")
+fn test_clamp_in_range() -> int { return clamp(5, 0, 10); }
+
+@test(expected_type = "int", expected_value = "0")
+fn test_clamp_below() -> int { return clamp(-5, 0, 10); }
+
+@test(expected_type = "int", expected_value = "10")
+fn test_clamp_above() -> int { return clamp(15, 0, 10); }
+
+@test(expected_type = "int", expected_value = "0")
+fn test_max_with_zero() -> int { return max(-5, 0); }

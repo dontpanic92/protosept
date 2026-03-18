@@ -1,0 +1,32 @@
+import test.test;
+
+@test(expected_type = "int", expected_value = "1")
+fn test_index_of_found() -> int {
+    let arr = ["a", "b", "c"];
+    return arr.index_of("b");
+}
+
+@test(expected_type = "int", expected_value = "-1")
+fn test_index_of_not_found() -> int {
+    let arr = ["a", "b", "c"];
+    return arr.index_of("z");
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_index_of_first() -> int {
+    let arr = [10, 20, 30];
+    return arr.index_of(10);
+}
+
+@test(expected_type = "int", expected_value = "2")
+fn test_index_of_last() -> int {
+    let arr = [10, 20, 30];
+    return arr.index_of(30);
+}
+
+@test(expected_type = "int", expected_value = "-1")
+fn test_index_of_empty() -> int {
+    let arr = box([""]);
+    arr.clear();
+    return arr.index_of("x");
+}

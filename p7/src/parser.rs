@@ -10,6 +10,7 @@ use crate::lexer::{InterpolatedStringPart as LexInterpolatedStringPart, Lexer, T
 
 const UNARY_OPERATIONS: &[TokenType] = &[
     TokenType::Not,
+    TokenType::Exclamation,
     TokenType::Plus,
     TokenType::Minus,
     TokenType::Multiply, // unary `*` for deref of `ref<T>`
@@ -256,6 +257,14 @@ impl Parser {
                 TokenType::Null => {
                     self.consume();
                     Expression::NullLiteral
+                }
+                TokenType::True => {
+                    self.consume();
+                    Expression::BooleanLiteral(true)
+                }
+                TokenType::False => {
+                    self.consume();
+                    Expression::BooleanLiteral(false)
                 }
                 TokenType::Identifier(_) => {
                     let identifier = self.parse_identifier()?;

@@ -1,0 +1,9 @@
+pub struct Pos(pub row: int, pub col: int);
+
+pub fn make_pos(r: int, c: int) -> Pos {
+    return Pos(r, c);
+}
+
+pub fn get_row(p: Pos) -> int {
+    return p.row;
+}

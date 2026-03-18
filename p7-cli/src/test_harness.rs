@@ -173,7 +173,9 @@ fn run_test_case(
     let expected_value_str = &test_case.expected_value;
 
     let actual_type = match p7_result {
-        P7Value::Int(_) => "int",
+        P7Value::Int(_) => {
+            if *expected_type == "bool" { "bool" } else { "int" }
+        }
         P7Value::Float(_) => "float",
         P7Value::String(_) => "string",
         _ => "unknown",
@@ -188,9 +190,23 @@ fn run_test_case(
     }
 
     let is_match = match &p7_result {
-        P7Value::Int(actual_val) => expected_value_str
-            .parse::<i64>()
-            .map_or(false, |expected_val| *actual_val == expected_val),
+        P7Value::Int(actual_val) => {
+            if *expected_type == "bool" {
+                let expected_bool = match expected_value_str.as_str() {
+                    "true" => 1i64,
+                    "false" => 0i64,
+                    _ => return Ok(TestResult::Failure(FailureReason::ValueMismatch {
+                        expected: expected_value_str.clone(),
+                        found: actual_val.to_string(),
+                    })),
+                };
+                *actual_val == expected_bool
+            } else {
+                expected_value_str
+                    .parse::<i64>()
+                    .map_or(false, |expected_val| *actual_val == expected_val)
+            }
+        }
         P7Value::Float(actual_val) => expected_value_str
             .parse::<f64>()
             .map_or(false, |expected_val| {

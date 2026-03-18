@@ -13,7 +13,7 @@ pub type ContextResult<T> = std::result::Result<T, RuntimeError>;
 /// Takes a mutable reference to the context to access the stack
 pub type HostFunction = fn(&mut Context) -> ContextResult<()>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Data {
     Int(i64),
     Float(f64),

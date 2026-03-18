@@ -1,0 +1,73 @@
+import test.test;
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_true_literal() -> bool { return true; }
+
+@test(expected_type = "bool", expected_value = "false")
+fn test_false_literal() -> bool { return false; }
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_comparison_returns_bool() -> bool { return 1 < 2; }
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_and_true() -> bool { return true && true; }
+
+@test(expected_type = "bool", expected_value = "false")
+fn test_and_false() -> bool { return true && false; }
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_or_true() -> bool { return false || true; }
+
+@test(expected_type = "bool", expected_value = "false")
+fn test_or_false() -> bool { return false || false; }
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_not_false() -> bool { return !false; }
+
+@test(expected_type = "bool", expected_value = "false")
+fn test_not_true() -> bool { return !true; }
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_compound_and() -> bool {
+    let x = 5;
+    return x > 0 && x < 10;
+}
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_compound_or() -> bool {
+    let x = 15;
+    return x < 0 || x > 10;
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_if_with_and() -> int {
+    let x = 5;
+    if x >= 3 && x <= 10 {
+        return 1;
+    }
+    return 0;
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_if_with_or() -> int {
+    let x = 15;
+    if x < 0 || x > 10 {
+        return 1;
+    }
+    return 0;
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_if_with_not() -> int {
+    if !(5 > 10) {
+        return 1;
+    }
+    return 0;
+}
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_bool_var() -> bool {
+    var flag = false;
+    flag = true;
+    return flag;
+}

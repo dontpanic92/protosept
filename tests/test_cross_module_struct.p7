@@ -1,0 +1,57 @@
+import test.test;
+import cross_module_test.types;
+
+@test(expected_type = "int", expected_value = "10")
+fn test_use_cross_module_fn() -> int {
+    let p = types.make_pos(10, 20);
+    return types.get_row(p);
+}
+
+@test(expected_type = "int", expected_value = "20")
+fn test_cross_module_field_access() -> int {
+    let p = types.make_pos(10, 20);
+    return p.col;
+}
+
+fn local_get_row(p: types.Pos) -> int {
+    return p.row;
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_cross_module_type_in_signature() -> int {
+    let p = types.make_pos(42, 99);
+    return local_get_row(p);
+}
+
+@test(expected_type = "int", expected_value = "7")
+fn test_construct_cross_module_struct() -> int {
+    let p = types.Pos(7, 8);
+    return types.get_row(p);
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_boxed_cross_module_struct() -> int {
+    let p = box(types.Pos(5, 6));
+    return p.row;
+}
+
+fn mutate_boxed_pos(p: box<types.Pos>) {
+    p.row = 100;
+}
+
+@test(expected_type = "int", expected_value = "100")
+fn test_boxed_cross_module_mutation() -> int {
+    let p = box(types.Pos(1, 2));
+    mutate_boxed_pos(p);
+    return p.row;
+}
+
+fn local_return_pos() -> types.Pos {
+    return types.Pos(33, 44);
+}
+
+@test(expected_type = "int", expected_value = "33")
+fn test_cross_module_type_in_return() -> int {
+    let p = local_return_pos();
+    return p.row;
+}

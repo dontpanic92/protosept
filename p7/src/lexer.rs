@@ -31,6 +31,8 @@ pub enum TokenType {
     Break,
     Continue,
     Null,
+    True,
+    False,
 
     // Identifiers and Literals
     Identifier(String),
@@ -750,7 +752,21 @@ impl Lexer {
             }
             Some('&') => {
                 self.read_char();
-                TokenType::Ampersand
+                if self.peek_char() == Some('&') {
+                    self.read_char();
+                    TokenType::And
+                } else {
+                    TokenType::Ampersand
+                }
+            }
+            Some('|') => {
+                self.read_char();
+                if self.peek_char() == Some('|') {
+                    self.read_char();
+                    TokenType::Or
+                } else {
+                    panic!("Unexpected character: |");
+                }
             }
             Some(',') => {
                 self.read_char();
@@ -853,6 +869,8 @@ impl Lexer {
                         "break" => TokenType::Break,
                         "continue" => TokenType::Continue,
                         "null" => TokenType::Null,
+                        "true" => TokenType::True,
+                        "false" => TokenType::False,
                         _ => TokenType::Identifier(ident),
                     }
                 } else if c.is_numeric() {

@@ -570,6 +570,25 @@ impl Generator {
             SemanticError::Other(format!("Type id {} not found in imported module", type_id))
         })?;
 
+        // Check if a type with the same qualified_name already exists in the
+        // current symbol table.  This ensures that multiple imports of the same
+        // type (e.g. via a return type mapping and a qualified type annotation)
+        // share a single TypeId.
+        let qualified_name = match type_def {
+            TypeDefinition::Struct(s) => &s.qualified_name,
+            TypeDefinition::Enum(e) => &e.qualified_name,
+            TypeDefinition::Proto(p) => &p.qualified_name,
+        };
+        if let Some(existing_symbol) = self
+            .symbol_table
+            .find_symbol_by_qualified_name(qualified_name)
+        {
+            if let SymbolKind::Type(existing_type_id) = existing_symbol.kind {
+                type_map.insert(type_id, existing_type_id);
+                return Ok(existing_type_id);
+            }
+        }
+
         let mapped_def = match type_def {
             TypeDefinition::Struct(s) => {
                 let fields = s
@@ -659,7 +678,7 @@ impl Generator {
         Ok(new_id)
     }
 
-    fn map_type_from_module(
+    pub(super) fn map_type_from_module(
         &mut self,
         module: &Module,
         ty: &Type,

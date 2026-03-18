@@ -3,7 +3,7 @@
 Tracked findings from building NaviText and other real-world usage.
 Items are removed once fixed; new items added as discovered.
 
-Last updated: 2026-03-17
+Last updated: 2026-03-18
 
 ---
 
@@ -66,6 +66,45 @@ match result {
 // Current: must use wildcard binding, no payload access
 ```
 
+### 9. No multiple return values or tuple returns
+**Impact: HIGH** — Functions can only return a single value. The editor uses
+`row * 100000 + col` to encode two ints into one return, then manually
+decodes at every call site. Before the struct refactor, `exec_menu_action`
+returned `"cr|cc|sa|d|cb"` as a pipe-delimited string with a hand-written
+int parser to decode it.
+
+Structs are the current workaround, but tuple returns would eliminate the
+need for single-use structs:
+```p7
+// Wanted:
+fn delete_selection(...) -> (int, int) { return (row, col); }
+let (r, c) = delete_selection(...);
+
+// Current: encode into int, decode at call site
+fn delete_selection(...) -> int { return row * 100000 + col; }
+let encoded = delete_selection(...);
+let r = encoded / 100000;
+let c = encoded - (r * 100000);
+```
+The spec defines tuple types (`(int, int)`) in §4.4, but destructuring
+`let` bindings are not implemented. This is the single biggest source
+of code complexity in the editor.
+
+### 10. ~~No `bool` in practice — everything is `int` flags~~
+**RESOLVED** — see Resolved Issues table below.
+
+### 11. ~~No `&&` / `||` working with `int` flags (no compound conditions)~~
+**RESOLVED** — see Resolved Issues table below.
+
+### 12. ~~Functions cannot accept or return cross-module structs cleanly~~
+**RESOLVED** — see Resolved Issues table below.
+
+### 13. ~~No `clamp` / `min` / `max` builtins for int~~
+**RESOLVED** — see Resolved Issues table below.
+
+### 14. ~~No `array.index_of()` for finding elements~~
+**RESOLVED** — see Resolved Issues table below.
+
 ---
 
 ## Resolved Issues
@@ -84,3 +123,8 @@ match result {
 | 14 | Single-file organization | Fixed: cross-module builtin resolution |
 | 9* | `string.contains()` | Fixed: added as builtin intrinsic |
 | 10* | Implicit return | Was already working (parser `BlockValue`) |
+| 12 | Cross-module struct passing | Fixed: map return types through `map_type_from_module`; deduplicate imported types by qualified_name in `import_type_from_module` |
+| 10 | No `bool` in practice | Fixed: added `true`/`false` keywords to lexer, `BooleanLiteral` parsing; `!` prefix operator |
+| 11 | No `&&` / `||` operators | Fixed: added `&&`/`||` two-character tokens to lexer; parser/codegen already supported `And`/`Or` |
+| 13 | No `min`/`max`/`clamp` | Fixed: added as builtin intrinsic functions |
+| 14 | No `array.index_of()` | Fixed: added as builtin intrinsic method on `array<T>` |
