@@ -853,15 +853,47 @@ fn maybe_int() -> ?int {
 
 ### 5.1 `let` and `var` bindings (slots)
 
-`let x = expr;` introduces an immutable slot.
+`let pattern = expr;` introduces one or more immutable slots by matching `expr` against `pattern`.
 
 - `let` slots are single-assignment.
 - Assigning to a `let` slot (e.g., `x = expr`) is ERROR.
+- When `pattern` is a plain identifier `x`, this is the common form `let x = expr;` and binds the whole value to `x`.
+- `pattern` MUST be an irrefutable pattern for the static type of `expr` (see §9.6.1.2); otherwise ERROR.
 
-`var x = expr;` introduces a mutable slot (v1).
+`var pattern = expr;` introduces one or more mutable slots (v1).
 
 - `var` slots can be reassigned: `x = new_expr;` where `new_expr` has the same type as the slot.
 - `var` slots are mutable but NOT addressable (see §0); borrowing via `ref(x)` where `x` is a `var` slot is ERROR.
+- `pattern` MUST be an irrefutable pattern for the static type of `expr` (see §9.6.1.2); otherwise ERROR.
+
+Values bound by a destructuring pattern flow into their bindings according to the standard value-flow rule (§6.1): `Copy` types are copied; other types are moved. The source expression is consumed exactly once.
+
+Destructuring assignment to existing places is not supported in v1; deconstruction is only allowed at binding sites (`let`, `var`, `for`).
+
+**Examples:**
+
+```p7
+// Simple identifier binding
+let x = 42;
+
+// Tuple destructuring
+let pair = (1, "hello");
+let (n, s) = pair;
+// n: int, s: string; pair is consumed
+
+// Tuple-struct destructuring
+struct Pair(pub int, pub int);
+let p = Pair(10, 20);
+let Pair(a, b) = p;
+
+// Record-struct destructuring
+struct Point(pub x: int, pub y: int);
+let pt = Point(1, 2);
+let Point(x = px, y = py) = pt;
+
+// Mutable bindings via pattern
+var (x, y) = get_pair();  // both x and y are mutable var slots
+```
 
 ### 5.2 Shadowing
 
@@ -1585,72 +1617,173 @@ Arm separator:
 - A trailing comma is permitted.
 - Each `expr` may be any expression, including a block.
 
-#### 9.6.1 Patterns (v1)
+#### 9.6.1 Patterns
 
-In v1, patterns are **value patterns** (equality tests), optionally with a binding.
+A **pattern** describes how a value is matched and optionally how bindings are introduced from its substructure. Patterns are used in:
 
-Grammar sketch:
-```
-named_pattern := [name ':'] pattern
-pattern       := literal | path
-path          := ident ('.' ident)*
-literal       := int_lit | float_lit | string_lit
-```
+- `match` arms (§9.6)
+- `let` and `var` bindings (§5.1)
+- `for` iteration bindings (§10.3)
+- `try ... else` handler arms (§14.2)
+- [[TODO]] function/closure parameters (deferred to a future version)
+
+##### 9.6.1.1 Pattern forms
 
 Supported pattern forms:
-- **Wildcard**: `_` matches any value.
-- **Literal patterns**: `42`, `3.14`, `"hi"` match values equal to that literal.
-- **Path patterns**: `EnumName.VariantName` (and longer qualified paths) match values equal to that path’s value.
-  - For enums, path patterns are valid only for **unit variants** in v1. Payload variants cannot be matched with path patterns alone.
-- **Named binding**: `name: pattern` binds `name` to the scrutinee value **when the arm matches**, then evaluates the arm expression.
-  - Commonly used with wildcard: `name: _`.
 
-**Equality requirement:**
+- **Wildcard**: `_` — matches any value; introduces no binding.
+- **Binding**: `name` — matches any value and binds `name` to the matched value. The legacy `name: pattern` form (where `name` binds the matched sub-value) is an alternative syntax that remains fully supported; `name` is not deprecated.
+- **Literal**: `42`, `3.14`, `"hi"`, `true`, `false`, `null` — matches the specific literal value; requires `Eq` (see below).
+- **Path**: `EnumName.VariantName` — matches a unit enum variant; requires `Eq`.
+- **Tuple**: `(p1, p2, ..., pn)` where `n ≥ 2` — matches a tuple value by position.
+- **Tuple-struct**: `TypeName(p1, ..., pn)` — matches a tuple-struct value by positional field index.
+- **Record-struct**: `TypeName(f1 = p1, f2 = p2, ..., fn = pn)` — matches a record-struct value by named fields. If a field pattern is written as just `fname` (without `= sub_pattern`), it is shorthand for `fname = fname` (binding the field value to a variable with the same name as the field).
+- **Enum payload variant**: `EnumName.Variant(p1, ..., pn)` — matches a specific payload variant and destructures its payload by position.
 
-Non-wildcard patterns (literal patterns and path patterns) test equality and therefore require the scrutinee type to satisfy `Eq`:
-- **Non-wildcard patterns** are literal patterns (e.g., `42`, `"hi"`) and path patterns (e.g., `Enum.Variant`)
-- **Wildcard patterns** are `_` (with or without a binding: `_` or `name: _`)
-- If the scrutinee has type `T` and any arm contains a non-wildcard pattern, then `T: Eq` MUST hold.
-- If `T` does not satisfy `Eq` and a non-wildcard pattern is used, it is ERROR.
-- Wildcard patterns (`_`) and named bindings to wildcard (`name: _`) do NOT require `Eq` (they match any value without testing equality).
+Grammar sketch:
 
-**Examples:**
-```p7
-// Valid: int satisfies Eq, using literal pattern
-match x {
-  0 => "zero",
-  n: _ => "non-zero",
-}
+```
+pattern            := '_'
+                    | ident
+                    | literal
+                    | path
+                    | '(' pattern ',' pattern (',' pattern)* ','? ')'
+                    | path '(' pattern_list? ')'
+                    | path '(' field_pattern_list ')'
 
-// Valid: enum with Eq, using path patterns
-enum[Eq] Status { Ok, Error }
-let s = Status.Ok;
-match s {
-  Status.Ok => "ok",
-  Status.Error => "error",
-}
+pattern_list       := pattern (',' pattern)* ','?
+field_pattern      := ident ('=' pattern)?
+field_pattern_list := field_pattern (',' field_pattern)* ','?
 
-// ERROR: Cannot use non-wildcard pattern if scrutinee type doesn't satisfy Eq
-struct NoEq { field: int }  // NoEq does NOT list [Eq, ...]
-let ne = NoEq { field: 42 };
-// This would be ERROR if we tried to use a literal or path pattern:
-// match ne { some_value => ... }  // ERROR: tests equality; NoEq does not satisfy Eq
-
-// Valid: Can use wildcard without Eq
-match ne {
-  obj: _ => obj.field,  // OK: wildcard doesn't test equality
-}
+named_pattern      := [ident ':'] pattern   -- alternative form; equivalent to ident binding sub-pattern
 ```
 
-Notes:
-- v1 does not support payload destructuring such as `Result.Ok(x) => ...` or `Result.Ok(_) => ...`.
+The `path` in a nominal pattern must resolve to a struct name, an enum type, or a qualified enum variant name.
+
+**Equality requirement for literal and path patterns:**
+
+Literal patterns and path patterns for unit enum variants test equality and require the scrutinee type to satisfy `Eq`. Structural patterns (tuple, tuple-struct, record-struct, enum payload) deconstruct by type structure and do **not** require `Eq`.
+
+##### 9.6.1.2 Irrefutable and refutable patterns
+
+A pattern is **irrefutable** for a type `T` if it is statically guaranteed to match every value of type `T`. Otherwise it is **refutable**.
+
+**Irrefutable patterns:**
+- `_` (wildcard)
+- `name` (binding / named wildcard)
+- Tuple patterns `(p1, ..., pn)` where all sub-patterns are irrefutable and arity matches the tuple type.
+- Tuple-struct patterns `TypeName(p1, ..., pn)` where all sub-patterns are irrefutable and arity matches the struct definition.
+- Record-struct patterns `TypeName(f1 = p1, ..., fn = pn)` that mention every field of the struct at least once and all sub-patterns are irrefutable. (In v1, mentioning every field *exactly* once is required; partial record patterns with `..` are deferred to a future version.)
+
+**Refutable patterns:**
+- Literal patterns.
+- Path patterns for enum unit variants.
+- Enum payload variant patterns (a multi-variant enum may not be that variant).
+- Any pattern containing a refutable sub-pattern.
+
+**Contextual rules:**
+- `let`, `var`, and `for` MUST use irrefutable patterns. Using a refutable pattern in these contexts (e.g., `let Result.Ok(x) = expr;`) is ERROR.
+- `match` and `try ... else` handler arms may use refutable patterns.
+
+##### 9.6.1.3 Pattern typing
+
+A pattern is checked against the **scrutinee type** `T`:
+
+- `_` and `name` are valid for any type `T`.
+- Literal patterns require that the literal's type is compatible with `T` and that `T: Eq`.
+- Path patterns for unit enum variants require `T` to be that enum type and `T: Eq`.
+- Tuple patterns `(p1, ..., pn)` require `T` to be a tuple type `(T1, ..., Tn)` of matching arity; each `pi` is checked against `Ti`.
+- Tuple-struct patterns `TypeName(p1, ..., pn)` require `T = TypeName` where `TypeName` is a tuple struct; each `pi` is checked against the type of positional field `i`.
+- Record-struct patterns `TypeName(f1 = p1, ..., fn = pn)` require `T = TypeName` where `TypeName` is a record struct; each field `fi` must exist in `TypeName` and `pi` is checked against `fi`'s declared type. In v1, every field of the struct MUST be mentioned exactly once (partial record patterns with `..` are not supported).
+- Enum payload variant patterns `EnumName.Variant(p1, ..., pn)` require `T = EnumName`; the variant must exist and have exactly `n` payload fields; each `pi` is checked against the type of payload field `i`.
+
+**Field visibility:**
+
+For struct patterns (tuple-struct and record-struct), every mentioned field MUST be visible at the pattern site, applying the same rules as field access (§12.4). Destructuring a non-visible field is ERROR.
+
+**Example (visibility restriction):**
+```p7
+struct Secret(pub x: int, y: int);  // y is private
+
+// outside the declaring module:
+let Secret(x = a, y = b) = s;  // ERROR: field y is not visible
+let Secret(x = a) = s;         // ERROR in v1: all fields must be mentioned
+```
+
+##### 9.6.1.4 Binding and value-flow semantics
+
+When a pattern introduces bindings from sub-values, each bound sub-value flows into its binding according to the standard value-flow rule (§6.1):
+- If the sub-value's type satisfies `Copy`, it is copied.
+- Otherwise it is moved.
+
+The matched source value is consumed exactly once. Borrow patterns are not supported in v1; deconstruction does not introduce implicit borrowing. To destructure a value held through `ref<T>`, `box<T>`, or `robox<T>`, the inner type `T` must satisfy `Copy`, because applying a pattern requires materializing the inner value, which for these handle types requires a dereference — and dereferencing a non-`Copy` inner type is not permitted.
+
+**Pattern examples:**
+
+```p7
+// Wildcard — no binding
+match x {
+  _ => "anything",
+}
+
+// Binding — whole value bound to n
+match x {
+  0 => "zero",
+  n => f"non-zero: {n}",
+}
+
+// Legacy named wildcard (still supported)
+match x {
+  0    => "zero",
+  n: _ => f"non-zero: {n}",
+}
+
+// Enum payload variant patterns
+enum Result<T, E>(
+  Ok: T,
+  Err: E,
+);
+
+fn describe(r: Result<int, string>) -> string {
+  match r {
+    Result.Ok(n)  => f"ok: {n}",
+    Result.Err(e) => f"err: {e}",
+  }
+}
+
+// Tuple pattern in match
+match pair {
+  (0, s) => f"zero with {s}",
+  (n, s) => f"{n} with {s}",
+}
+
+// Record-struct pattern in match
+struct Point(pub x: int, pub y: int);
+match pt {
+  Point(x = 0, y = 0) => "origin",
+  Point(x = px, y = py) => f"({px}, {py})",
+}
+
+// Enum with unit and payload variants
+enum Status(
+  Pending,
+  Active: int,
+  Failed: (string, int),
+);
+
+match s {
+  Status.Pending        => "pending",
+  Status.Active(code)   => f"active: {code}",
+  Status.Failed(msg, n) => f"failed: {msg} ({n})",
+}
+```
 
 #### 9.6.2 Evaluation and control flow
 
 - The `scrutinee` expression is evaluated exactly once.
 - Arms are tried in source order.
 - For each arm:
-  - If `pattern` matches, the arm’s binding (if present) is introduced, then the arm expression is evaluated and becomes the result of the `match`.
+  - If `pattern` matches, all bindings introduced by the pattern are brought into scope, then the arm expression is evaluated and becomes the result of the `match`.
   - If `pattern` does not match, the next arm is tried.
 
 #### 9.6.3 Typing
@@ -1664,13 +1797,14 @@ Notes:
 
 - If it is not statically provable that some arm matches, the program is ill-formed (ERROR).
 - The simplest portable way to be exhaustive is to include a final wildcard arm `_ => ...`.
+- For enum types, listing all variants (including payload variants) exhaustively is also accepted without a wildcard.
 
 Example:
 ```p7
 fn classify(x: int) -> int {
   match x {
     0 => 0,
-    n: _ => n,
+    n => n,
   }
 }
 ```
@@ -1883,12 +2017,14 @@ Rules:
 
 Form:
 ```p7
-for x in expr { body }
+for pattern in expr { body }
 ```
 
 `expr` MUST have type:
-- `array<T>` (then `x: T`), or
-- `string` (then `x: char`).
+- `array<T>` (then the iteration element type is `T`), or
+- `string` (then the iteration element type is `char`).
+
+`pattern` MUST be an irrefutable pattern (§9.6.1.2) for the iteration element type; otherwise ERROR.
 
 Semantics:
 - `expr` is evaluated once.
@@ -1896,7 +2032,28 @@ Semantics:
 - `break` and `continue` behave as in `loop`.
 
 Binding rule:
-- `x` is a fresh binding each iteration.
+- All bindings introduced by `pattern` are fresh each iteration, following the standard value-flow rule (§6.1).
+- When `pattern` is a plain identifier `x`, this is the common form `for x in expr { ... }`.
+
+**Examples:**
+
+```p7
+// Simple identifier binding (existing form)
+for x in arr {
+  total = total + x;
+}
+
+// Tuple destructuring
+for (k, v) in entries {
+  process(k, v);
+}
+
+// Record-struct destructuring
+struct Point(pub x: int, pub y: int);
+for Point(x = px, y = py) in points {
+  draw(px, py);
+}
+```
 
 ---
 
@@ -2468,9 +2625,9 @@ If `expr` throws, the thrown enum value is propagated out of the current functio
 - The thrown value is discarded (not bound to any variable).
 
 **Pattern-matching handler form** (`try expr else { arms }`):
-- Arms use the same syntax as `match` arms (§9.6).
+- Arms use the same syntax as `match` arms (§9.6), including the full structural pattern grammar (§9.6.1).
 - The thrown enum value is the scrutinee for pattern matching.
-- Arms are tried in source order; the first matching arm's expression becomes the result.
+- Arms are tried in source order; the first matching arm’s expression becomes the result.
 
 Syntax:
 ```p7
@@ -2481,7 +2638,7 @@ try expr else {
 }
 ```
 
-Example:
+Example (unit variant patterns):
 ```p7
 enum FileError(
   NotFound,
@@ -2492,16 +2649,37 @@ fn[throws<FileError>] read_file(path: string) -> string { ... }
 
 fn safe_read(path: string) -> string {
   try read_file(path) else {
-    err: FileError.NotFound => "",
-    err: FileError.PermissionDenied => "[access denied]",
+    FileError.NotFound        => "",
+    FileError.PermissionDenied => "[access denied]",
   }
 }
 ```
 
-Arm patterns follow the same rules as `match` (§9.6.1):
+Example (payload variant patterns):
+```p7
+enum ParseError(
+  InvalidToken: string,
+  UnexpectedEof,
+);
+
+fn[throws<ParseError>] parse(input: string) -> int { ... }
+
+fn safe_parse(input: string) -> string {
+  try parse(input) else {
+    ParseError.InvalidToken(tok) => f"bad token: {tok}",
+    ParseError.UnexpectedEof     => "unexpected end of input",
+  }
+}
+```
+
+Arm patterns follow the same rules as `match` (§9.6.1), including the full structural pattern grammar. The thrown enum value is the scrutinee; all pattern forms supported in `match` are permitted here, including enum payload variant patterns.
+
+Summary of available pattern forms (see §9.6.1.1 for the full grammar):
 - **Wildcard**: `_` matches any thrown value.
-- **Path patterns**: `EnumName.VariantName` matches a specific enum variant (unit variants only in v1).
-- **Named binding**: `name: pattern` binds `name` to the thrown value when the arm matches.
+- **Binding**: `name` binds `name` to the thrown value.
+- **Path pattern**: `EnumName.VariantName` matches a specific unit enum variant.
+- **Enum payload variant**: `EnumName.Variant(p1, ..., pn)` matches a payload variant and binds its fields.
+- **Named binding (legacy)**: `name: pattern` binds `name` to the thrown value when the arm matches.
 
 Rules:
 - If `expr` completes normally, its value is the result.
