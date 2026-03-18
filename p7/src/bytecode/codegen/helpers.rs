@@ -422,6 +422,11 @@ impl Generator {
                     field: field.clone(),
                 })
             }
+            Pattern::EnumVariant { .. } | Pattern::StructPattern { .. } => {
+                Err(SemanticError::Other(
+                    "Destructuring patterns cannot be converted to expressions".to_string(),
+                ))
+            }
         }
     }
 

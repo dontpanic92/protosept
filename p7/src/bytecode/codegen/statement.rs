@@ -1,5 +1,5 @@
 use crate::ast::{
-    Attribute, EnumVariant, FunctionDeclaration, Identifier, ProtoMethod, StructField,
+    Attribute, EnumVariant, FunctionDeclaration, Identifier, Pattern, ProtoMethod, StructField,
     StructMethod, TypeParameter,
 };
 use crate::bytecode::Module;
@@ -21,6 +21,11 @@ impl Generator {
                 type_annotation,
                 expression,
             } => self.generate_let(is_mutable, identifier, type_annotation, expression),
+            Statement::LetDestructure {
+                is_mutable,
+                pattern,
+                expression,
+            } => self.generate_let_destructure(is_mutable, pattern, expression),
             Statement::Expression(expression) => self.generate_expression(expression),
             Statement::FunctionDeclaration(declaration) => self.generate_function_decl(declaration),
             Statement::Throw(expression) => self.generate_throw(expression),
@@ -123,6 +128,170 @@ impl Generator {
 
         self.builder.stvar(var_id);
         Ok(Type::Primitive(PrimitiveType::Unit))
+    }
+
+    fn generate_let_destructure(
+        &mut self,
+        is_mutable: bool,
+        pattern: Pattern,
+        expression: Expression,
+    ) -> SaResult<Type> {
+        match &pattern {
+            Pattern::StructPattern {
+                struct_name,
+                field_patterns,
+            } => {
+                let struct_type_id = match self.require_type_from_identifier(struct_name)? {
+                    Type::Struct(id) => id,
+                    _ => {
+                        return Err(SemanticError::TypeMismatch {
+                            lhs: "Struct type".to_string(),
+                            rhs: format!("'{}' is not a struct", struct_name.name),
+                            pos: struct_name.pos(),
+                        });
+                    }
+                };
+
+                let struct_def = match self.symbol_table.get_type(struct_type_id) {
+                    TypeDefinition::Struct(s) => s.clone(),
+                    _ => {
+                        return Err(SemanticError::Other(
+                            "Expected struct type definition".to_string(),
+                        ));
+                    }
+                };
+
+                if field_patterns.len() != struct_def.fields.len() {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: format!(
+                            "{} fields in struct '{}'",
+                            struct_def.fields.len(),
+                            struct_name.name
+                        ),
+                        rhs: format!("{} patterns provided", field_patterns.len()),
+                        pos: struct_name.pos(),
+                    });
+                }
+
+                // Generate RHS expression (pushes struct value on stack)
+                self.generate_expression(expression)?;
+
+                // Extract and bind each field
+                for (field_idx, sub_pat) in field_patterns.iter().enumerate() {
+                    if !sub_pat.is_wildcard() {
+                        if let Pattern::Identifier(id) = sub_pat {
+                            // Dup for all but nothing extra needed
+                            self.builder.dup();
+                            self.builder.ldfield(field_idx as u32);
+                            let field_ty = struct_def.fields[field_idx].1.clone();
+                            let var_id = self
+                                .local_scope
+                                .as_mut()
+                                .unwrap()
+                                .add_variable(id.name.clone(), field_ty, is_mutable)
+                                .map_err(|_| SemanticError::VariableOutsideFunction {
+                                    name: id.name.clone(),
+                                    pos: id.pos(),
+                                })?;
+                            self.builder.stvar(var_id);
+                        }
+                    }
+                }
+
+                // Pop the struct value from the stack
+                self.builder.pop();
+
+                Ok(Type::Primitive(PrimitiveType::Unit))
+            }
+
+            Pattern::EnumVariant {
+                enum_name,
+                variant_name,
+                sub_patterns,
+            } => {
+                let enum_type_id = match self.require_type_from_identifier(enum_name)? {
+                    Type::Enum(id) => id,
+                    _ => {
+                        return Err(SemanticError::TypeMismatch {
+                            lhs: "Enum type".to_string(),
+                            rhs: format!("'{}' is not an enum", enum_name.name),
+                            pos: enum_name.pos(),
+                        });
+                    }
+                };
+
+                let enum_def = match self.symbol_table.get_type(enum_type_id) {
+                    TypeDefinition::Enum(e) => e.clone(),
+                    _ => {
+                        return Err(SemanticError::Other(
+                            "Expected enum type definition".to_string(),
+                        ));
+                    }
+                };
+
+                let variant_opt = enum_def
+                    .variants
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (name, _))| name == &variant_name.name);
+
+                let (_variant_index, field_types) =
+                    if let Some((idx, (_, types))) = variant_opt {
+                        (idx, types.clone())
+                    } else {
+                        return Err(SemanticError::TypeMismatch {
+                            lhs: format!("Enum '{}'", enum_def.qualified_name),
+                            rhs: format!("Unknown variant '{}'", variant_name.name),
+                            pos: variant_name.pos(),
+                        });
+                    };
+
+                if sub_patterns.len() != field_types.len() {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: format!(
+                            "{} fields in variant '{}'",
+                            field_types.len(),
+                            variant_name.name
+                        ),
+                        rhs: format!("{} patterns provided", sub_patterns.len()),
+                        pos: variant_name.pos(),
+                    });
+                }
+
+                // Generate RHS expression
+                self.generate_expression(expression)?;
+
+                // Extract and bind each payload field
+                for (field_idx, sub_pat) in sub_patterns.iter().enumerate() {
+                    if !sub_pat.is_wildcard() {
+                        if let Pattern::Identifier(id) = sub_pat {
+                            self.builder.dup();
+                            self.builder.ldfield((field_idx + 1) as u32);
+                            let field_ty = field_types[field_idx].clone();
+                            let var_id = self
+                                .local_scope
+                                .as_mut()
+                                .unwrap()
+                                .add_variable(id.name.clone(), field_ty, is_mutable)
+                                .map_err(|_| SemanticError::VariableOutsideFunction {
+                                    name: id.name.clone(),
+                                    pos: id.pos(),
+                                })?;
+                            self.builder.stvar(var_id);
+                        }
+                    }
+                }
+
+                // Pop the enum value from the stack
+                self.builder.pop();
+
+                Ok(Type::Primitive(PrimitiveType::Unit))
+            }
+
+            _ => Err(SemanticError::Other(
+                "Unsupported pattern in let destructuring".to_string(),
+            )),
+        }
     }
 
     fn generate_function_decl(&mut self, declaration: FunctionDeclaration) -> SaResult<Type> {

@@ -722,12 +722,63 @@ impl Parser {
                     object: Box::new(pattern),
                     field,
                 };
+            } else if self.peek_match(TokenType::OpenParen) {
+                // Check if this is a destructuring pattern: Ident(...) or Ident.Ident(...)
+                match &pattern {
+                    Pattern::FieldAccess { object, field } => {
+                        // EnumName.Variant(...) pattern
+                        if let Pattern::Identifier(enum_name) = object.as_ref() {
+                            let enum_name = enum_name.clone();
+                            let variant_name = field.clone();
+                            self.consume_match(TokenType::OpenParen)?;
+                            let sub_patterns = self.parse_sub_patterns()?;
+                            self.consume_match(TokenType::CloseParen)?;
+                            pattern = Pattern::EnumVariant {
+                                enum_name,
+                                variant_name,
+                                sub_patterns,
+                            };
+                        } else {
+                            break;
+                        }
+                    }
+                    Pattern::Identifier(struct_name) => {
+                        // StructName(...) pattern
+                        let struct_name = struct_name.clone();
+                        self.consume_match(TokenType::OpenParen)?;
+                        let field_patterns = self.parse_sub_patterns()?;
+                        self.consume_match(TokenType::CloseParen)?;
+                        pattern = Pattern::StructPattern {
+                            struct_name,
+                            field_patterns,
+                        };
+                    }
+                    _ => break,
+                }
             } else {
                 break;
             }
         }
 
         Ok(pattern)
+    }
+
+    fn parse_sub_patterns(&mut self) -> ParseResult<Vec<Pattern>> {
+        let mut patterns = Vec::new();
+        if self.peek_match(TokenType::CloseParen) {
+            return Ok(patterns);
+        }
+        loop {
+            patterns.push(self.parse_pattern()?);
+            if self.consume_match(TokenType::Comma).is_err() {
+                break;
+            }
+            // Allow trailing comma
+            if self.peek_match(TokenType::CloseParen) {
+                break;
+            }
+        }
+        Ok(patterns)
     }
 
     fn parse_pattern(&mut self) -> ParseResult<Pattern> {
@@ -1895,6 +1946,52 @@ impl Parser {
                 self.consume();
 
                 let identifier = self.parse_identifier()?;
+
+                // Check for destructuring pattern: let Pos(r, c) = ...
+                if self.peek_match(TokenType::OpenParen) {
+                    let struct_name = identifier;
+                    self.consume_match(TokenType::OpenParen)?;
+                    let field_patterns = self.parse_sub_patterns()?;
+                    self.consume_match(TokenType::CloseParen)?;
+                    self.consume_match(TokenType::Assignment)?;
+                    let expression = self.parse_expression()?;
+                    self.consume_match(TokenType::Semicolon)?;
+                    return Ok(Statement::LetDestructure {
+                        is_mutable,
+                        pattern: Pattern::StructPattern {
+                            struct_name,
+                            field_patterns,
+                        },
+                        expression,
+                    });
+                }
+
+                // Check for enum destructuring: let Result.Ok(n) = ...
+                if self.peek_match(TokenType::Dot) {
+                    let saved_pos = self.position;
+                    self.consume(); // consume '.'
+                    if let Ok(variant_name) = self.parse_identifier() {
+                        if self.peek_match(TokenType::OpenParen) {
+                            let enum_name = identifier;
+                            self.consume_match(TokenType::OpenParen)?;
+                            let sub_patterns = self.parse_sub_patterns()?;
+                            self.consume_match(TokenType::CloseParen)?;
+                            self.consume_match(TokenType::Assignment)?;
+                            let expression = self.parse_expression()?;
+                            self.consume_match(TokenType::Semicolon)?;
+                            return Ok(Statement::LetDestructure {
+                                is_mutable,
+                                pattern: Pattern::EnumVariant {
+                                    enum_name,
+                                    variant_name,
+                                    sub_patterns,
+                                },
+                                expression,
+                            });
+                        }
+                    }
+                    self.position = saved_pos;
+                }
 
                 // Check for optional type annotation: let p: Type = ...
                 let type_annotation = if self.peek_match(TokenType::Colon) {

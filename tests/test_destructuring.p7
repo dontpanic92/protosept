@@ -1,0 +1,184 @@
+// Tests for pattern destructuring
+struct test(
+    pub expected_type: string,
+    pub expected_value: string,
+);
+
+// ===== Type Definitions =====
+
+struct Point(
+    x: int,
+    y: int,
+);
+
+struct Triple(
+    a: int,
+    b: int,
+    c: int,
+);
+
+enum Result(
+    Ok: int,
+    Err: int
+);
+
+enum Shape(
+    Circle: int,
+    Rect: (int, int)
+);
+
+// ===== Enum payload destructuring in match =====
+
+@test(expected_type = "int", expected_value = "42")
+fn test_match_enum_payload_ok() -> int {
+    let r = Result.Ok(42);
+    match r {
+        Result.Ok(n) => n,
+        Result.Err(e) => e,
+    }
+}
+
+@test(expected_type = "int", expected_value = "99")
+fn test_match_enum_payload_err() -> int {
+    let r = Result.Err(99);
+    match r {
+        Result.Ok(n) => n,
+        Result.Err(e) => e,
+    }
+}
+
+@test(expected_type = "int", expected_value = "10")
+fn test_match_enum_payload_circle() -> int {
+    let s = Shape.Circle(10);
+    match s {
+        Shape.Circle(radius) => radius,
+        Shape.Rect(w, h) => w + h,
+    }
+}
+
+@test(expected_type = "int", expected_value = "30")
+fn test_match_enum_payload_rect() -> int {
+    let s = Shape.Rect(10, 20);
+    match s {
+        Shape.Circle(radius) => radius,
+        Shape.Rect(w, h) => w + h,
+    }
+}
+
+@test(expected_type = "int", expected_value = "7")
+fn test_match_enum_payload_with_wildcard_arm() -> int {
+    let r = Result.Ok(7);
+    match r {
+        Result.Ok(n) => n,
+        _ => 0,
+    }
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_match_enum_payload_fallthrough_wildcard() -> int {
+    let r = Result.Err(99);
+    match r {
+        Result.Ok(n) => n,
+        _ => 0,
+    }
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_match_enum_ignore_field_with_underscore() -> int {
+    let s = Shape.Rect(5, 10);
+    match s {
+        Shape.Circle(_) => 0,
+        Shape.Rect(w, _) => w,
+    }
+}
+
+// ===== Struct destructuring in match =====
+
+@test(expected_type = "int", expected_value = "30")
+fn test_match_struct_destructure() -> int {
+    let p = Point(10, 20);
+    match p {
+        Point(x, y) => x + y,
+    }
+}
+
+@test(expected_type = "int", expected_value = "60")
+fn test_match_struct_destructure_triple() -> int {
+    let t = Triple(10, 20, 30);
+    match t {
+        Triple(a, b, c) => a + b + c,
+    }
+}
+
+@test(expected_type = "int", expected_value = "20")
+fn test_match_struct_ignore_field() -> int {
+    let p = Point(10, 20);
+    match p {
+        Point(_, y) => y,
+    }
+}
+
+// ===== Let destructuring with structs =====
+
+@test(expected_type = "int", expected_value = "30")
+fn test_let_struct_destructure() -> int {
+    let p = Point(10, 20);
+    let Point(x, y) = p;
+    x + y
+}
+
+@test(expected_type = "int", expected_value = "60")
+fn test_let_struct_destructure_triple() -> int {
+    let t = Triple(10, 20, 30);
+    let Triple(a, b, c) = t;
+    a + b + c
+}
+
+@test(expected_type = "int", expected_value = "10")
+fn test_let_struct_destructure_ignore() -> int {
+    let p = Point(10, 20);
+    let Point(x, _) = p;
+    x
+}
+
+// ===== Let destructuring with enum payloads =====
+
+@test(expected_type = "int", expected_value = "42")
+fn test_let_enum_destructure() -> int {
+    let r = Result.Ok(42);
+    let Result.Ok(n) = r;
+    n
+}
+
+@test(expected_type = "int", expected_value = "30")
+fn test_let_enum_destructure_multi() -> int {
+    let s = Shape.Rect(10, 20);
+    let Shape.Rect(w, h) = s;
+    w + h
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_let_enum_destructure_ignore() -> int {
+    let s = Shape.Rect(5, 10);
+    let Shape.Rect(w, _) = s;
+    w
+}
+
+// ===== Computed values in destructuring =====
+
+@test(expected_type = "int", expected_value = "15")
+fn test_match_enum_computed() -> int {
+    let r = Result.Ok(5);
+    match r {
+        Result.Ok(n) => n + 10,
+        Result.Err(e) => e - 10,
+    }
+}
+
+@test(expected_type = "int", expected_value = "200")
+fn test_match_struct_computed() -> int {
+    let p = Point(10, 20);
+    match p {
+        Point(x, y) => x * y,
+    }
+}

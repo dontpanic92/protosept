@@ -283,6 +283,17 @@ pub enum Pattern {
         object: Box<Pattern>,
         field: Identifier,
     },
+    /// Enum variant pattern: Result.Ok(n) or Status.Active(code, msg)
+    EnumVariant {
+        enum_name: Identifier,
+        variant_name: Identifier,
+        sub_patterns: Vec<Pattern>,
+    },
+    /// Struct destructure pattern: Pos(r, c)
+    StructPattern {
+        struct_name: Identifier,
+        field_patterns: Vec<Pattern>,
+    },
 }
 
 impl Pattern {
@@ -303,6 +314,11 @@ pub enum Statement {
         is_mutable: bool, // true for var, false for let
         identifier: Identifier,
         type_annotation: Option<Type>,
+        expression: Expression,
+    },
+    LetDestructure {
+        is_mutable: bool,
+        pattern: Pattern,
         expression: Expression,
     },
     Expression(Expression),
