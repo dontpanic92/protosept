@@ -1625,6 +1625,7 @@ A **pattern** describes how a value is matched and optionally how bindings are i
 - `let` and `var` bindings (§5.1)
 - `for` iteration bindings (§10.3)
 - `try ... else` handler arms (§14.2)
+- [[TODO]] function/closure parameters (deferred to a future version)
 
 ##### 9.6.1.1 Pattern forms
 
