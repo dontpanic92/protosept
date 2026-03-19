@@ -834,6 +834,20 @@ impl Generator {
             }
         }
 
+        // Check for module-qualified type access (e.g., module.Type in module.Type.Variant)
+        if let Expression::FieldAccess { object: ref inner_obj, field: ref inner_field } = *object {
+            if let Expression::Identifier(ref module_ident) = **inner_obj {
+                let qualified_name = format!("{}.{}", module_ident.name, inner_field.name);
+                if let Ok(ty) = self.resolve_qualified_type_name(
+                    &qualified_name,
+                    module_ident.line,
+                    module_ident.col,
+                ) {
+                    return Ok((ty, true));
+                }
+            }
+        }
+
         // Regular expression
         Ok((self.generate_expression(object.clone())?, false))
     }

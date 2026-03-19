@@ -23,6 +23,14 @@ impl Generator {
         line: usize,
         col: usize,
     ) -> SaResult<Type> {
+        // Check if the full qualified name already exists in the symbol table
+        // (handles synthetic names from monomorphization like "mod.types.Foo")
+        if let Some(existing) = self.symbol_table.find_symbol_by_qualified_name(name) {
+            if let SymbolKind::Type(type_id) = existing.kind {
+                return self.type_from_id(type_id);
+            }
+        }
+
         let mut parts = name.split('.').collect::<Vec<_>>();
         if parts.len() < 2 {
             return Err(SemanticError::TypeNotFound {

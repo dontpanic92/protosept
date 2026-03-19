@@ -229,10 +229,11 @@ impl Type {
                     false
                 }
             }
-            // User-defined enums: check for Copy proto conformance
+            // User-defined enums: copy if all variant payloads are copy-treated
             Type::Enum(type_id) => {
                 if let TypeDefinition::Enum(e) = symbol_table.get_type(*type_id) {
-                    e.conforming_to.iter().any(|proto_id| {
+                    // Explicit Copy conformance
+                    let has_copy_proto = e.conforming_to.iter().any(|proto_id| {
                         if let Some(TypeDefinition::Proto(proto)) =
                             symbol_table.types.get(*proto_id as usize)
                         {
@@ -241,6 +242,13 @@ impl Type {
                         } else {
                             false
                         }
+                    });
+                    if has_copy_proto {
+                        return true;
+                    }
+                    // Auto-copy: all variant payloads must be copy-treated
+                    e.variants.iter().all(|(_, fields)| {
+                        fields.iter().all(|f| f.is_copy_treated(symbol_table))
                     })
                 } else {
                     false
