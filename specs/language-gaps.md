@@ -3,7 +3,7 @@
 Tracked findings from building NaviText and other real-world usage.
 Items are removed once fixed; new items added as discovered.
 
-Last updated: 2026-03-18
+Last updated: 2026-03-19
 
 ---
 
@@ -55,16 +55,8 @@ A `for i in 0..n { ... }` range syntax would be cleaner and less error-prone.
 `f"{n}"`. A direct `n.to_string()` or `n.display()` method would be useful
 for building strings programmatically.
 
-### 8. No enum payload destructuring in `match`
-**Impact: MEDIUM** — Cannot extract payload values from enum variants in match arms:
-```p7
-// Wanted:
-match result {
-    Result.Ok(value) => value,
-    Result.Err(msg) => default,
-}
-// Current: must use wildcard binding, no payload access
-```
+### 8. ~~No enum payload destructuring in `match`~~
+**RESOLVED** — see Resolved Issues table below.
 
 ### 9. No multiple return values or tuple returns
 **Impact: HIGH** — Functions can only return a single value. The editor uses
@@ -105,6 +97,77 @@ of code complexity in the editor.
 ### 14. ~~No `array.index_of()` for finding elements~~
 **RESOLVED** — see Resolved Issues table below.
 
+### 15. `else if <bare_bool>` fails — requires explicit `== true`
+**Impact: MEDIUM** — Discovered building the git view. A bare boolean variable
+works fine as an `if` condition but causes a compile error in `else if`:
+```p7
+var viewing_diff = false;
+
+if viewing_diff { ... }                     // ✓ works
+} else if viewing_diff { ... }              // ✗ compile error
+} else if viewing_diff == true { ... }      // ✓ works (workaround)
+```
+This appears to be a parser or semantic analyzer bug. The condition expression
+is parsed differently in `else if` context vs standalone `if`.
+
+**Workaround:** Use `else if var == true {` instead of `else if var {`.
+
+### 16. Confusing error message for missing function arguments
+**Impact: MEDIUM** — When calling a function without a required parameter,
+the compiler emits:
+```
+Type mismatch: <param_name> != missing required argument at line X column Y
+```
+For example, calling `tui.set_bold()` instead of `tui.set_bold(1)` produces:
+```
+Type mismatch: on != missing required argument at line 580 column 21
+```
+This is very hard to interpret. The `!=` reads like an operator error rather
+than "parameter `on` is not provided". The reported line number also points
+to a different location (a downstream `else if` branch), not the actual
+call site with the missing argument.
+
+**Recommended fix:** Improve error message to something like:
+```
+Missing required argument 'on: int' in call to 'tui.set_bold()' at line 542
+```
+
+### 17. No `string.join()` method on arrays
+**Impact: MEDIUM** — Discovered building git output parsers. Joining an array
+of strings requires a manual loop:
+```p7
+var content = "";
+var i = 0;
+while i < lines.len() {
+    if i > 0 { content = content + "\n"; }
+    content = content + lines[i];
+    i = i + 1;
+}
+```
+A builtin `array<string>.join(sep: string) -> string` would simplify this
+to `lines.join("\n")`. This is a general-purpose string operation that belongs
+in the language.
+
+### 18. No `string.trim()` / `string.trim_end()` methods
+**Impact: LOW** — Parsing CLI output (like `git status --porcelain`) sometimes
+produces trailing whitespace or newlines. There is no builtin way to trim
+whitespace from strings.
+
+### 19. No HashMap / Dictionary type
+**Impact: MEDIUM** — P7 v1 has no associative container. The git module uses
+parallel arrays (`items_text`, `items_type`, `items_path`) as a workaround
+for what would naturally be `array<GitItem>` or `Map<string, GitItem>`.
+
+While parallel arrays work, a builtin `Map<K, V>` would enable cleaner data
+modeling for key-value lookups (e.g., tracking expanded directories by path,
+caching file status by name).
+
+### 20. No default parameter values
+**Impact: LOW** — Functions like `tui.set_bold(on: int)` could benefit from
+a default: `tui.set_bold(on: int = 1)`. Currently every call must provide
+all arguments explicitly. The spec intentionally excludes this for
+auditability, but it leads to verbose call sites for toggle-style functions.
+
 ---
 
 ## Resolved Issues
@@ -128,3 +191,4 @@ of code complexity in the editor.
 | 11 | No `&&` / `||` operators | Fixed: added `&&`/`||` two-character tokens to lexer; parser/codegen already supported `And`/`Or` |
 | 13 | No `min`/`max`/`clamp` | Fixed: added as builtin intrinsic functions |
 | 14 | No `array.index_of()` | Fixed: added as builtin intrinsic method on `array<T>` |
+| 8 | No enum payload destructuring | Fixed: `match r { Result.Ok(n) => n }` pattern matching with payload binding |
