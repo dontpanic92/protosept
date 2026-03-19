@@ -130,6 +130,11 @@ pub enum SemanticError {
         name: String,
         pos: Option<SourcePos>,
     },
+    MissingArgument {
+        param_name: String,
+        func_name: String,
+        pos: Option<SourcePos>,
+    },
     VariableOutsideFunction {
         name: String,
         pos: Option<SourcePos>,
@@ -161,6 +166,12 @@ impl fmt::Display for SemanticError {
             }
             SemanticError::TypeMismatch { lhs, rhs, pos } => {
                 format_error_with_pos!(&format!("Type mismatch: {} != {}", lhs, rhs), pos)
+            }
+            SemanticError::MissingArgument { param_name, func_name, pos } => {
+                format_error_with_pos!(
+                    &format!("Missing required argument '{}' in call to '{}'", param_name, func_name),
+                    pos
+                )
             }
             SemanticError::MixedNamedAndPositional { name, pos } => {
                 format_error_with_pos!(

@@ -61,6 +61,18 @@ pub struct string() {
     // Repeat the string n times.
     @intrinsic(name="string.repeat")
     pub fn repeat(ref self, n: int) -> string;
+
+    // Return a new string with leading and trailing whitespace removed.
+    @intrinsic(name="string.trim")
+    pub fn trim(ref self) -> string;
+
+    // Return a new string with leading whitespace removed.
+    @intrinsic(name="string.trim_start")
+    pub fn trim_start(ref self) -> string;
+
+    // Return a new string with trailing whitespace removed.
+    @intrinsic(name="string.trim_end")
+    pub fn trim_end(ref self) -> string;
 }
 
 @builtin()
@@ -116,6 +128,10 @@ pub struct array<T>() {
     // Return the index of the first element equal to `elem`, or -1 if not found.
     @intrinsic(name="array.index_of")
     pub fn index_of(ref self, elem: T) -> int;
+
+    // Join array elements with a separator string. Only valid for array<string>.
+    @intrinsic(name="array.join")
+    pub fn join(ref self, sep: string) -> string;
 }
 
 // Return the containing directory of the entry script, or null if the script

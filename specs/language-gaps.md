@@ -97,61 +97,21 @@ of code complexity in the editor.
 ### 14. ~~No `array.index_of()` for finding elements~~
 **RESOLVED** — see Resolved Issues table below.
 
-### 15. `else if <bare_bool>` fails — requires explicit `== true`
-**Impact: MEDIUM** — Discovered building the git view. A bare boolean variable
-works fine as an `if` condition but causes a compile error in `else if`:
-```p7
-var viewing_diff = false;
+### 15. ~~`else if <bare_bool>` fails — requires explicit `== true`~~
+**NOT A BUG** — Investigated during git view development. The compile error was
+actually caused by `tui.set_bold()` missing its required `on: int` argument
+(see #16). The confusing error message made it appear that `else if bool_var`
+was the problem. After fixing the missing argument, `else if bool_var {` works
+correctly. Bare booleans work in both `if` and `else if` contexts.
 
-if viewing_diff { ... }                     // ✓ works
-} else if viewing_diff { ... }              // ✗ compile error
-} else if viewing_diff == true { ... }      // ✓ works (workaround)
-```
-This appears to be a parser or semantic analyzer bug. The condition expression
-is parsed differently in `else if` context vs standalone `if`.
+### 16. ~~Confusing error message for missing function arguments~~
+**RESOLVED** — see Resolved Issues table below.
 
-**Workaround:** Use `else if var == true {` instead of `else if var {`.
+### 17. ~~No `string.join()` method on arrays~~
+**RESOLVED** — see Resolved Issues table below.
 
-### 16. Confusing error message for missing function arguments
-**Impact: MEDIUM** — When calling a function without a required parameter,
-the compiler emits:
-```
-Type mismatch: <param_name> != missing required argument at line X column Y
-```
-For example, calling `tui.set_bold()` instead of `tui.set_bold(1)` produces:
-```
-Type mismatch: on != missing required argument at line 580 column 21
-```
-This is very hard to interpret. The `!=` reads like an operator error rather
-than "parameter `on` is not provided". The reported line number also points
-to a different location (a downstream `else if` branch), not the actual
-call site with the missing argument.
-
-**Recommended fix:** Improve error message to something like:
-```
-Missing required argument 'on: int' in call to 'tui.set_bold()' at line 542
-```
-
-### 17. No `string.join()` method on arrays
-**Impact: MEDIUM** — Discovered building git output parsers. Joining an array
-of strings requires a manual loop:
-```p7
-var content = "";
-var i = 0;
-while i < lines.len() {
-    if i > 0 { content = content + "\n"; }
-    content = content + lines[i];
-    i = i + 1;
-}
-```
-A builtin `array<string>.join(sep: string) -> string` would simplify this
-to `lines.join("\n")`. This is a general-purpose string operation that belongs
-in the language.
-
-### 18. No `string.trim()` / `string.trim_end()` methods
-**Impact: LOW** — Parsing CLI output (like `git status --porcelain`) sometimes
-produces trailing whitespace or newlines. There is no builtin way to trim
-whitespace from strings.
+### 18. ~~No `string.trim()` / `string.trim_end()` methods~~
+**RESOLVED** — see Resolved Issues table below.
 
 ### 19. No HashMap / Dictionary type
 **Impact: MEDIUM** — P7 v1 has no associative container. The git module uses
@@ -192,3 +152,7 @@ auditability, but it leads to verbose call sites for toggle-style functions.
 | 13 | No `min`/`max`/`clamp` | Fixed: added as builtin intrinsic functions |
 | 14 | No `array.index_of()` | Fixed: added as builtin intrinsic method on `array<T>` |
 | 8 | No enum payload destructuring | Fixed: `match r { Result.Ok(n) => n }` pattern matching with payload binding |
+| 15 | `else if <bare_bool>` fails | Not a bug: caused by confusing missing-arg error (#16). `else if bool_var` works correctly. |
+| 16 | Confusing missing-arg error message | Fixed: new `MissingArgument` error variant → `Missing required argument 'x' in call to 'foo'` |
+| 17 | No `string.join()` | Fixed: added `array<string>.join(sep)` as builtin intrinsic |
+| 18 | No `string.trim()` methods | Fixed: added `string.trim()`, `string.trim_start()`, `string.trim_end()` as builtin intrinsics |

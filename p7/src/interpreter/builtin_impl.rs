@@ -16,6 +16,9 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("string.contains".to_string(), string_contains);
     ctx.register_host_function("string.ends_with".to_string(), string_ends_with);
     ctx.register_host_function("string.repeat".to_string(), string_repeat);
+    ctx.register_host_function("string.trim".to_string(), string_trim);
+    ctx.register_host_function("string.trim_start".to_string(), string_trim_start);
+    ctx.register_host_function("string.trim_end".to_string(), string_trim_end);
     ctx.register_host_function("display.int".to_string(), display_int);
     ctx.register_host_function("display.float".to_string(), display_float);
     ctx.register_host_function("display.bool".to_string(), display_bool);
@@ -33,6 +36,7 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("array.insert".to_string(), array_insert);
     ctx.register_host_function("array.remove".to_string(), array_remove);
     ctx.register_host_function("array.index_of".to_string(), array_index_of);
+    ctx.register_host_function("array.join".to_string(), array_join);
     ctx.register_host_function("builtin.entry_script_dir".to_string(), builtin_entry_script_dir);
     ctx.register_host_function("builtin.min".to_string(), builtin_min);
     ctx.register_host_function("builtin.max".to_string(), builtin_max);
@@ -956,5 +960,57 @@ fn builtin_clamp(ctx: &mut Context) -> ContextResult<()> {
             Ok(())
         }
         _ => Err(RuntimeError::Other("clamp: arguments must be int".to_string())),
+    }
+}
+
+fn string_trim(ctx: &mut Context) -> ContextResult<()> {
+    let self_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    match self_val {
+        Data::String(s) => {
+            ctx.stack_frame_mut()?.stack.push(Data::String(s.trim().to_string()));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other("string.trim: expected string".to_string())),
+    }
+}
+
+fn string_trim_start(ctx: &mut Context) -> ContextResult<()> {
+    let self_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    match self_val {
+        Data::String(s) => {
+            ctx.stack_frame_mut()?.stack.push(Data::String(s.trim_start().to_string()));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other("string.trim_start: expected string".to_string())),
+    }
+}
+
+fn string_trim_end(ctx: &mut Context) -> ContextResult<()> {
+    let self_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    match self_val {
+        Data::String(s) => {
+            ctx.stack_frame_mut()?.stack.push(Data::String(s.trim_end().to_string()));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other("string.trim_end: expected string".to_string())),
+    }
+}
+
+fn array_join(ctx: &mut Context) -> ContextResult<()> {
+    let sep = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let array = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+
+    match (array, sep) {
+        (Data::Array(elements), Data::String(separator)) => {
+            let strs: Vec<String> = elements.into_iter().map(|e| {
+                match e {
+                    Data::String(s) => s,
+                    _ => String::new(),
+                }
+            }).collect();
+            ctx.stack_frame_mut()?.stack.push(Data::String(strs.join(&separator)));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other("array.join: expected (array<string>, string)".to_string())),
     }
 }

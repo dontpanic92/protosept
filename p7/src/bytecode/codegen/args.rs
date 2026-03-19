@@ -70,9 +70,9 @@ impl Generator {
                 } else if let Some(default_expr) = param_defaults.get(i).and_then(|o| o.clone()) {
                     ordered_exprs.push(default_expr);
                 } else {
-                    return Err(SemanticError::TypeMismatch {
-                        lhs: param_name.clone(),
-                        rhs: "missing required argument".to_string(),
+                    return Err(SemanticError::MissingArgument {
+                        param_name: param_name.clone(),
+                        func_name: call_name.to_string(),
                         pos: SourcePos::at(call_line, call_col),
                     });
                 }
@@ -103,9 +103,9 @@ impl Generator {
                 if let Some(default_expr) = param_defaults.get(i).and_then(|o| o.clone()) {
                     ordered_exprs.push(default_expr);
                 } else {
-                    return Err(SemanticError::TypeMismatch {
-                        lhs: param_names[i].clone(),
-                        rhs: "missing required argument".to_string(),
+                    return Err(SemanticError::MissingArgument {
+                        param_name: param_names[i].clone(),
+                        func_name: call_name.to_string(),
                         pos: SourcePos::at(call_line, call_col),
                     });
                 }
