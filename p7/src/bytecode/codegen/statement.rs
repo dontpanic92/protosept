@@ -288,6 +288,57 @@ impl Generator {
                 Ok(Type::Primitive(PrimitiveType::Unit))
             }
 
+            Pattern::TuplePattern { sub_patterns } => {
+                // Generate RHS expression (should be a tuple)
+                let rhs_type = self.generate_expression(expression)?;
+
+                let element_types = match &rhs_type {
+                    Type::Tuple(types) => types.clone(),
+                    _ => {
+                        return Err(SemanticError::Other(format!(
+                            "Cannot destructure non-tuple type '{}' with tuple pattern",
+                            rhs_type.to_string()
+                        )));
+                    }
+                };
+
+                if sub_patterns.len() != element_types.len() {
+                    return Err(SemanticError::Other(format!(
+                        "Tuple destructure: expected {} elements, found {} patterns",
+                        element_types.len(),
+                        sub_patterns.len()
+                    )));
+                }
+
+                let tuple_index_id = self.add_string_constant("tuple.index".to_string());
+
+                for (idx, sub_pat) in sub_patterns.iter().enumerate() {
+                    if !sub_pat.is_wildcard() {
+                        if let Pattern::Identifier(id) = sub_pat {
+                            self.builder.dup();
+                            self.builder.ldi(idx as i64);
+                            self.builder.call_host_function(tuple_index_id);
+                            let elem_ty = element_types[idx].clone();
+                            let var_id = self
+                                .local_scope
+                                .as_mut()
+                                .unwrap()
+                                .add_variable(id.name.clone(), elem_ty, is_mutable)
+                                .map_err(|_| SemanticError::VariableOutsideFunction {
+                                    name: id.name.clone(),
+                                    pos: id.pos(),
+                                })?;
+                            self.builder.stvar(var_id);
+                        }
+                    }
+                }
+
+                // Pop the tuple value from the stack
+                self.builder.pop();
+
+                Ok(Type::Primitive(PrimitiveType::Unit))
+            }
+
             _ => Err(SemanticError::Other(
                 "Unsupported pattern in let destructuring".to_string(),
             )),
@@ -887,6 +938,11 @@ impl Generator {
                     self.map_type_from_module(module, return_type, type_map)?,
                 ),
             },
+            Type::Tuple(elements) => Type::Tuple(
+                elements.iter()
+                    .map(|t| self.map_type_from_module(module, t, type_map))
+                    .collect::<SaResult<Vec<_>>>()?,
+            ),
         };
 
         Ok(mapped)

@@ -46,6 +46,8 @@ pub enum Data {
         func_addr: u32,
         captures: Vec<Data>,
     },
+    /// Tuple value - immutable fixed-size collection of heterogeneous Data values
+    Tuple(Vec<Data>),
 }
 
 impl From<i64> for Data {
@@ -112,6 +114,9 @@ macro_rules! arithmetic_op {
             (Data::Closure { .. }, _) | (_, Data::Closure { .. }) => {
                 return Err(RuntimeError::Other("Arithmetic on closure".to_string()));
             }
+            (Data::Tuple(_), _) | (_, Data::Tuple(_)) => {
+                return Err(RuntimeError::Other("Arithmetic on tuple".to_string()));
+            }
         }
     };
 }
@@ -171,6 +176,9 @@ macro_rules! comparison_op {
             }
             (Data::Closure { .. }, _) | (_, Data::Closure { .. }) => {
                 return Err(RuntimeError::Other("Comparison on closure".to_string()));
+            }
+            (Data::Tuple(_), _) | (_, Data::Tuple(_)) => {
+                return Err(RuntimeError::Other("Comparison on tuple".to_string()));
             }
         }
     };
@@ -499,6 +507,11 @@ impl Context {
                                     "Cannot negate closure".to_string(),
                                 ));
                             }
+                            Data::Tuple(_) => {
+                                return Err(RuntimeError::Other(
+                                    "Cannot negate tuple".to_string(),
+                                ));
+                            }
                         }
                     } else {
                         unimplemented!();
@@ -550,6 +563,11 @@ impl Context {
                             Data::Closure { .. } => {
                                 return Err(RuntimeError::Other(
                                     "Cannot apply logical NOT to closure".to_string(),
+                                ));
+                            }
+                            Data::Tuple(_) => {
+                                return Err(RuntimeError::Other(
+                                    "Cannot apply logical NOT to tuple".to_string(),
                                 ));
                             }
                         }
@@ -1327,6 +1345,11 @@ impl Context {
                     self.mark_data(capture, marked);
                 }
             }
+            Data::Tuple(elements) => {
+                for elem in elements {
+                    self.mark_data(elem, marked);
+                }
+            }
             _ => {}
         }
     }
@@ -1437,6 +1460,9 @@ impl Context {
             }
             Data::Closure { captures, .. } => {
                 Self::update_data_vec(captures, index_map);
+            }
+            Data::Tuple(elements) => {
+                Self::update_data_vec(elements, index_map);
             }
             _ => {}
         }

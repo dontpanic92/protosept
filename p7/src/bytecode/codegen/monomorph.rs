@@ -511,6 +511,13 @@ impl Generator {
                     return_type: Box::new(substituted_ret),
                 }
             }
+            ParsedType::Tuple(elements) => {
+                let substituted_elements: Vec<ParsedType> = elements
+                    .iter()
+                    .map(|t| self.substitute_parsed_type(t, substitution))
+                    .collect();
+                ParsedType::Tuple(substituted_elements)
+            }
         }
     }
 }

@@ -58,29 +58,8 @@ for building strings programmatically.
 ### 8. ~~No enum payload destructuring in `match`~~
 **RESOLVED** — see Resolved Issues table below.
 
-### 9. No multiple return values or tuple returns
-**Impact: HIGH** — Functions can only return a single value. The editor uses
-`row * 100000 + col` to encode two ints into one return, then manually
-decodes at every call site. Before the struct refactor, `exec_menu_action`
-returned `"cr|cc|sa|d|cb"` as a pipe-delimited string with a hand-written
-int parser to decode it.
-
-Structs are the current workaround, but tuple returns would eliminate the
-need for single-use structs:
-```p7
-// Wanted:
-fn delete_selection(...) -> (int, int) { return (row, col); }
-let (r, c) = delete_selection(...);
-
-// Current: encode into int, decode at call site
-fn delete_selection(...) -> int { return row * 100000 + col; }
-let encoded = delete_selection(...);
-let r = encoded / 100000;
-let c = encoded - (r * 100000);
-```
-The spec defines tuple types (`(int, int)`) in §4.4, but destructuring
-`let` bindings are not implemented. This is the single biggest source
-of code complexity in the editor.
+### 9. ~~No multiple return values or tuple returns~~
+**RESOLVED** — see Resolved Issues table below.
 
 ### 10. ~~No `bool` in practice — everything is `int` flags~~
 **RESOLVED** — see Resolved Issues table below.
@@ -156,3 +135,4 @@ auditability, but it leads to verbose call sites for toggle-style functions.
 | 16 | Confusing missing-arg error message | Fixed: new `MissingArgument` error variant → `Missing required argument 'x' in call to 'foo'` |
 | 17 | No `string.join()` | Fixed: added `array<string>.join(sep)` as builtin intrinsic |
 | 18 | No `string.trim()` methods | Fixed: added `string.trim()`, `string.trim_start()`, `string.trim_end()` as builtin intrinsics |
+| 9 | No tuple returns / destructuring | Fixed: implemented tuple types `(T1, T2)`, literals `(a, b)`, field access `.0`/`.1`, destructuring `let (a, b) = ...`, and match patterns |

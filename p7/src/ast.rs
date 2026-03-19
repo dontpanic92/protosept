@@ -46,6 +46,8 @@ pub enum Type {
         param_types: Vec<Type>,
         return_type: Box<Type>,
     },
+    /// Tuple type: (T1, T2, ..., Tn) where n >= 2
+    Tuple(Vec<Type>),
 }
 
 impl Type {
@@ -79,6 +81,14 @@ impl Type {
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("fn({}) -> {}", params, return_type.get_name())
+            }
+            Type::Tuple(elements) => {
+                let elems = elements
+                    .iter()
+                    .map(|t| t.get_name())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("({})", elems)
             }
         }
     }
@@ -264,6 +274,12 @@ pub enum Expression {
         body: Box<Expression>,
         pos: (usize, usize),
     },
+
+    // Tuple literal expression (e.g., (1, "hello"))
+    TupleLiteral {
+        elements: Vec<Expression>,
+        pos: (usize, usize),
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -293,6 +309,10 @@ pub enum Pattern {
     StructPattern {
         struct_name: Identifier,
         field_patterns: Vec<Pattern>,
+    },
+    /// Tuple destructure pattern: (a, b, c)
+    TuplePattern {
+        sub_patterns: Vec<Pattern>,
     },
 }
 
@@ -385,6 +405,7 @@ impl Expression {
             Expression::While { .. } => "while".to_string(),
             Expression::Break { .. } => "break".to_string(),
             Expression::Continue { .. } => "continue".to_string(),
+            Expression::TupleLiteral { .. } => "tuple".to_string(),
             _ => "".to_string(),
         }
     }
@@ -403,6 +424,7 @@ impl Expression {
             Expression::While { pos, .. } => *pos,
             Expression::Break { pos, .. } => *pos,
             Expression::Continue { pos, .. } => *pos,
+            Expression::TupleLiteral { pos, .. } => *pos,
             _ => (0, 0),
         }
     }

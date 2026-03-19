@@ -1,0 +1,93 @@
+// Tuple literal, field access, and type annotation tests
+import test.test;
+
+fn pair() -> (int, int) {
+    return (10, 20);
+}
+
+fn mixed() -> (int, string) {
+    return (42, "world");
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_tuple_first_element() -> int {
+    let t = (1, 2);
+    t.0
+}
+
+@test(expected_type = "int", expected_value = "2")
+fn test_tuple_second_element() -> int {
+    let t = (1, 2);
+    t.1
+}
+
+@test(expected_type = "string", expected_value = "hello")
+fn test_tuple_mixed_types() -> string {
+    let t = (42, "hello");
+    t.1
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_tuple_mixed_types_int() -> int {
+    let t = (42, "hello");
+    t.0
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_tuple_triple() -> int {
+    let t = (1, 2, 3);
+    t.2
+}
+
+@test(expected_type = "int", expected_value = "10")
+fn test_tuple_four_elements() -> int {
+    let t = (10, 20, 30, 40);
+    t.0
+}
+
+@test(expected_type = "int", expected_value = "40")
+fn test_tuple_four_last() -> int {
+    let t = (10, 20, 30, 40);
+    t.3
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_tuple_arithmetic() -> int {
+    let t = (1, 2);
+    t.0 + t.1
+}
+
+@test(expected_type = "int", expected_value = "9")
+fn test_parenthesized_expr_still_works() -> int {
+    (1 + 2) * 3
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_tuple_in_expression() -> int {
+    let t = (2, 3);
+    t.0 + t.1
+}
+
+@test(expected_type = "int", expected_value = "10")
+fn test_tuple_return_from_function() -> int {
+    let p = pair();
+    p.0
+}
+
+@test(expected_type = "int", expected_value = "20")
+fn test_tuple_return_second() -> int {
+    let p = pair();
+    p.1
+}
+
+@test(expected_type = "int", expected_value = "30")
+fn test_tuple_return_sum() -> int {
+    let p = pair();
+    p.0 + p.1
+}
+
+@test(expected_type = "string", expected_value = "world")
+fn test_tuple_return_mixed() -> string {
+    let m = mixed();
+    m.1
+}

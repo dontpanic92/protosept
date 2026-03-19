@@ -279,11 +279,36 @@ impl Parser {
                     if self.is_closure_start() {
                         return self.parse_closure_expression();
                     }
-                    // Otherwise, parenthesized expression
+                    // Parenthesized expression or tuple literal
+                    let pos = (token.line, token.col);
                     self.consume(); // consume '('
-                    let expr = self.parse_expression()?;
-                    self.consume_match(TokenType::CloseParen)?;
-                    return self.parse_expression_suffix(expr);
+                    let first_expr = self.parse_expression()?;
+                    if self.peek_match(TokenType::Comma) {
+                        // Tuple literal: (e1, e2, ...)
+                        self.consume(); // consume ','
+                        let mut elements = vec![first_expr];
+                        while !self.peek_match(TokenType::CloseParen) {
+                            elements.push(self.parse_expression()?);
+                            if self.peek_match(TokenType::Comma) {
+                                self.consume();
+                            } else if !self.peek_match(TokenType::CloseParen) {
+                                return Err(ParseError::UnexpectedToken {
+                                    found: format!("{:?}", self.peek().map(|t| &t.token_type)),
+                                    pos: self.peek().map(|t| SourcePos {
+                                        line: t.line,
+                                        col: t.col,
+                                    }),
+                                });
+                            }
+                        }
+                        self.consume_match(TokenType::CloseParen)?;
+                        let expr = Expression::TupleLiteral { elements, pos };
+                        return self.parse_expression_suffix(expr);
+                    } else {
+                        // Parenthesized expression (grouping)
+                        self.consume_match(TokenType::CloseParen)?;
+                        return self.parse_expression_suffix(first_expr);
+                    }
                 }
                 TokenType::Try => {
                     return self.parse_try_expression();
@@ -801,6 +826,13 @@ impl Parser {
                     let pattern = Pattern::Identifier(identifier);
                     let pattern = self.parse_pattern_suffix(pattern)?;
                     Ok(pattern)
+                }
+                TokenType::OpenParen => {
+                    // Tuple pattern: (p1, p2, ...)
+                    self.consume(); // consume '('
+                    let sub_patterns = self.parse_sub_patterns()?;
+                    self.consume_match(TokenType::CloseParen)?;
+                    Ok(Pattern::TuplePattern { sub_patterns })
                 }
                 _ => Err(ParseError::UnexpectedToken {
                     found: format!("{:?}", token.token_type),
@@ -1556,6 +1588,36 @@ impl Parser {
                     self.consume_match(TokenType::CloseBracket)?;
                     Ok(Type::Array(Box::new(ty)))
                 }
+                TokenType::OpenParen => {
+                    // Tuple type: (T1, T2, ...) or parenthesized type: (T)
+                    self.consume(); // consume '('
+                    let first_ty = self.parse_type()?;
+                    if self.peek_match(TokenType::Comma) {
+                        // Tuple type: (T1, T2, ...)
+                        self.consume(); // consume ','
+                        let mut types = vec![first_ty];
+                        while !self.peek_match(TokenType::CloseParen) {
+                            types.push(self.parse_type()?);
+                            if self.peek_match(TokenType::Comma) {
+                                self.consume();
+                            } else if !self.peek_match(TokenType::CloseParen) {
+                                return Err(ParseError::UnexpectedToken {
+                                    found: format!("{:?}", self.peek().map(|t| &t.token_type)),
+                                    pos: self.peek().map(|t| SourcePos {
+                                        line: t.line,
+                                        col: t.col,
+                                    }),
+                                });
+                            }
+                        }
+                        self.consume_match(TokenType::CloseParen)?;
+                        Ok(Type::Tuple(types))
+                    } else {
+                        // Parenthesized type (grouping): (T)
+                        self.consume_match(TokenType::CloseParen)?;
+                        Ok(first_ty)
+                    }
+                }
                 TokenType::Fn => {
                     // fn(T1, T2) -> R function type
                     self.consume(); // consume 'fn'
@@ -1944,6 +2006,21 @@ impl Parser {
 
                 let is_mutable = matches!(self.peek().map(|t| &t.token_type), Some(TokenType::Var));
                 self.consume();
+
+                // Check for tuple destructuring: let (a, b) = ... or var (x, y) = ...
+                if self.peek_match(TokenType::OpenParen) {
+                    self.consume_match(TokenType::OpenParen)?;
+                    let sub_patterns = self.parse_sub_patterns()?;
+                    self.consume_match(TokenType::CloseParen)?;
+                    self.consume_match(TokenType::Assignment)?;
+                    let expression = self.parse_expression()?;
+                    self.consume_match(TokenType::Semicolon)?;
+                    return Ok(Statement::LetDestructure {
+                        is_mutable,
+                        pattern: Pattern::TuplePattern { sub_patterns },
+                        expression,
+                    });
+                }
 
                 let identifier = self.parse_identifier()?;
 

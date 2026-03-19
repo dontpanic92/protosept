@@ -189,6 +189,8 @@ pub enum Type {
         params: Vec<Type>,
         return_type: Box<Type>,
     },
+    /// Tuple type: (T1, T2, ..., Tn) where n >= 2
+    Tuple(Vec<Type>),
 }
 
 impl Type {
@@ -249,6 +251,8 @@ impl Type {
             // Function types (closures): copy-treated only if all captures are Copy
             // For now (non-capturing closures), always copy-treated
             Type::Function { .. } => true,
+            // Tuple types: copy-treated iff all component types are copy-treated
+            Type::Tuple(elements) => elements.iter().all(|t| t.is_copy_treated(symbol_table)),
         }
     }
 }
@@ -268,6 +272,7 @@ impl Clone for Type {
                 params: params.clone(),
                 return_type: return_type.clone(),
             },
+            Type::Tuple(elements) => Type::Tuple(elements.clone()),
         }
     }
 }
@@ -287,6 +292,7 @@ impl PartialEq for Type {
                 Type::Function { params: pa, return_type: ra },
                 Type::Function { params: pb, return_type: rb },
             ) => pa == pb && ra == rb,
+            (Type::Tuple(a), Type::Tuple(b)) => a == b,
             _ => false,
         }
     }
@@ -309,6 +315,9 @@ impl std::hash::Hash for Type {
             Type::Function { params, return_type } => {
                 params.hash(state);
                 return_type.hash(state);
+            }
+            Type::Tuple(elements) => {
+                elements.hash(state);
             }
         }
     }
@@ -335,6 +344,10 @@ impl ToString for Type {
             Type::Function { params, return_type } => {
                 let param_strs: Vec<String> = params.iter().map(|p| p.to_string()).collect();
                 format!("fn({}) -> {}", param_strs.join(", "), return_type.to_string())
+            }
+            Type::Tuple(elements) => {
+                let elem_strs: Vec<String> = elements.iter().map(|t| t.to_string()).collect();
+                format!("({})", elem_strs.join(", "))
             }
         }
     }

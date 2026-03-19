@@ -271,6 +271,13 @@ impl Generator {
                     return_type: Box::new(ret),
                 })
             }
+            ParsedType::Tuple(elements) => {
+                let resolved = elements
+                    .iter()
+                    .map(|t| self.get_semantic_type(t))
+                    .collect::<SaResult<Vec<Type>>>()?;
+                Ok(Type::Tuple(resolved))
+            }
         }
     }
 
@@ -476,6 +483,9 @@ impl Generator {
             (Type::Proto(a), Type::Proto(b)) => a == b,
             (Type::BoxType(a), Type::BoxType(b)) => self.types_equal(a, b),
             (Type::Nullable(a), Type::Nullable(b)) => self.types_equal(a, b),
+            (Type::Tuple(a), Type::Tuple(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| self.types_equal(x, y))
+            }
             _ => false,
         }
     }
@@ -515,6 +525,10 @@ impl Generator {
             Type::Function { params, return_type } => {
                 let param_strs: Vec<String> = params.iter().map(|p| self.type_to_string(p)).collect();
                 format!("fn({}) -> {}", param_strs.join(", "), self.type_to_string(return_type))
+            }
+            Type::Tuple(elements) => {
+                let elem_strs: Vec<String> = elements.iter().map(|t| self.type_to_string(t)).collect();
+                format!("({})", elem_strs.join(", "))
             }
         }
     }

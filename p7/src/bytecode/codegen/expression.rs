@@ -179,6 +179,9 @@ impl Generator {
                 body,
                 pos,
             } => self.generate_closure(parameters, *body, pos),
+            Expression::TupleLiteral { elements, pos } => {
+                self.generate_tuple_literal(elements, pos)
+            }
         }
     }
 
@@ -774,6 +777,29 @@ impl Generator {
             Type::Struct(type_id) => {
                 self.generate_struct_field_access(type_id, &field, is_static_access, &object_name)
             }
+            Type::Tuple(ref element_types) => {
+                // Tuple field access: t.0, t.1, etc.
+                let idx: usize = field.name.parse().map_err(|_| {
+                    SemanticError::TypeMismatch {
+                        lhs: format!("tuple element index"),
+                        rhs: format!("'{}' is not a valid tuple index", field.name),
+                        pos: self.make_pos(field.line, field.col),
+                    }
+                })?;
+                if idx >= element_types.len() {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: format!("tuple of {} elements", element_types.len()),
+                        rhs: format!("index {} out of range", idx),
+                        pos: self.make_pos(field.line, field.col),
+                    });
+                }
+                let result_type = element_types[idx].clone();
+                // Push index and call tuple.index
+                self.builder.ldi(idx as i64);
+                let string_id = self.add_string_constant("tuple.index".to_string());
+                self.builder.call_host_function(string_id);
+                Ok(result_type)
+            }
             _ => Err(self.type_mismatch_error(
                 object_ty.to_string(),
                 "Struct or Enum instance".to_string(),
@@ -1040,6 +1066,34 @@ impl Generator {
         self.builder.call_host_function(string_id);
 
         Ok(Type::Array(Box::new(element_type)))
+    }
+
+    fn generate_tuple_literal(
+        &mut self,
+        elements: Vec<Expression>,
+        pos: (usize, usize),
+    ) -> SaResult<Type> {
+        let (line, col) = pos;
+
+        if elements.len() < 2 {
+            return Err(SemanticError::Other(format!(
+                "Tuple must have at least 2 elements at {}:{}",
+                line, col
+            )));
+        }
+
+        let mut element_types = Vec::new();
+        for element in &elements {
+            let ty = self.generate_expression(element.clone())?;
+            element_types.push(ty);
+        }
+
+        self.builder.ldi(elements.len() as i64);
+
+        let string_id = self.add_string_constant("tuple.new".to_string());
+        self.builder.call_host_function(string_id);
+
+        Ok(Type::Tuple(element_types))
     }
 
     fn generate_array_index(

@@ -199,6 +199,65 @@ impl Generator {
                     }
                 }
 
+                Pattern::TuplePattern { sub_patterns } => {
+                    // Tuple patterns are irrefutable — no tag check needed.
+                    // Validate arity at compile time.
+                    let element_types = match &scrutinee_ty {
+                        Type::Tuple(types) => types.clone(),
+                        _ => {
+                            return Err(SemanticError::Other(format!(
+                                "Cannot match non-tuple type '{}' with tuple pattern",
+                                scrutinee_ty.to_string()
+                            )));
+                        }
+                    };
+
+                    if sub_patterns.len() != element_types.len() {
+                        return Err(SemanticError::Other(format!(
+                            "Tuple pattern: expected {} elements, found {} patterns",
+                            element_types.len(),
+                            sub_patterns.len()
+                        )));
+                    }
+
+                    // Bind the named pattern variable (if any)
+                    if arm.pattern.name.is_some() {
+                        self.builder.dup();
+                        self.bind_pattern_variable(
+                            &arm.pattern.name,
+                            scrutinee_ty.clone(),
+                        )?;
+                    }
+
+                    let tuple_index_id = self.add_string_constant("tuple.index".to_string());
+
+                    // Extract and bind each element
+                    for (idx, sub_pat) in sub_patterns.iter().enumerate() {
+                        if !sub_pat.is_wildcard() {
+                            if let Pattern::Identifier(id) = sub_pat {
+                                self.builder.dup();
+                                self.builder.ldi(idx as i64);
+                                self.builder.call_host_function(tuple_index_id);
+                                let elem_ty = element_types[idx].clone();
+                                self.bind_pattern_variable(
+                                    &Some(id.clone()),
+                                    elem_ty,
+                                )?;
+                            }
+                        }
+                    }
+
+                    // Generate arm body
+                    let arm_ty = self.generate_expression(arm.expression.clone())?;
+                    self.validate_match_arm_type(&mut result_ty, arm_ty)?;
+
+                    if !is_last_arm {
+                        let end_jump = self.builder.next_address();
+                        self.builder.jmp(0);
+                        end_jumps.push(end_jump);
+                    }
+                }
+
                 _ if pattern.is_wildcard() => {
                     // Wildcard pattern - matches everything
                     self.bind_pattern_variable(&arm.pattern.name, scrutinee_ty.clone())?;
