@@ -267,8 +267,26 @@ impl Generator {
                 }
 
                 _ => {
-                    // Non-wildcard, non-destructuring: compare with eq
+                    // Non-wildcard, non-destructuring: compare with eq.
+                    // For enum types that have payload variants, the scrutinee
+                    // may be either Int (no-payload) or StructRef (payload).
+                    // Extract the tag via ldfield(0) so comparison always
+                    // operates on Int vs Int.
+                    let is_mixed_enum = matches!(&scrutinee_ty, Type::Enum(id) if {
+                        let def = self.symbol_table.get_type(*id);
+                        if let TypeDefinition::Enum(e) = def {
+                            e.variants.iter().any(|(_, fields)| !fields.is_empty())
+                        } else {
+                            false
+                        }
+                    });
+
                     self.builder.dup();
+
+                    if is_mixed_enum {
+                        // Extract tag: Int stays Int, StructRef yields field 0
+                        self.builder.ldfield(0);
+                    }
 
                     let pattern_expr = self.pattern_to_expression(&arm.pattern.pattern)?;
                     self.generate_expression(pattern_expr)?;

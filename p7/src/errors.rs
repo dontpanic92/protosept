@@ -202,9 +202,9 @@ pub enum RuntimeError {
     NoStackFrame,
     EntryPointNotFound,
     StackUnderflow,
-    UnexpectedStructRef,
+    UnexpectedStructRef(String),
     FunctionNotFound,
-    VariableNotFound,
+    VariableNotFound(String),
     Other(String),
 }
 
@@ -216,9 +216,9 @@ impl fmt::Display for RuntimeError {
             RuntimeError::NoStackFrame => write!(f, "No stack frame available"),
             RuntimeError::EntryPointNotFound => write!(f, "Entry point not found"),
             RuntimeError::StackUnderflow => write!(f, "Stack underflow"),
-            RuntimeError::UnexpectedStructRef => write!(f, "Unexpected struct reference"),
+            RuntimeError::UnexpectedStructRef(detail) => write!(f, "Unexpected struct reference: {}", detail),
             RuntimeError::FunctionNotFound => write!(f, "Function not found"),
-            RuntimeError::VariableNotFound => write!(f, "Variable not found"),
+            RuntimeError::VariableNotFound(detail) => write!(f, "Variable not found: {}", detail),
             RuntimeError::Other(msg) => write!(f, "Runtime error: {}", msg),
         }
     }

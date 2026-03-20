@@ -89,9 +89,11 @@ macro_rules! arithmetic_op {
                 // Arithmetic on strings is invalid.
                 return Err(RuntimeError::Other("Arithmetic on string".to_string()));
             }
-            (Data::StructRef(_), _) | (_, Data::StructRef(_)) => {
-                // Arithmetic on struct references is invalid.
-                return Err(RuntimeError::UnexpectedStructRef);
+            (Data::StructRef(r), _) | (_, Data::StructRef(r)) => {
+                return Err(RuntimeError::UnexpectedStructRef(format!(
+                    "cannot perform arithmetic on struct reference (ref {})",
+                    r
+                )));
             }
             (Data::BoxRef(_), _) | (_, Data::BoxRef(_))
             | (Data::ProtoBoxRef { .. }, _) | (_, Data::ProtoBoxRef { .. })
@@ -157,8 +159,11 @@ macro_rules! comparison_op {
             (Data::String(_), _) | (_, Data::String(_)) => {
                 return Err(RuntimeError::Other("Comparison on string".to_string()));
             }
-            (Data::StructRef(_), _) | (_, Data::StructRef(_)) => {
-                return Err(RuntimeError::UnexpectedStructRef);
+            (Data::StructRef(r), _) | (_, Data::StructRef(r)) => {
+                return Err(RuntimeError::UnexpectedStructRef(format!(
+                    "cannot compare struct reference (ref {}) with non-struct value",
+                    r
+                )));
             }
             (Data::BoxRef(_), _) | (_, Data::BoxRef(_))
             | (Data::ProtoBoxRef { .. }, _) | (_, Data::ProtoBoxRef { .. })
@@ -427,11 +432,15 @@ impl Context {
                         .push(Data::String(string_const));
                 }
                 Instruction::Ldvar(idx) => {
-                    if (idx as usize) < self.stack_frame_mut()?.locals.len() {
+                    let locals_len = self.stack_frame()?.locals.len();
+                    if (idx as usize) < locals_len {
                         let local = self.stack_frame_mut()?.locals[idx as usize].clone();
                         self.stack_frame_mut()?.stack.push(local);
                     } else {
-                        return Err(RuntimeError::VariableNotFound);
+                        return Err(RuntimeError::VariableNotFound(format!(
+                            "local variable index {} out of bounds (only {} locals allocated) at pc {}",
+                            idx, locals_len, pc
+                        )));
                     }
                 }
                 Instruction::Stvar(idx) => {
@@ -447,11 +456,15 @@ impl Context {
                     }
                 }
                 Instruction::Ldpar(param_id) => {
-                    if (param_id as usize) < self.stack_frame_mut()?.params.len() {
+                    let params_len = self.stack_frame()?.params.len();
+                    if (param_id as usize) < params_len {
                         let param = self.stack_frame_mut()?.params[param_id as usize].clone();
                         self.stack_frame_mut()?.stack.push(param);
                     } else {
-                        return Err(RuntimeError::VariableNotFound);
+                        return Err(RuntimeError::VariableNotFound(format!(
+                            "parameter index {} out of bounds (only {} parameters) at pc {}",
+                            param_id, params_len, pc
+                        )));
                     }
                 }
                 Instruction::Add => {
@@ -479,37 +492,14 @@ impl Context {
                                     "Cannot negate string".to_string(),
                                 ));
                             }
-                            Data::StructRef(_) => {
-                                return Err(RuntimeError::VariableNotFound);
+                            Data::StructRef(r) => {
+                                return Err(RuntimeError::Other(format!(
+                                    "Cannot negate struct reference (ref {})", r
+                                )));
                             }
-                            Data::BoxRef(_)
-                            | Data::ProtoBoxRef { .. }
-                            | Data::ProtoRefRef { .. } => {
+                            _ => {
                                 return Err(RuntimeError::Other(
-                                    "Cannot negate box/proto reference".to_string(),
-                                ));
-                            }
-                            Data::Exception(_) => {
-                                return Err(RuntimeError::Other(
-                                    "Cannot negate exception value".to_string(),
-                                ));
-                            }
-                            Data::Array(_) => {
-                                return Err(RuntimeError::Other("Cannot negate array".to_string()));
-                            }
-                            Data::Null | Data::Some(_) => {
-                                return Err(RuntimeError::Other(
-                                    "Cannot negate nullable value".to_string(),
-                                ));
-                            }
-                            Data::Closure { .. } => {
-                                return Err(RuntimeError::Other(
-                                    "Cannot negate closure".to_string(),
-                                ));
-                            }
-                            Data::Tuple(_) => {
-                                return Err(RuntimeError::Other(
-                                    "Cannot negate tuple".to_string(),
+                                    "Cannot negate this value type".to_string(),
                                 ));
                             }
                         }
@@ -535,39 +525,14 @@ impl Context {
                                     "Cannot apply logical NOT to string".to_string(),
                                 ));
                             }
-                            Data::StructRef(_) => {
-                                return Err(RuntimeError::VariableNotFound);
+                            Data::StructRef(r) => {
+                                return Err(RuntimeError::Other(format!(
+                                    "Cannot apply logical NOT to struct reference (ref {})", r
+                                )));
                             }
-                            Data::BoxRef(_)
-                            | Data::ProtoBoxRef { .. }
-                            | Data::ProtoRefRef { .. } => {
+                            _ => {
                                 return Err(RuntimeError::Other(
-                                    "Cannot apply logical NOT to box/proto reference".to_string(),
-                                ));
-                            }
-                            Data::Exception(_) => {
-                                return Err(RuntimeError::Other(
-                                    "Cannot negate exception value".to_string(),
-                                ));
-                            }
-                            Data::Array(_) => {
-                                return Err(RuntimeError::Other(
-                                    "Cannot apply logical NOT to array".to_string(),
-                                ));
-                            }
-                            Data::Null | Data::Some(_) => {
-                                return Err(RuntimeError::Other(
-                                    "Cannot apply logical NOT to nullable value".to_string(),
-                                ));
-                            }
-                            Data::Closure { .. } => {
-                                return Err(RuntimeError::Other(
-                                    "Cannot apply logical NOT to closure".to_string(),
-                                ));
-                            }
-                            Data::Tuple(_) => {
-                                return Err(RuntimeError::Other(
-                                    "Cannot apply logical NOT to tuple".to_string(),
+                                    "Cannot apply logical NOT to this value type".to_string(),
                                 ));
                             }
                         }
@@ -636,7 +601,7 @@ impl Context {
                     self.stack.push(new_frame);
                 }
                 Instruction::Ldfield(field_idx) => {
-                    // Expect a StructRef, BoxRef, or ProtoRefRef on the stack; pop it and push the requested field value.
+                    // Expect a StructRef, BoxRef, ProtoRefRef, or Int (enum tag) on the stack.
                     if let Some(data) = self.stack_frame_mut()?.stack.pop() {
                         // Resolve BoxRef/ProtoBoxRef/ProtoRefRef to the underlying value
                         let resolved_data = match &data {
@@ -656,17 +621,31 @@ impl Context {
                             Data::StructRef(ref_id) => {
                                 let ref_usize = ref_id as usize;
                                 if ref_usize >= self.heap.len() {
-                                    return Err(RuntimeError::VariableNotFound);
+                                    return Err(RuntimeError::VariableNotFound(format!(
+                                        "struct ref {} out of bounds (heap size {}) at pc {}",
+                                        ref_id, self.heap.len(), pc
+                                    )));
                                 }
                                 let struct_fields = &self.heap[ref_usize].fields;
                                 if (field_idx as usize) >= struct_fields.len() {
-                                    return Err(RuntimeError::VariableNotFound);
+                                    return Err(RuntimeError::VariableNotFound(format!(
+                                        "field index {} out of bounds (struct has {} fields) at pc {}",
+                                        field_idx, struct_fields.len(), pc
+                                    )));
                                 }
                                 let field_value = struct_fields[field_idx as usize].clone();
                                 self.stack_frame_mut()?.stack.push(field_value);
                             }
-                            _ => {
-                                return Err(RuntimeError::VariableNotFound);
+                            // Int values represent no-payload enum variants where the
+                            // Int itself IS the variant tag. ldfield(0) extracts the tag.
+                            Data::Int(tag) if field_idx == 0 => {
+                                self.stack_frame_mut()?.stack.push(Data::Int(tag));
+                            }
+                            other => {
+                                return Err(RuntimeError::VariableNotFound(format!(
+                                    "cannot load field {} from {:?} value at pc {}",
+                                    field_idx, std::mem::discriminant(&other), pc
+                                )));
                             }
                         }
                     } else {
@@ -699,15 +678,24 @@ impl Context {
                         Data::StructRef(ref_id) => {
                             let ref_usize = ref_id as usize;
                             if ref_usize >= self.heap.len() {
-                                return Err(RuntimeError::VariableNotFound);
+                                return Err(RuntimeError::VariableNotFound(format!(
+                                    "struct ref {} out of bounds (heap size {}) in Stfield at pc {}",
+                                    ref_id, self.heap.len(), pc
+                                )));
                             }
                             if (field_idx as usize) >= self.heap[ref_usize].fields.len() {
-                                return Err(RuntimeError::VariableNotFound);
+                                return Err(RuntimeError::VariableNotFound(format!(
+                                    "field index {} out of bounds (struct has {} fields) in Stfield at pc {}",
+                                    field_idx, self.heap[ref_usize].fields.len(), pc
+                                )));
                             }
                             self.heap[ref_usize].fields[field_idx as usize] = field_value;
                         }
-                        _ => {
-                            return Err(RuntimeError::VariableNotFound);
+                        other => {
+                            return Err(RuntimeError::VariableNotFound(format!(
+                                "cannot store field {} on {:?} value in Stfield at pc {}",
+                                field_idx, std::mem::discriminant(&other), pc
+                            )));
                         }
                     }
                 }

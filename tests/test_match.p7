@@ -89,16 +89,94 @@ fn test_match_enum_wildcard() -> int {
     }
 }
 
-// ===== Tests for match with enum variants (with payloads, but wildcard match) =====
+// ===== Enum with mixed payload/no-payload variants =====
 
-// Note: Full payload destructuring (e.g., Result.Ok(x) => x) is not yet implemented
-// For now, we can only match the entire value
+enum KeyCode(
+    Unknown,
+    Enter,
+    Escape,
+    Char: string,
+);
 
-@test(expected_type = "int", expected_value = "1")
-fn test_match_enum_with_payload_wildcard() -> int {
-    let result = Result.Ok(42);
-    match result {
-        r: _ => 1,
+// Test: match a no-payload variant against a payload pattern arm
+@test(expected_type = "int", expected_value = "2")
+fn test_match_mixed_enum_no_payload_against_payload_arm() -> int {
+    let key = KeyCode.Escape;
+    match key {
+        KeyCode.Enter => 1,
+        KeyCode.Escape => 2,
+        KeyCode.Char(ch) => 3,
+        _ => 0,
+    }
+}
+
+// Test: match a payload variant against no-payload pattern arms
+@test(expected_type = "int", expected_value = "3")
+fn test_match_mixed_enum_payload_against_no_payload_arms() -> int {
+    let key = KeyCode.Char("a");
+    match key {
+        KeyCode.Enter => 1,
+        KeyCode.Escape => 2,
+        KeyCode.Char(ch) => 3,
+        _ => 0,
+    }
+}
+
+// Test: extract payload from a payload variant in mixed enum
+@test(expected_type = "string", expected_value = "hello")
+fn test_match_mixed_enum_extract_payload() -> string {
+    let key = KeyCode.Char("hello");
+    match key {
+        KeyCode.Enter => "enter",
+        KeyCode.Char(ch) => ch,
+        _ => "other",
+    }
+}
+
+// Test: wildcard matches a no-payload variant in mixed enum
+@test(expected_type = "int", expected_value = "99")
+fn test_match_mixed_enum_wildcard_no_payload() -> int {
+    let key = KeyCode.Unknown;
+    match key {
+        KeyCode.Enter => 1,
+        KeyCode.Escape => 2,
+        KeyCode.Char(ch) => 3,
+        _ => 99,
+    }
+}
+
+// Test: wildcard matches a payload variant in mixed enum
+@test(expected_type = "int", expected_value = "99")
+fn test_match_mixed_enum_wildcard_payload() -> int {
+    let key = KeyCode.Char("x");
+    match key {
+        KeyCode.Enter => 1,
+        KeyCode.Escape => 2,
+        _ => 99,
+    }
+}
+
+// Test: payload pattern is first arm, scrutinee is no-payload
+@test(expected_type = "int", expected_value = "2")
+fn test_match_payload_first_arm_no_payload_scrutinee() -> int {
+    let key = KeyCode.Enter;
+    match key {
+        KeyCode.Char(ch) => 1,
+        KeyCode.Enter => 2,
+        _ => 0,
+    }
+}
+
+// Test: multiple no-payload arms before payload arm
+@test(expected_type = "string", expected_value = "z")
+fn test_match_many_no_payload_then_payload() -> string {
+    let key = KeyCode.Char("z");
+    match key {
+        KeyCode.Unknown => "u",
+        KeyCode.Enter => "e",
+        KeyCode.Escape => "esc",
+        KeyCode.Char(ch) => ch,
+        _ => "other",
     }
 }
 
