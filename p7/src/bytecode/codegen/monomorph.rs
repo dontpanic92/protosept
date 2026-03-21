@@ -99,6 +99,7 @@ impl Generator {
             monomorphization: Some((base_type_id, type_args.clone())),
             conforming_to: base_struct.conforming_to.clone(),
             methods: base_struct.methods.clone(), // Copy methods from base
+            source_module: base_struct.source_module.clone(),
         };
 
         // Add to type table
@@ -200,6 +201,7 @@ impl Generator {
             monomorphization: Some((base_type_id, type_args.clone())),
             conforming_to: base_enum.conforming_to.clone(),
             methods: base_enum.methods.clone(), // Copy methods from base
+            source_module: base_enum.source_module.clone(),
         };
 
         // Add to type table

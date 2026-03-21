@@ -457,6 +457,7 @@ impl Generator {
             monomorphization: None,
             conforming_to: conforming_to.clone(),
             methods: Vec::new(),
+            source_module: None,
         };
         let type_id = self.symbol_table.add_type(TypeDefinition::Enum(ty));
 
@@ -563,6 +564,7 @@ impl Generator {
             monomorphization: None, // This is the generic definition, not a monomorphization
             conforming_to: conforming_to.clone(),
             methods: Vec::new(),
+            source_module: None,
         };
         let type_id = self.symbol_table.add_type(TypeDefinition::Struct(ty));
 
@@ -830,6 +832,12 @@ impl Generator {
             return Ok(mapped_id);
         }
 
+        // Derive source module path from the module's root symbol
+        let source_module_path = module
+            .symbols
+            .get(0)
+            .map(|root| root.qualified_name.clone());
+
         let type_def = module.types.get(type_id as usize).ok_or_else(|| {
             SemanticError::Other(format!("Type id {} not found in imported module", type_id))
         })?;
@@ -880,6 +888,7 @@ impl Generator {
                     monomorphization: s.monomorphization.clone(),
                     conforming_to,
                     methods: Vec::new(),
+                    source_module: source_module_path.clone(),
                 })
             }
             TypeDefinition::Enum(e) => {
@@ -910,6 +919,7 @@ impl Generator {
                     monomorphization: e.monomorphization.clone(),
                     conforming_to,
                     methods: Vec::new(),
+                    source_module: source_module_path.clone(),
                 })
             }
             TypeDefinition::Proto(p) => {

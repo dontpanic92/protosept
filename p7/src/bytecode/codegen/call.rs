@@ -686,25 +686,73 @@ impl Generator {
         call_line: usize,
         call_col: usize,
     ) -> SaResult<Type> {
-        let type_symbol_id = match object_ty {
-            Type::Reference(inner) => match inner.as_ref() {
-                Type::Struct(id) => self.symbol_table.find_symbol_for_type(*id),
+        // Extract the type_id for source_module lookup (works for both struct and enum)
+        let type_id_opt = match object_ty {
+            Type::Reference(inner) | Type::BoxType(inner) => match inner.as_ref() {
+                Type::Struct(id) | Type::Enum(id) => Some(*id),
                 _ => None,
             },
-            Type::BoxType(inner) => match inner.as_ref() {
-                Type::Struct(id) => self.symbol_table.find_symbol_for_type(*id),
-                _ => None,
-            },
-            Type::Struct(id) => self.symbol_table.find_symbol_for_type(*id),
+            Type::Struct(id) | Type::Enum(id) => Some(*id),
             _ => None,
         };
 
-        let symbol_id = type_symbol_id
-            .unwrap_or_else(|| panic!("Generating method call for type failed: {:?}", object_ty));
+        let type_symbol_id = type_id_opt.and_then(|id| self.symbol_table.find_symbol_for_type(id));
 
-        let (method_symbol_id, function_def) = self.resolve_method(symbol_id, field)?;
+        // Try local method resolution first
+        let local_result = type_symbol_id.and_then(|sym_id| {
+            self.resolve_method(sym_id, field).ok()
+        });
 
-        // For instance methods the first parameter is the receiver (self) which we've already pushed.
+        if let Some((method_symbol_id, function_def)) = local_result {
+            // Local method — emit Call(symbol_id)
+            let param_names_full = &function_def.param_names;
+            let param_defaults_full = &function_def.param_defaults;
+
+            if param_names_full.is_empty() {
+                if !arguments.is_empty() {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "0 args expected".to_string(),
+                        rhs: format!("{} provided", arguments.len()),
+                        pos: SourcePos::at(call_line, call_col),
+                    });
+                }
+                self.builder.call(method_symbol_id);
+                return Ok(function_def.return_type.clone());
+            }
+
+            let type_symbol = self.symbol_table.get_symbol(type_symbol_id.unwrap()).unwrap();
+
+            let ordered_exprs = self.process_arguments(
+                &format!("{}.{}", type_symbol.name, field.name),
+                field.line,
+                field.col,
+                arguments,
+                &param_names_full[1..],
+                &param_defaults_full[1..],
+            )?;
+
+            self.push_typed_argument_list(
+                ordered_exprs,
+                &function_def.params[1..],
+                field.line,
+                field.col,
+            )?;
+            self.builder.call(method_symbol_id);
+
+            return Ok(function_def.return_type.clone());
+        }
+
+        // Fallback: look for the method in the source module (cross-module method call)
+        let type_id = type_id_opt
+            .ok_or_else(|| SemanticError::FunctionNotFound {
+                name: field.name.clone(),
+                pos: field.pos(),
+            })?;
+
+        let (source_module_path, type_name, function_def, mapped_return_type) =
+            self.resolve_external_method(type_id, field)?;
+
+        // Process arguments using the imported function definition
         let param_names_full = &function_def.param_names;
         let param_defaults_full = &function_def.param_defaults;
 
@@ -716,34 +764,140 @@ impl Generator {
                     pos: SourcePos::at(call_line, call_col),
                 });
             }
-            self.builder.call(method_symbol_id);
-            return Ok(function_def.return_type.clone());
+        } else {
+            let ordered_exprs = self.process_arguments(
+                &format!("{}.{}", type_name, field.name),
+                field.line,
+                field.col,
+                arguments,
+                &param_names_full[1..],
+                &param_defaults_full[1..],
+            )?;
+
+            // Map parameter types from source module
+            let imported_module = self.imported_modules.get(&source_module_path).unwrap().clone();
+            let mut type_map = std::collections::HashMap::new();
+            let mapped_params: Vec<Type> = function_def.params[1..]
+                .iter()
+                .map(|p| self.map_type_from_module(&imported_module, p, &mut type_map))
+                .collect::<SaResult<Vec<_>>>()?;
+
+            self.push_typed_argument_list(
+                ordered_exprs,
+                &mapped_params,
+                field.line,
+                field.col,
+            )?;
         }
 
-        let type_symbol = self.symbol_table.get_symbol(symbol_id).unwrap();
+        // Emit CallExternal for cross-module method call
+        let module_path_idx = self.add_string_constant(source_module_path);
+        // Use qualified method name: "TypeName.method_name"
+        let method_qualified_name = format!("{}.{}", type_name, field.name);
+        let symbol_name_idx = self.add_string_constant(method_qualified_name);
+        self.builder.call_external(module_path_idx, symbol_name_idx);
 
-        // Skip receiver param
-        let ordered_exprs = self.process_arguments(
-            &format!("{}.{}", type_symbol.name, field.name),
-            field.line,
-            field.col,
-            arguments,
-            &param_names_full[1..],
-            &param_defaults_full[1..],
-        )?;
-
-        self.push_typed_argument_list(
-            ordered_exprs,
-            &function_def.params[1..],
-            field.line,
-            field.col,
-        )?;
-        self.builder.call(method_symbol_id);
-
-        Ok(function_def.return_type.clone())
+        Ok(mapped_return_type)
     }
 
-    /// Resolves a method symbol and its function definition
+    /// Resolves a method from an imported module by looking up the type's source_module.
+    /// Returns (module_path, type_name, function_def, mapped_return_type).
+    fn resolve_external_method(
+        &mut self,
+        type_id: u32,
+        field: &Identifier,
+    ) -> SaResult<(String, String, crate::semantic::Function, Type)> {
+        let type_def = self.symbol_table.types.get(type_id as usize).ok_or_else(|| {
+            SemanticError::FunctionNotFound {
+                name: field.name.clone(),
+                pos: field.pos(),
+            }
+        })?;
+
+        let (source_module, type_name) = match type_def {
+            TypeDefinition::Struct(s) => {
+                let name = s.qualified_name.rsplit('.').next().unwrap_or(&s.qualified_name).to_string();
+                (s.source_module.clone(), name)
+            }
+            TypeDefinition::Enum(e) => {
+                let name = e.qualified_name.rsplit('.').next().unwrap_or(&e.qualified_name).to_string();
+                (e.source_module.clone(), name)
+            }
+            _ => (None, String::new()),
+        };
+
+        let module_path = source_module.ok_or_else(|| SemanticError::FunctionNotFound {
+            name: field.name.clone(),
+            pos: field.pos(),
+        })?;
+
+        let module = self.imported_modules.get(&module_path).cloned().ok_or_else(|| {
+            SemanticError::FunctionNotFound {
+                name: field.name.clone(),
+                pos: field.pos(),
+            }
+        })?;
+
+        // Find the type symbol in the source module
+        let root = module.symbols.get(0).ok_or_else(|| SemanticError::FunctionNotFound {
+            name: field.name.clone(),
+            pos: field.pos(),
+        })?;
+
+        let type_sym_id = root.children.get(&type_name).ok_or_else(|| {
+            SemanticError::FunctionNotFound {
+                name: field.name.clone(),
+                pos: field.pos(),
+            }
+        })?;
+
+        let type_sym = module.symbols.get(*type_sym_id as usize).ok_or_else(|| {
+            SemanticError::FunctionNotFound {
+                name: field.name.clone(),
+                pos: field.pos(),
+            }
+        })?;
+
+        // Find the method in the type's children
+        let method_sym_id = type_sym.children.get(&field.name).ok_or_else(|| {
+            SemanticError::FunctionNotFound {
+                name: field.name.clone(),
+                pos: field.pos(),
+            }
+        })?;
+
+        let method_sym = module.symbols.get(*method_sym_id as usize).ok_or_else(|| {
+            SemanticError::FunctionNotFound {
+                name: field.name.clone(),
+                pos: field.pos(),
+            }
+        })?;
+
+        let func_id = match method_sym.kind {
+            SymbolKind::Function { func_id, .. } => func_id,
+            _ => {
+                return Err(SemanticError::FunctionNotFound {
+                    name: field.name.clone(),
+                    pos: field.pos(),
+                });
+            }
+        };
+
+        let function_def = module.functions.get(func_id as usize).ok_or_else(|| {
+            SemanticError::FunctionNotFound {
+                name: field.name.clone(),
+                pos: field.pos(),
+            }
+        })?.clone();
+
+        // Map the return type from the imported module's type table to the current module's
+        let mut type_map = std::collections::HashMap::new();
+        let mapped_return_type = self.map_type_from_module(&module, &function_def.return_type, &mut type_map)?;
+
+        Ok((module_path, type_name, function_def, mapped_return_type))
+    }
+
+    /// Resolves a method symbol and its function definition (local only)
     fn resolve_method(
         &self,
         type_symbol_id: SymbolId,

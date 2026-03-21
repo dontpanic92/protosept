@@ -1,4 +1,23 @@
-pub struct Pos(pub row: int, pub col: int);
+pub struct Pos(pub row: int, pub col: int) {
+    pub fn sum(ref self) -> int {
+        return self.row + self.col;
+    }
+
+    pub fn scale(box self, factor: int) {
+        self.row = self.row * factor;
+        self.col = self.col * factor;
+    }
+}
+
+pub enum Direction(Up, Down, Left, Right) {
+    pub fn is_vertical(ref self) -> bool {
+        match self {
+            Direction.Up => true,
+            Direction.Down => true,
+            _ => false,
+        }
+    }
+}
 
 pub fn make_pos(r: int, c: int) -> Pos {
     return Pos(r, c);

@@ -137,6 +137,8 @@ pub struct Enum {
     pub conforming_to: Vec<TypeId>,
     // Associated methods
     pub methods: Vec<FunctionId>,
+    // Source module path (set when type is imported from another module)
+    pub source_module: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -155,6 +157,8 @@ pub struct Struct {
     pub conforming_to: Vec<TypeId>,
     // Associated methods
     pub methods: Vec<FunctionId>,
+    // Source module path (set when type is imported from another module)
+    pub source_module: Option<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -55,3 +55,36 @@ fn test_cross_module_type_in_return() -> int {
     let p = local_return_pos();
     return p.row;
 }
+
+// --- Cross-module instance method tests ---
+
+@test(expected_type = "int", expected_value = "30")
+fn test_cross_module_ref_self_method() -> int {
+    let p = types.Pos(10, 20);
+    return p.sum();
+}
+
+@test(expected_type = "int", expected_value = "15")
+fn test_cross_module_ref_self_method_via_box() -> int {
+    let p = box(types.Pos(5, 10));
+    return p.sum();
+}
+
+@test(expected_type = "int", expected_value = "30")
+fn test_cross_module_box_self_method() -> int {
+    let p = box(types.Pos(3, 4));
+    p.scale(10);
+    return p.row;
+}
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_cross_module_enum_method() -> bool {
+    let d = types.Direction.Up;
+    return d.is_vertical();
+}
+
+@test(expected_type = "bool", expected_value = "false")
+fn test_cross_module_enum_method_false() -> bool {
+    let d = types.Direction.Left;
+    return d.is_vertical();
+}

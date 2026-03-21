@@ -1139,16 +1139,38 @@ impl Context {
                         RuntimeError::Other(format!("Module '{}' has no root symbol", module_path))
                     })?;
 
-                    let symbol_id = root_symbol.children.get(&symbol_name).ok_or_else(|| {
-                        RuntimeError::Other(format!(
-                            "Symbol '{}' not found in module '{}'",
-                            symbol_name, module_path
-                        ))
-                    })?;
-
-                    let symbol = module.symbols.get(*symbol_id as usize).ok_or_else(|| {
-                        RuntimeError::Other(format!("Invalid symbol id: {}", symbol_id))
-                    })?;
+                    // Support dotted names for method calls (e.g. "Tab.load_into")
+                    let symbol = if symbol_name.contains('.') {
+                        let parts: Vec<&str> = symbol_name.splitn(2, '.').collect();
+                        let type_sym_id = root_symbol.children.get(parts[0]).ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Type '{}' not found in module '{}'",
+                                parts[0], module_path
+                            ))
+                        })?;
+                        let type_sym = module.symbols.get(*type_sym_id as usize).ok_or_else(|| {
+                            RuntimeError::Other(format!("Invalid symbol id: {}", type_sym_id))
+                        })?;
+                        let method_sym_id = type_sym.children.get(parts[1]).ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Method '{}' not found on type '{}' in module '{}'",
+                                parts[1], parts[0], module_path
+                            ))
+                        })?;
+                        module.symbols.get(*method_sym_id as usize).ok_or_else(|| {
+                            RuntimeError::Other(format!("Invalid symbol id: {}", method_sym_id))
+                        })?
+                    } else {
+                        let symbol_id = root_symbol.children.get(&symbol_name).ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Symbol '{}' not found in module '{}'",
+                                symbol_name, module_path
+                            ))
+                        })?;
+                        module.symbols.get(*symbol_id as usize).ok_or_else(|| {
+                            RuntimeError::Other(format!("Invalid symbol id: {}", symbol_id))
+                        })?
+                    };
 
                     // Extract function information
                     let (func_id, address) = match &symbol.kind {
