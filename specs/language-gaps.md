@@ -3,7 +3,7 @@
 Tracked findings from building NaviText and other real-world usage.
 Items are removed once fixed; new items added as discovered.
 
-Last updated: 2026-03-19
+Last updated: 2026-03-21
 
 ---
 
@@ -106,6 +106,107 @@ caching file status by name).
 a default: `tui.set_bold(on: int = 1)`. Currently every call must provide
 all arguments explicitly. The spec intentionally excludes this for
 auditability, but it leads to verbose call sites for toggle-style functions.
+
+### 21. No cross-module struct destructuring in `let` patterns
+**Impact: MEDIUM** — The pattern `let types.Pos(r, c) = some_call()` fails
+with "Type not found: types". The parser only accepts a bare identifier for
+struct patterns (e.g., `let Pos(r, c) = ...`), not a module-qualified path.
+
+This means structs defined in a shared `types.p7` module cannot be
+destructured in consuming modules. The workaround is to assign to a
+temporary and use field access:
+```p7
+let p = some_call();
+let r = p.row;
+let c = p.col;
+```
+
+This is a significant gap because moving shared types to a common module
+(which is good architecture) breaks destructuring patterns. Either the
+parser needs to accept qualified names in struct patterns, or the type
+resolver needs to look up unqualified names through imports.
+
+### 22. Import name shadows local variables (no namespace separation)
+**Impact: HIGH** — When a module is imported with a short name that matches
+a local variable, the local variable shadows the module name, silently
+breaking all module function calls:
+```p7
+import navitext.tabs;
+let tabs = box([...]);  // shadows the module
+tabs.clear();           // ERROR: calls module function, not array method
+```
+The workaround is `import navitext.tabs as tab_ops;` to avoid the collision,
+but this is a footgun. The compiler should either:
+- Error when a local variable shadows an imported module name, or
+- Use a separate namespace for module lookups vs variable lookups, or
+- Prefer the variable for method-style calls and the module for `module.fn()` calls
+
+### 23. No struct update / spread syntax
+**Impact: HIGH** — The `Tab` struct has 16 positional fields. To update a
+single field (e.g., `dirty`), the entire struct must be reconstructed with
+all fields explicitly listed:
+```p7
+let old = tabs[idx];
+tabs.set(idx, types.Tab(
+    old.path, old.title, old.lines, old.lang,
+    dirty, old.read_only, old.is_diff,           // <-- one field changed
+    old.cursor_row, old.cursor_col, old.scroll_row, old.scroll_col,
+    old.anchor_row, old.anchor_col, old.sel_active, old.sel_selecting,
+    old.max_line_len,
+));
+```
+A struct update syntax like `Tab { ...old, dirty: new_value }` would
+eliminate this boilerplate. Without it, large structs become very
+error-prone to update — forgetting or misordering a field is a common
+mistake, and the code is unreadable.
+
+This was the single largest source of code duplication in the NaviText
+refactoring. Every tab save/load operation repeats all 16 fields.
+
+### 24. No higher-order array methods (map, filter, for_each)
+**Impact: MEDIUM** — While closures are supported in p7 (and captured
+variables work), there are no builtin higher-order methods on arrays.
+Every transformation requires manual `while` loops:
+```p7
+// What could be: let names = items.map((item) => item.name);
+var names = box([""]);
+names.clear();
+var i = 0;
+while i < items.len() {
+    names.push(items[i].name);
+    i = i + 1;
+}
+```
+Adding `array.map()`, `array.filter()`, `array.for_each()`, and
+`array.any()` would significantly reduce boilerplate in data processing
+code. The git module and tree module are full of these manual patterns.
+
+### 25. Box parameter move tracking may be overly strict
+**Impact: HIGH** — In the p7 type system, `box<T>` is documented as
+copy-treated (handle semantics), and `is_copy_treated()` returns `true`
+for `BoxType`. However, during the NaviText refactoring, passing a
+`box<array<T>>` function parameter to another function and then reusing
+the parameter triggered "Use of moved value":
+```p7
+pub fn open_diff(tabs: box<array<Tab>>, ...) {
+    save_tab(tabs, ...);  // passes tabs to another function
+    tabs.push(new_tab);   // ERROR: Use of moved value: tabs
+}
+```
+This contradicts the copy-treated semantics. Method calls on the same
+box (`.len()`, `.set()`, `[idx]`) work fine, but passing to a function
+marks the parameter as moved even though `box` should be a copyable
+handle.
+
+The workaround is to inline all helper function calls — which defeats
+the purpose of extracting reusable functions. This was the most impactful
+limitation during the refactoring: it forced every tab lifecycle function
+to inline ~10 lines of save/load logic rather than calling shared helpers.
+
+If box is truly copy-treated, the move checker should not flag re-use
+after passing to a function. If box is intentionally move-semantics,
+the `is_copy_treated()` implementation is wrong and `ref<box<T>>`
+should be used for borrowing — but the ergonomics of that are unclear.
 
 ---
 
