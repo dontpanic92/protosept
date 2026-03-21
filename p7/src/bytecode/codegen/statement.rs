@@ -209,17 +209,52 @@ impl Generator {
                 variant_name,
                 sub_patterns,
             } => {
-                let enum_type_id = match self.require_type_from_identifier(enum_name)? {
-                    Type::Enum(id) => id,
-                    _ => {
-                        return Err(SemanticError::TypeMismatch {
-                            lhs: "Enum type".to_string(),
-                            rhs: format!("'{}' is not an enum", enum_name.name),
-                            pos: enum_name.pos(),
-                        });
-                    }
-                };
+                // Try direct lookup, then qualified name for cross-module types
+                let resolved_type = self.require_type_from_identifier(enum_name)
+                    .or_else(|_| {
+                        let qualified = format!("{}.{}", enum_name.name, variant_name.name);
+                        self.resolve_qualified_type_name(&qualified, enum_name.line, enum_name.col)
+                    })?;
 
+                match resolved_type {
+                    Type::Struct(struct_type_id) => {
+                        // Cross-module struct destructuring: let types.Pos(r, c) = expr
+                        let struct_def = match self.symbol_table.get_type(struct_type_id) {
+                            TypeDefinition::Struct(s) => s.clone(),
+                            _ => return Err(SemanticError::Other("Expected struct type definition".to_string())),
+                        };
+
+                        if sub_patterns.len() != struct_def.fields.len() {
+                            return Err(SemanticError::TypeMismatch {
+                                lhs: format!("{} fields in struct '{}'", struct_def.fields.len(), struct_def.qualified_name),
+                                rhs: format!("{} patterns provided", sub_patterns.len()),
+                                pos: enum_name.pos(),
+                            });
+                        }
+
+                        self.generate_expression(expression)?;
+
+                        for (field_idx, sub_pat) in sub_patterns.iter().enumerate() {
+                            if !sub_pat.is_wildcard() {
+                                if let Pattern::Identifier(id) = sub_pat {
+                                    self.builder.dup();
+                                    self.builder.ldfield(field_idx as u32);
+                                    let field_ty = struct_def.fields[field_idx].1.clone();
+                                    let var_id = self
+                                        .local_scope.as_mut().unwrap()
+                                        .add_variable(id.name.clone(), field_ty, is_mutable)
+                                        .map_err(|_| SemanticError::VariableOutsideFunction {
+                                            name: id.name.clone(), pos: id.pos(),
+                                        })?;
+                                    self.builder.stvar(var_id);
+                                }
+                            }
+                        }
+
+                        self.builder.pop();
+                        Ok(Type::Primitive(PrimitiveType::Unit))
+                    }
+                    Type::Enum(enum_type_id) => {
                 let enum_def = match self.symbol_table.get_type(enum_type_id) {
                     TypeDefinition::Enum(e) => e.clone(),
                     _ => {
@@ -286,6 +321,15 @@ impl Generator {
                 self.builder.pop();
 
                 Ok(Type::Primitive(PrimitiveType::Unit))
+                    }
+                    _ => {
+                        return Err(SemanticError::TypeMismatch {
+                            lhs: "Enum or Struct type".to_string(),
+                            rhs: format!("'{}.{}' is neither an enum nor a struct", enum_name.name, variant_name.name),
+                            pos: enum_name.pos(),
+                        });
+                    }
+                }
             }
 
             Pattern::TuplePattern { sub_patterns } => {

@@ -25,18 +25,57 @@ impl Generator {
                     variant_name,
                     sub_patterns,
                 } => {
-                    // Look up the enum type
-                    let enum_type_id = match self.require_type_from_identifier(enum_name)? {
-                        Type::Enum(id) => id,
-                        _ => {
-                            return Err(SemanticError::TypeMismatch {
-                                lhs: "Enum type".to_string(),
-                                rhs: format!("'{}' is not an enum", enum_name.name),
-                                pos: enum_name.pos(),
-                            });
-                        }
-                    };
+                    // Try direct lookup first, then qualified name for cross-module types
+                    let resolved_type = self.require_type_from_identifier(enum_name)
+                        .or_else(|_| {
+                            // Try "module.TypeName" qualified resolution
+                            let qualified = format!("{}.{}", enum_name.name, variant_name.name);
+                            self.resolve_qualified_type_name(&qualified, enum_name.line, enum_name.col)
+                        })?;
 
+                    match resolved_type {
+                        Type::Struct(struct_type_id) => {
+                            // Cross-module struct pattern: types.Pos(r, c)
+                            let struct_def = match self.symbol_table.get_type(struct_type_id) {
+                                TypeDefinition::Struct(s) => s.clone(),
+                                _ => return Err(SemanticError::Other("Expected struct type definition".to_string())),
+                            };
+
+                            if sub_patterns.len() != struct_def.fields.len() {
+                                return Err(SemanticError::TypeMismatch {
+                                    lhs: format!("{} fields in struct '{}'", struct_def.fields.len(), struct_def.qualified_name),
+                                    rhs: format!("{} patterns provided", sub_patterns.len()),
+                                    pos: enum_name.pos(),
+                                });
+                            }
+
+                            if arm.pattern.name.is_some() {
+                                self.builder.dup();
+                                self.bind_pattern_variable(&arm.pattern.name, scrutinee_ty.clone())?;
+                            }
+
+                            for (field_idx, sub_pat) in sub_patterns.iter().enumerate() {
+                                if !sub_pat.is_wildcard() {
+                                    if let Pattern::Identifier(id) = sub_pat {
+                                        self.builder.dup();
+                                        self.builder.ldfield(field_idx as u32);
+                                        let field_ty = struct_def.fields[field_idx].1.clone();
+                                        self.bind_pattern_variable(&Some(id.clone()), field_ty)?;
+                                    }
+                                }
+                            }
+
+                            let arm_ty = self.generate_expression(arm.expression.clone())?;
+                            self.validate_match_arm_type(&mut result_ty, arm_ty)?;
+
+                            if !is_last_arm {
+                                let end_jump = self.builder.next_address();
+                                self.builder.jmp(0);
+                                end_jumps.push(end_jump);
+                            }
+                        }
+                        Type::Enum(enum_type_id) => {
+                    // Look up the enum type
                     let enum_def = match self.symbol_table.get_type(enum_type_id) {
                         TypeDefinition::Enum(e) => e.clone(),
                         _ => {
@@ -123,6 +162,15 @@ impl Generator {
 
                     let next_arm = self.builder.next_address();
                     self.builder.patch_jump_address(no_match_jump, next_arm);
+                        }
+                        _ => {
+                            return Err(SemanticError::TypeMismatch {
+                                lhs: "Enum or Struct type".to_string(),
+                                rhs: format!("'{}.{}' is neither an enum nor a struct", enum_name.name, variant_name.name),
+                                pos: enum_name.pos(),
+                            });
+                        }
+                    }
                 }
 
                 Pattern::StructPattern {
