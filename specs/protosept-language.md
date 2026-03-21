@@ -30,8 +30,11 @@ Normative keywords:
 - `T, U, V` are types.
 - `x, y, z` are identifiers.
 - `null` denotes the null value (only inhabits nullable types).
-- **Slot**: a storage location introduced by `let`, `var`, or a parameter.
-- **Addressable location** (v1): a `let`-introduced slot, a parameter slot, or a field/sub-location of an addressable base where the language provides addressability (see §7.1, §7.2, §11.4). Note: `var` slots are NOT addressable locations in v1.
+- **Slot**: a storage location introduced by `let`, `let mut`, or a parameter.
+- **Addressable location** (v1): a `let`-introduced slot, a parameter slot, or a field/sub-location of an addressable base where the language provides addressability (see §7.1, §7.2, §11.4). Note: `let mut` slots are NOT addressable locations in v1.
+- **Mutable place**: a syntactic expression that may appear on the left side of an assignment statement or as the receiver of a `ref mut self` method call (see §10.2, §11.3.2, §11.4). Mutable places are ephemeral; they are not storable values.
+- **Binding mutability**: whether a named slot may be reassigned. Controlled by `let` vs `let mut`. A `let mut` binding may be rebound to a new value; a `let` binding may not.
+- **Interior mutability**: whether the value behind a handle may be mutated in place. Controlled by the handle type: `box<T>` permits interior mutation; `robox<T>` does not. `let mut` has no effect on interior mutability.
 - **Structural-copyable**: types for which `structural_copy(x)` is well-typed (§6.2). This is a structural property determined by the type's structure.
 - **Copy type**: a type `T` such that `T: Copy` (§6.3). Types satisfying the `Copy` proto enable implicit copying at value-flow sites.
 - **Materialized temporary slot (v1)**: an implicit immutable `let` slot created by the compiler to extend the lifetime of a temporary value, enabling it to be borrowed. Used in narrowly-scoped contexts; in v1, this is currently only used for receiver temporary materialization (§11.3.1).
@@ -399,7 +402,7 @@ Identifiers start with `_` or a letter and continue with letters, digits, or `_`
 ### 2.2 Keywords and identifiers
 
 **Reserved keywords** (minimal set):  
-`fn`, `struct`, `enum`, `proto`, `let`, `var`, `pub`, `return`, `if`, `else`, `loop`, `break`, `continue`, `for`, `in`, `import`, `as`
+`fn`, `struct`, `enum`, `proto`, `let`, `mut`, `pub`, `return`, `if`, `else`, `loop`, `break`, `continue`, `for`, `in`, `import`, `as`
 
 `true` and `false` are **keywords** (boolean literals).  
 `null` is a keyword (null literal).
@@ -410,7 +413,7 @@ Identifiers start with `_` or a letter and continue with letters, digits, or `_`
 These identifiers have special meaning only in specific syntactic positions:
 - **Type position:** `ref<T>`, `box<T>`, `robox<T>` denote reference, boxed, and read-only boxed types.
 - **Expression position:** `ref(expr)` and `box(expr)` construct reference and boxed values. Note: `robox` has no expression-position form; `robox<T>` values are obtained via type ascription or coercion from `box<T>`.
-- **Method receiver position:** `ref self` desugars to `self: ref<Self>` and `box self` desugars to `self: box<Self>` (see §11.4). Note: `robox self` is not a valid receiver form.
+- **Method receiver position:** `ref self` desugars to `self: ref<Self>`, `box self` desugars to `self: box<Self>`, and `ref mut self` denotes an ephemeral mutable-borrowed receiver (see §11.4). Note: `robox self` is not a valid receiver form.
 - In all other positions, `ref`, `box`, and `robox` are ordinary identifiers and may be used as variable names, parameter names, etc.
 
 **Contextual keywords** (not reserved; allowed as identifiers in most contexts):  
@@ -570,14 +573,30 @@ Two indexing forms:
 - `a.get(i)` returns `?T`.
 - If `i` is negative or out of bounds, returns `null`.
 
+**Boxed-array index as mutable place:**
+- When `a: box<array<T>>`, the expression `a[i]` is a **mutable place** in addition to being a read expression.
+- As a mutable place, `a[i]` may appear on the left of an assignment or as the receiver of a `ref mut self` method call (see §10.2, §11.3.2).
+- `a[i]` is NOT a mutable place when `a: array<T>` (value arrays are immutable) or when `a: robox<array<T>>` (read-only box).
+
 [[TODO]] define full array API surface (`len`, `get`, etc.) and whether `get` is syntax sugar for a prelude function.
 
-#### 3.3.3 Boxed array mutation (overview)
+#### 3.3.3 Boxed array mutation
 
 Mutation of an array requires boxing:
 - `box<array<T>>` represents a mutable, identity-bearing container.
 
-v1 boxed-array mutation is via library operations (not indexing assignment). [[TODO]] specify API (e.g. `push`, `set`, `pop`) and their signatures.
+**Structural mutation** (adding/removing elements) is via library operations on the boxed array, such as `push`, `pop`, `set`, and `insert`.
+
+**Element mutation in place** is via mutable place assignment or `ref mut self` method calls on elements:
+- `xs[i] = new_val;` — replace element at index `i`
+- `xs[i].field = 10;` — assign to a field of the element at index `i` (requires element type to be a struct with a visible field)
+- `xs[i].method()` where `method` has a `ref mut self` receiver — call a mutable method on element `i` in place
+
+See §10.2 for assignment rules and §11.3.2 for `ref mut self` auto-borrow sugar.
+
+**Restriction:** When `xs[i]` is used as a mutable place within an expression, the same expression MUST NOT also perform structural mutation of `xs` (push, pop, insert, remove, or replacement of `xs` itself). This local exclusivity rule prevents element references from being invalidated within a single expression. See §10.2.1.
+
+[[TODO]] specify full boxed-array API (e.g. `push`, `set`, `pop`, `insert`, `remove`) and their signatures.
 
 ---
 
@@ -851,7 +870,7 @@ fn maybe_int() -> ?int {
 
 ## 5. Bindings, shadowing, and mutation
 
-### 5.1 `let` and `var` bindings (slots)
+### 5.1 `let` and `let mut` bindings (slots)
 
 `let pattern = expr;` introduces one or more immutable slots by matching `expr` against `pattern`.
 
@@ -860,15 +879,21 @@ fn maybe_int() -> ?int {
 - When `pattern` is a plain identifier `x`, this is the common form `let x = expr;` and binds the whole value to `x`.
 - `pattern` MUST be an irrefutable pattern for the static type of `expr` (see §9.6.1.2); otherwise ERROR.
 
-`var pattern = expr;` introduces one or more mutable slots (v1).
+`let mut pattern = expr;` introduces one or more mutable slots (v1).
 
-- `var` slots can be reassigned: `x = new_expr;` where `new_expr` has the same type as the slot.
-- `var` slots are mutable but NOT addressable (see §0); borrowing via `ref(x)` where `x` is a `var` slot is ERROR.
+- `let mut` slots can be reassigned: `x = new_expr;` where `new_expr` has the same type as the slot.
+- `let mut` slots are mutable but NOT addressable (see §0); borrowing via `ref(x)` where `x` is a `let mut` slot is ERROR.
 - `pattern` MUST be an irrefutable pattern for the static type of `expr` (see §9.6.1.2); otherwise ERROR.
+
+**Binding mutability vs. interior mutability:**
+`let mut` expresses **binding mutability** only: the slot may be reassigned to a new value. It does NOT imply interior mutability of the bound value. Interior mutability (mutation of a value's fields or contained state) is a property of the value's type, not of the binding. Specifically:
+- `let p = box(Point(1, 2));` — `p` cannot be rebound, but `p.x = 3` is valid because `p: box<Point>` provides interior mutability.
+- `let mut p = box(Point(1, 2));` — `p` can be rebound to another box (e.g., `p = box(Point(4, 5))`), but whether `p.x = 3` is valid still depends on `p: box<Point>`, not on `let mut`.
+- `let mut n = 0;` — `n` can be reassigned (e.g., `n = 1`), but `n: int` has no interior structure to mutate.
 
 Values bound by a destructuring pattern flow into their bindings according to the standard value-flow rule (§6.1): `Copy` types are copied; other types are moved. The source expression is consumed exactly once.
 
-Destructuring assignment to existing places is not supported in v1; deconstruction is only allowed at binding sites (`let`, `var`, `for`).
+Destructuring assignment to existing places is not supported in v1; deconstruction is only allowed at binding sites (`let`, `let mut`, `for`).
 
 **Examples:**
 
@@ -892,14 +917,14 @@ let pt = Point(1, 2);
 let Point(x = px, y = py) = pt;
 
 // Mutable bindings via pattern
-var (x, y) = get_pair();  // both x and y are mutable var slots
+let mut (x, y) = get_pair();  // both x and y are mutable let mut slots
 ```
 
 ### 5.2 Shadowing
 
-A `let` or `var` may introduce a new binding with the same name as an outer binding.
+A `let` or `let mut` may introduce a new binding with the same name as an outer binding.
 
-Rule: if `x` shadows `x`, the new binding MUST have the **same type** as the shadowed binding. The mutability may differ (i.e., a `let` binding may shadow a `var` binding and vice versa).
+Rule: if `x` shadows `x`, the new binding MUST have the **same type** as the shadowed binding. The mutability may differ (i.e., a `let` binding may shadow a `let mut` binding and vice versa).
 
 Example:
 ```p7
@@ -911,19 +936,19 @@ let a = 1;
 a
 ```
 
-Example with `var`:
+Example with `let mut`:
 ```p7
 let x = 10;
 {
-  var x = 20;  // ok: same type int, but now mutable
-  x = 30;      // ok: x is var
+  let mut x = 20;  // ok: same type int, but now mutable
+  x = 30;          // ok: x is let mut
 }
 x  // still 10; outer x is immutable
 ```
 
 **Import shadowing restriction (v1)**
 
-A `let` or `var` binding must not shadow an import binding in the same scope.
+A `let` or `let mut` binding must not shadow an import binding in the same scope.
 
 Example (ERROR):
 ```p7
@@ -941,37 +966,49 @@ let list = 5;  // ok: no shadowing
 
 ### 5.3 Mutation and identity
 
-Protosept supports two forms of mutation:
+Protosept supports two forms of mutation, which operate on different axes and must not be confused:
 
-1. **Local-only slot reassignment** (v1): `var` slots can be reassigned (§5.1). This is purely local mutation; `var` slots cannot be borrowed via `ref(...)`.
+1. **Binding-slot reassignment** (v1): `let mut` slots can be reassigned (§5.1). This is purely local mutation; `let mut` slots cannot be borrowed via `ref(...)`. `let mut` expresses that the *binding slot* is mutable — it does not affect the mutability of any object or value reached through the bound handle.
 
-2. **Shared identity mutation**: In-place mutation through `box<T>`.
-   - Assigning to a field is allowed only through a box:
-     - `p.x = 1` is valid only if `p: box<Point>`.
+2. **Interior mutation through a handle**: In-place mutation through `box<T>` (and the mutable place forms based on it).
+   - Assigning to a field is allowed through a box: `p.x = 1` is valid when `p: box<Point>`.
+   - Assigning to a boxed-array element: `xs[i] = v` or `xs[i].field = v` when `xs: box<array<T>>`.
    - Value structs and value arrays are immutable.
+   - Interior mutability is a property of the handle type (`box<T>`), not the binding mutability.
 
-The distinction ensures that shared/observable mutation is always expressed via `box<T>`, while `var` provides convenient local reassignment for loop counters, accumulators, and similar use cases.
+The distinction ensures that shared/observable mutation is always expressed via `box<T>`, while `let mut` provides convenient local reassignment for loop counters, accumulators, and similar use cases. A reader can always identify mutation capability by inspecting the type (`box<T>`) rather than the binding form.
 
-#### Example: `var` in a loop accumulator
+#### Example: `let mut` in a loop accumulator
 
 ```p7
 fn sum(arr: array<int>) -> int {
-  var total = 0;
+  let mut total = 0;
   for x in arr {
-    total = total + x;  // ok: total is var
+    total = total + x;  // ok: total is let mut
   }
   total
 }
 ```
 
-#### Example: `var` slots cannot be borrowed
+#### Example: `let mut` slots cannot be borrowed
 
 ```p7
-var count = 0;
+let mut count = 0;
 let r = ref(count);  // ERROR
 ```
 
-This is ERROR because `var` slots are not addressable locations.
+This is ERROR because `let mut` slots are not addressable locations.
+
+#### Example: `let mut` binding does not affect interior mutability
+
+```p7
+let c = box(Counter(0));
+c.count = c.count + 1;   // ok: interior mutation via box<Counter>
+
+let mut p = box(Point(1, 2));
+p = box(Point(3, 4));    // ok: rebind the slot (let mut allows this)
+p.x = 10;               // ok: interior mutation via box<Point> (independent of let mut)
+```
 
 ---
 
@@ -1248,7 +1285,7 @@ A value of type `ref<T>` is a read-only view of an addressable location holding 
 `ref(place)` produces a `ref<T>` when `place` is an addressable location of type `T`.
 
 Requirements:
-- `place` MUST be an addressable location (see §0). Note that `var` slots are not addressable.
+- `place` MUST be an addressable location (see §0). Note that `let mut` slots are not addressable.
 
 In v1, borrowing is always explicit:
 - There is no implicit borrowing at call sites (except for method-call auto-borrow sugar; see §11.3.1).
@@ -1353,6 +1390,74 @@ The reverse coercion `robox<T> -> box<T>` is **not** allowed (ERROR).
 **Rationale:**
 
 `robox<T>` provides a type-safe mechanism to share heap-allocated values without permitting mutation, enabling safer API boundaries and immutable views of mutable data.
+
+---
+
+### 7.6 Ephemeral mutable-place semantics (v1)
+
+A **mutable place** (see §0) is a syntactic expression that may appear on the left side of an assignment statement, or as the receiver of a `ref mut self` method call. Mutable places are **ephemeral**: they are not storable values, cannot be passed as arguments, cannot be returned from functions, and have no first-class mutable-reference type in v1.
+
+#### 7.6.1 Mutable place forms
+
+The following expressions are mutable places in v1:
+
+| Expression | Requirement | Note |
+|---|---|---|
+| `x` | `x` introduced by `let mut` | binding-slot reassignment |
+| `*b` | `b: box<T>` | boxed deref (write) |
+| `b.field` | `b` is a mutable place of struct type `S`, `field` is a field of `S` | nested field of mutable place |
+| `b[i]` | `b: box<array<T>>` | element of boxed array |
+| `b[i].field` | `b: box<array<T>>`, element type is struct `S`, `field` is a field of `S` | nested field of boxed-array element |
+
+The mutable place forms compose: if `b[i]` is a mutable place of struct type `S`, then `b[i].field` is also a mutable place for any visible field `field` of `S`.
+
+The following are **not** mutable places:
+- `let`-introduced slots (immutable bindings)
+- Parameter slots (parameters are not reassignable in v1)
+- `ref<T>` values (read-only borrowed views)
+- `*rb` / `rb.field` where `rb: robox<T>` (read-only boxes)
+- `a[i]` where `a: array<T>` (value arrays are immutable)
+
+#### 7.6.2 Restriction: ephemeral and non-storable
+
+Mutable places are ephemeral and exist only in specific syntactic positions:
+
+- A mutable place may appear as the `place` in an assignment statement `place = expr;` (§10.2).
+- A mutable place may appear as the receiver of a `ref mut self` method call `place.method(args...)` (§11.3.2).
+- A mutable place may NOT be stored: there is no `ref_mut<T>` value form in v1.
+- A mutable place may NOT be passed as a function argument (beyond the implicit `ref mut self` receiver desugaring).
+- A mutable place may NOT be returned from a function.
+
+#### 7.6.3 Local exclusivity restriction for boxed-array element places
+
+When `xs[i]` is used as a mutable place within an expression (either on the left of `=` or as the receiver of a `ref mut self` call), the same expression MUST NOT also perform structural mutation of the containing array `xs`. Structural mutations include: calls to `push`, `pop`, `insert`, `remove`, or any operation that may reallocate or resize the array, and assignment to `xs` itself.
+
+**Examples:**
+
+```p7
+struct Point(pub x: int, pub y: int) {
+  pub fn shift(ref mut self, dx: int) {
+    self.x = self.x + dx;
+  }
+}
+
+let xs = box([Point(1, 2), Point(3, 4)]);
+
+// OK: assign to element
+xs[0] = Point(10, 20);
+
+// OK: assign to field of element
+xs[0].x = 10;
+
+// OK: call ref mut self method on element
+xs[0].shift(5);
+
+// ERROR: structural mutation (push) of xs while xs[i] is in use as mutable place
+// xs[0] = xs.pop();           // ERROR: pop() structurally mutates xs in the same expression
+// xs.push(Point(0, 0));       // ok as a standalone statement; ERROR only when combined with xs[i] mutable-place use in same expression
+```
+
+Rationale: This restriction prevents an element-place from being invalidated by a concurrent structural change to the containing array within a single expression. No lifetime tracking is required because the restriction is purely local (expression-level).
 
 ---
 
@@ -1622,7 +1727,7 @@ Arm separator:
 A **pattern** describes how a value is matched and optionally how bindings are introduced from its substructure. Patterns are used in:
 
 - `match` arms (§9.6)
-- `let` and `var` bindings (§5.1)
+- `let` and `let mut` bindings (§5.1)
 - `for` iteration bindings (§10.3)
 - `try ... else` handler arms (§14.2)
 - [[TODO]] function/closure parameters (deferred to a future version)
@@ -1682,7 +1787,7 @@ A pattern is **irrefutable** for a type `T` if it is statically guaranteed to ma
 - Any pattern containing a refutable sub-pattern.
 
 **Contextual rules:**
-- `let`, `var`, and `for` MUST use irrefutable patterns. Using a refutable pattern in these contexts (e.g., `let Result.Ok(x) = expr;`) is ERROR.
+- `let`, `let mut`, and `for` MUST use irrefutable patterns. Using a refutable pattern in these contexts (e.g., `let Result.Ok(x) = expr;`) is ERROR.
 - `match` and `try ... else` handler arms may use refutable patterns.
 
 ##### 9.6.1.3 Pattern typing
@@ -1974,7 +2079,7 @@ fn try_apply(f: fn[throws](int) -> int, x: int) -> ?int {
 
 Statement forms:
 - `let` binding: `let x = expr;`
-- `var` binding: `var x = expr;`
+- `let mut` binding: `let mut x = expr;`
 - expression statement: `expr;`
 - `if` statement (§9.2): `if condition { then_block }`
 - `while` statement (§9.5): `while condition { body }`
@@ -2001,17 +2106,32 @@ place = expr;
 ```
 
 Rules:
-- `place` may be:
-  1. A `var` slot: `x = expr` where `x` was introduced by `var`.
+- `place` must be a mutable place (§7.6.1):
+  1. A `let mut` slot: `x = expr` where `x` was introduced by `let mut`.
      - `expr` MUST have the same type as the slot.
-  2. An addressable location that is mutable by definition:
-     - boxed deref: `*b = expr` where `b: box<T>`
-     - boxed field: `b.field = expr` where `b: box<S>`
+  2. A boxed deref: `*b = expr` where `b: box<T>`.
+  3. A boxed field: `b.field = expr` where `b: box<S>` or `b` is a mutable place of struct type `S`.
+  4. A boxed-array element: `b[i] = expr` where `b: box<array<T>>`.
+     - `expr` MUST have type `T`.
+  5. A nested field of a boxed-array element: `b[i].field = expr` where `b: box<array<T>>` and the element type is struct `S` with a visible field `field`.
+     - `expr` MUST have the declared type of `field`.
 - Assignment to read-only boxes is ERROR:
   - `*rb = expr` where `rb: robox<T>` is ERROR.
   - `rb.field = expr` where `rb: robox<S>` is ERROR.
 - Assigning to a `let` slot (`x = expr` where `x` was introduced by `let`) is ERROR.
 - Assignment does not produce a value.
+
+#### 10.2.1 Local exclusivity for boxed-array element assignment
+
+When the `place` in an assignment is a boxed-array element place (`b[i]` or `b[i].field`), the assignment expression MUST NOT also structurally mutate `b` (e.g., by calling `push`, `pop`, `insert`, or `remove` on `b`, or by assigning to `b` itself). This is a local, expression-scope restriction; it does not require lifetime tracking.
+
+```p7
+let xs = box([1, 2, 3]);
+
+xs[0] = 10;              // OK
+xs[0] = xs[1];           // OK: right-hand side reads xs[1], left side writes xs[0]
+// xs[xs.push(4)] = 5;  // ERROR: structural mutation of xs in the same expression
+```
 
 ### 10.3 `for` statement (v1)
 
@@ -2164,6 +2284,56 @@ The temporary `__tmp_recv` is valid for the duration of the method call, and the
 
 This sugar reduces ceremony at method call sites while maintaining explicit borrowing for free function calls, providing ergonomics where method chaining and fluent APIs are common.
 
+#### 11.3.2 Method-call auto-borrow sugar for `ref mut self` receivers
+
+For method calls on mutable places, p7 provides auto-borrow sugar when the method has a `ref mut self` receiver (§11.4):
+
+**Sugar rules:**
+
+- `recv.method(args...)` where `method` has a `ref mut self` receiver desugars as follows:
+  - If `recv` is a `let mut` slot of type `Self`: desugars to `Type.method(ref_mut(recv), args...)` — the compiler takes an ephemeral mutable borrow of the slot for the duration of the call.
+  - If `recv` has type `box<Self>`: desugars to `Type.method(ref_mut(*recv), args...)` — the mutable borrow is taken of the dereferenced contents. The receiver may be any `box<Self>` value (including non-`let-mut` bindings); the box itself provides the mutable place via `*recv`.
+  - If `recv` is a boxed field `b.field` where `b: box<S>` and the field type is `Self`: desugars to `Type.method(ref_mut(b.field), args...)`.
+  - If `recv` is `b[i]` where `b: box<array<Self>>`: desugars to `Type.method(ref_mut(b[i]), args...)`.
+  - If `recv` is `b[i].field` where `b: box<array<S>>` and the field type is `Self`: desugars to `Type.method(ref_mut(b[i].field), args...)`.
+  - Calling a `ref mut self` method on a `robox<Self>` value is ERROR (`*rb` is not a mutable place when `rb: robox<T>`).
+
+**Restrictions:**
+
+- Applies only to methods with `ref mut self` receivers; does NOT apply to methods with `ref self`, `box self`, or value `self` receivers.
+- The receiver expression must either be a mutable place (§7.6.1) or an expression of type `box<Self>` (from which `*recv` is a mutable place). Calling a `ref mut self` method on any other expression is ERROR.
+- The `ref_mut(...)` desugaring in the rules above is an **internal notation only** — there is no user-visible `ref_mut<T>` type or `ref_mut(...)` expression in v1. The mutable borrow is always implicit and ephemeral.
+- The mutable borrow exists only for the duration of the method call expression; it does not outlive the call.
+- The local exclusivity restriction of §7.6.3 applies: when the receiver is a boxed-array element place, the same expression must not also structurally mutate the containing array.
+
+**Example:**
+
+```p7
+struct Point(pub x: int, pub y: int) {
+  pub fn shift(ref mut self, dx: int, dy: int) {
+    self.x = self.x + dx;
+    self.y = self.y + dy;
+  }
+  pub fn get_x(ref self) -> int {
+    return self.x;
+  }
+}
+
+// Via let mut slot
+let mut p = Point(1, 2);
+p.shift(3, 4);           // ok: desugars to Point.shift(ref_mut(p), 3, 4)
+
+// Via boxed array element
+let xs = box([Point(0, 0), Point(10, 10)]);
+xs[0].shift(1, 1);       // ok: desugars to Point.shift(ref_mut(xs[0]), 1, 1)
+xs[1].x = 5;             // ok: direct field assignment (§10.2)
+let v = xs[0].get_x();   // ok: ref self method still works (§11.3.1)
+```
+
+**Normative note:**
+
+The `ref_mut(...)` notation in the desugaring rules above is internal specification notation. The user never writes `ref_mut` in source. The `ref mut self` receiver form is solely a method receiver syntax (§11.4), not a general type constructor.
+
 ### 11.4 Method receivers (v1)
 
 Methods on structs, enums, and protos may declare a receiver parameter. The receiver is the first parameter and uses special syntax.
@@ -2185,7 +2355,14 @@ Methods on structs, enums, and protos may declare a receiver parameter. The rece
    - Caller passes a read-only view of an addressable location.
    - Method-call syntax automatically applies the auto-borrow sugar (§11.3.1).
 
-3. `self: box<Self>` or shorthand `box self` – boxed receiver:
+3. `ref mut self` – ephemeral mutable-borrowed receiver:
+   - Denotes ephemeral mutable borrowed access to `Self` for the duration of the method call.
+   - The caller must supply a mutable place of type `Self` (§7.6.1), or an expression of type `box<Self>` (from which the compiler takes a mutable borrow of `*recv`); the compiler applies the auto-borrow sugar (§11.3.2).
+   - This form is **receiver-only** in v1: `ref mut` is not a general type constructor, and there is no first-class `ref_mut<T>` value type.
+   - `ref mut self` is distinct from `let mut` (binding mutability) and from `box self` (escaping identity): it belongs to the borrow/access-capability axis and is strictly ephemeral.
+   - Within the method body, `self` may be used to read and write fields of `Self`, subject to field-visibility rules (§12.1.1).
+
+4. `self: box<Self>` or shorthand `box self` – boxed receiver:
    - Type: `box<Self>`.
    - Caller passes a boxed handle to the instance.
    - The boxed handle satisfies `Copy` (§6.3); passing does not move the box itself.
@@ -2197,29 +2374,57 @@ Methods on structs, enums, and protos may declare a receiver parameter. The rece
 - No implicit boxing occurs to satisfy a receiver:
   - A method with `self: box<Self>` requires the caller to have `box<Self>`, not just `Self`.
 - For methods with `ref self` receivers, the auto-borrow sugar (§11.3.1) applies at method call sites for `box<Self>` and `robox<Self>` receivers.
+- For methods with `ref mut self` receivers, the auto-borrow sugar (§11.3.2) applies at method call sites; the receiver expression must be a mutable place or a `box<Self>` value.
 - Boxed receivers (`self: box<Self>`) pass the box handle, which satisfies `Copy`. This allows multiple method calls on the same box without moving the box itself.
 - Calling a method with a `box self` receiver on a `robox<Self>` value is ERROR (capability mismatch).
+- Calling a `ref mut self` method on a non-mutable-place, non-`box<Self>` expression is ERROR.
 
 **Example:**
 ```p7
-struct Counter(count: int) {
-  pub fn increment(box self) {
+struct Counter(pub count: int) {
+  pub fn increment(ref mut self) {
     self.count = self.count + 1;
   }
   pub fn get(ref self) -> int {
     return self.count;
   }
+  pub fn reset(box self) {
+    self.count = 0;
+  }
 }
 
-let c = box(Counter(0));
-c.increment();   // ok: box handle satisfies Copy, box is not moved
-c.increment();   // ok: can call again
-let n = c.get(); // ok: desugars to Counter.get(ref(*c)) per §11.3.1
+// Via let mut slot
+let mut c = Counter(0);
+c.increment();       // ok: ref mut self auto-borrow (§11.3.2)
+c.increment();       // ok: can call again on same mutable place
+let n = c.get();     // ok: ref self auto-borrow (§11.3.1); n == 2
 
-let rc: robox<Counter> = c;
-// rc.increment(); // ERROR: increment requires box self, but rc is robox<Counter>
-let m = rc.get();  // ok: get only requires ref self, desugars to Counter.get(ref(*rc))
+// Via boxed array
+let cs = box([Counter(0), Counter(10)]);
+cs[0].increment();   // ok: ref mut self on boxed-array element
+cs[1].increment();   // ok
+let v = cs[0].get(); // ok: ref self on boxed-array element (§11.3.1)
+
+// box self example (requires box handle)
+let bc = box(Counter(5));
+bc.reset();          // ok: box self receiver
+bc.increment();      // ok: ref mut self auto-borrows *bc (bc: box<Counter>)
+let m = bc.get();    // ok: ref self; m == 1
+
+let rc: robox<Counter> = bc;
+// rc.increment();   // ERROR: ref mut self requires mutable place; robox is not mutable
+// rc.reset();       // ERROR: reset requires box self, but rc is robox<Counter>
+let k = rc.get();    // ok: ref self works on robox<Counter>
 ```
+
+**Receiver capability comparison:**
+
+| Receiver | Requires | Caller supplies | Can mutate fields | Escapes? |
+|---|---|---|---|---|
+| `self` | value `Self` | value (moved) | yes (owned copy) | — |
+| `ref self` | addressable place or box/robox | mutable or immutable place | no | no |
+| `ref mut self` | mutable place | mutable place only | yes | no |
+| `box self` | `box<Self>` | box handle | yes | via box |
 
 ---
 
@@ -2404,7 +2609,7 @@ struct Vec2(
 }
 ```
 
-Method receivers are defined in §11.4. Structs may use `self`, `ref self`, or `box self` receivers.
+Method receivers are defined in §11.4. Structs may use `self`, `ref self`, `ref mut self`, or `box self` receivers.
 
 ### 12.6 Builtin structs: `@builtin()`
 
@@ -2577,7 +2782,7 @@ These may be added in future versions.
 
 An enum may include a method block, using the same method syntax as structs.
 
-Method receivers are defined in §11.4. Enums may use `self`, `ref self`, or `box self` receivers.
+Method receivers are defined in §11.4. Enums may use `self`, `ref self`, `ref mut self`, or `box self` receivers.
 
 This enables enums to satisfy object protos structurally (§18).
 
@@ -3639,7 +3844,7 @@ If marshalling cannot be performed (unsupported ABI, missing layout metadata, un
 ## 24. Open items / TODO list (curated)
 
 1) String concatenation spelling, slicing APIs
-2) Boxed array mutation API surface and semantics (§3.3.3)
+2) Boxed array mutation API surface: specify `push`, `pop`, `set`, `insert`, `remove` signatures (§3.3.3)
 3) Enablement mechanisms for extensions (§21, §22)
 4) Host ABI: concrete API surfaces for calling, fibers, threads (§17, §21.4, §22)
 5) Specify prelude location/definition of `box<T>.new` intrinsic method (§7.4)
