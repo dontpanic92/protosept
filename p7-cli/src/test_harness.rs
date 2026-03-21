@@ -178,6 +178,7 @@ fn run_test_case(
         }
         P7Value::Float(_) => "float",
         P7Value::String(_) => "string",
+        P7Value::Array(_) => "array",
         _ => "unknown",
     }
     .to_string();
@@ -213,6 +214,10 @@ fn run_test_case(
                 (actual_val - expected_val).abs() < 1e-9
             }),
         P7Value::String(actual_val) => actual_val == expected_value_str,
+        P7Value::Array(elements) => {
+            let formatted = format_array(elements);
+            formatted == *expected_value_str
+        }
         _ => {
             let actual_value = format!("{:?}", p7_result);
             actual_value == *expected_value_str
@@ -225,6 +230,7 @@ fn run_test_case(
             P7Value::Int(i) => i.to_string(),
             P7Value::Float(f) => f.to_string(),
             P7Value::String(s) => s.clone(),
+            P7Value::Array(elements) => format_array(&elements),
             _ => format!("{:?}", p7_result),
         };
         return Ok(TestResult::Failure(FailureReason::ValueMismatch {
@@ -234,6 +240,17 @@ fn run_test_case(
     }
 
     Ok(TestResult::Success)
+}
+
+fn format_array(elements: &[P7Value]) -> String {
+    let items: Vec<String> = elements.iter().map(|e| match e {
+        P7Value::Int(i) => i.to_string(),
+        P7Value::Float(f) => f.to_string(),
+        P7Value::String(s) => format!("\"{}\"", s),
+        P7Value::Array(inner) => format_array(inner),
+        _ => format!("{:?}", e),
+    }).collect();
+    format!("[{}]", items.join(", "))
 }
 
 fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestResult)>> {

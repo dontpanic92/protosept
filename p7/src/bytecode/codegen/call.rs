@@ -246,7 +246,8 @@ impl Generator {
                     if let Type::Array(_) = deref_ty {
                         // Array builtin methods
                         let array_methods = ["len", "get", "slice", "push", "pop", "clear",
-                            "set", "insert", "remove", "index_of", "join"];
+                            "set", "insert", "remove", "index_of", "join",
+                            "map", "filter", "reduce", "for_each", "find", "any", "all"];
                         if array_methods.contains(&field.name.as_str()) {
                             skip_module = true;
                         }

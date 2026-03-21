@@ -229,6 +229,9 @@ pub struct Context {
     imported_modules: HashMap<String, usize>,
     // Optional containing directory of the entry script (filesystem-only)
     script_dir: Option<String>,
+    // When set, the interpreter loop stops once stack depth drops to this level.
+    // Used by call_closure to run a single closure invocation from a host function.
+    stop_depth: Option<usize>,
 }
 
 impl Context {
@@ -244,6 +247,7 @@ impl Context {
             host_functions: HashMap::new(),
             imported_modules: HashMap::new(),
             script_dir: None,
+            stop_depth: None,
         };
 
         // Register builtin host functions
@@ -398,7 +402,106 @@ impl Context {
             return Err(RuntimeError::EntryPointNotFound);
         }
 
+        self.run_interpreter_loop()?;
+
+        // Current function has finished executing. Pop the stack frame, and push return value if any.
+        if self.stack.len() > 1 {
+            let return_value = self.stack_frame_mut()?.stack.pop();
+            self.stack.pop();
+            if let Some(value) = return_value {
+                self.stack_frame_mut()?.stack.push(value);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Invoke a closure value synchronously and return its result.
+    /// Used by higher-order host functions (map, filter, etc.) to call p7 closures.
+    pub fn call_closure(&mut self, closure: &Data, args: Vec<Data>) -> ContextResult<Data> {
+        let (func_addr, captures) = match closure {
+            Data::Closure { func_addr, captures } => (*func_addr, captures.clone()),
+            _ => {
+                return Err(RuntimeError::Other(
+                    "call_closure: expected closure value".to_string(),
+                ))
+            }
+        };
+
+        let base_depth = self.stack.len();
+        let current_module_idx = self.stack.last().map(|f| f.module_idx).unwrap_or(0);
+
+        let mut params = captures;
+        params.extend(args);
+        let frame = StackFrame {
+            params,
+            locals: Vec::new(),
+            stack: Vec::new(),
+            pc: func_addr as usize,
+            module_idx: current_module_idx,
+        };
+        self.stack.push(frame);
+
+        let prev_stop = self.stop_depth;
+        self.stop_depth = Some(base_depth);
+
+        let result = self.run_interpreter_loop();
+
+        self.stop_depth = prev_stop;
+        result?;
+
+        self.stack_frame_mut()?
+            .stack
+            .pop()
+            .ok_or(RuntimeError::Other(
+                "call_closure: closure returned no value".to_string(),
+            ))
+    }
+
+    /// Invoke a closure that returns no value (unit).
+    pub fn call_closure_void(&mut self, closure: &Data, args: Vec<Data>) -> ContextResult<()> {
+        let (func_addr, captures) = match closure {
+            Data::Closure { func_addr, captures } => (*func_addr, captures.clone()),
+            _ => {
+                return Err(RuntimeError::Other(
+                    "call_closure_void: expected closure value".to_string(),
+                ))
+            }
+        };
+
+        let base_depth = self.stack.len();
+        let current_module_idx = self.stack.last().map(|f| f.module_idx).unwrap_or(0);
+
+        let mut params = captures;
+        params.extend(args);
+        let frame = StackFrame {
+            params,
+            locals: Vec::new(),
+            stack: Vec::new(),
+            pc: func_addr as usize,
+            module_idx: current_module_idx,
+        };
+        self.stack.push(frame);
+
+        let prev_stop = self.stop_depth;
+        self.stop_depth = Some(base_depth);
+
+        let result = self.run_interpreter_loop();
+
+        self.stop_depth = prev_stop;
+        result
+    }
+
+    fn run_interpreter_loop(&mut self) -> ContextResult<()> {
+
         loop {
+            // When running a closure invocation, stop once the closure frame has returned
+            if let Some(depth) = self.stop_depth {
+                if self.stack.len() <= depth {
+                    break;
+                }
+            }
+
             let module_idx = self.stack_frame()?.module_idx;
             let pc = self.stack_frame()?.pc;
 
@@ -1207,15 +1310,6 @@ impl Context {
                         }
                     }
                 }
-            }
-        }
-
-        // Current function has finished executing. Pop the stack frame, and push return value if any.
-        if self.stack.len() > 1 {
-            let return_value = self.stack_frame_mut()?.stack.pop();
-            self.stack.pop();
-            if let Some(value) = return_value {
-                self.stack_frame_mut()?.stack.push(value);
             }
         }
 

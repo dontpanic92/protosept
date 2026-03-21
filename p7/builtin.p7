@@ -132,6 +132,36 @@ pub struct array<T>() {
     // Join array elements with a separator string. Only valid for array<string>.
     @intrinsic(name="array.join")
     pub fn join(ref self, sep: string) -> string;
+
+    // --- Higher-order functions ---
+
+    // Return a new array with each element transformed by f.
+    @intrinsic(name="array.map")
+    pub fn map(ref self, f: fn(T) -> T) -> Self;
+
+    // Return a new array containing only elements for which f returns true.
+    @intrinsic(name="array.filter")
+    pub fn filter(ref self, f: fn(T) -> bool) -> Self;
+
+    // Fold the array into a single value, starting from init.
+    @intrinsic(name="array.reduce")
+    pub fn reduce(ref self, init: T, f: fn(T, T) -> T) -> T;
+
+    // Call f on each element. Returns nothing.
+    @intrinsic(name="array.for_each")
+    pub fn for_each(ref self, f: fn(T));
+
+    // Return the first element for which f returns true, or null.
+    @intrinsic(name="array.find")
+    pub fn find(ref self, f: fn(T) -> bool) -> ?T;
+
+    // Return true if f returns true for any element.
+    @intrinsic(name="array.any")
+    pub fn any(ref self, f: fn(T) -> bool) -> bool;
+
+    // Return true if f returns true for all elements.
+    @intrinsic(name="array.all")
+    pub fn all(ref self, f: fn(T) -> bool) -> bool;
 }
 
 // Return the containing directory of the entry script, or null if the script

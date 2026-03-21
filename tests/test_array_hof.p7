@@ -1,0 +1,198 @@
+// Higher-order function tests for array<T>.
+
+struct test(pub expected_type: string, pub expected_value: string);
+
+// --- map ---
+
+@test(expected_type = "array", expected_value = "[2, 4, 6]")
+fn test_map_double() -> array<int> {
+    let arr = [1, 2, 3];
+    arr.map((x: int) => x * 2)
+}
+
+@test(expected_type = "array", expected_value = "[1, 4, 9]")
+fn test_map_square() -> array<int> {
+    let arr = [1, 2, 3];
+    arr.map((x: int) => x * x)
+}
+
+@test(expected_type = "array", expected_value = "[]")
+fn test_map_empty() -> array<int> {
+    let arr: array<int> = [];
+    arr.map((x: int) => x + 1)
+}
+
+@test(expected_type = "array", expected_value = "[11, 12, 13]")
+fn test_map_capture() -> array<int> {
+    let offset = 10;
+    let arr = [1, 2, 3];
+    arr.map((x: int) => x + offset)
+}
+
+// --- filter ---
+
+@test(expected_type = "array", expected_value = "[4, 5]")
+fn test_filter_gt3() -> array<int> {
+    let arr = [1, 2, 3, 4, 5];
+    arr.filter((x: int) => x > 3)
+}
+
+@test(expected_type = "array", expected_value = "[2, 4]")
+fn test_filter_even() -> array<int> {
+    let arr = [1, 2, 3, 4, 5];
+    arr.filter((x: int) => x / 2 * 2 == x)
+}
+
+@test(expected_type = "array", expected_value = "[]")
+fn test_filter_none_match() -> array<int> {
+    let arr = [1, 2, 3];
+    arr.filter((x: int) => x > 10)
+}
+
+@test(expected_type = "array", expected_value = "[]")
+fn test_filter_empty() -> array<int> {
+    let arr: array<int> = [];
+    arr.filter((x: int) => x > 0)
+}
+
+@test(expected_type = "array", expected_value = "[1, 2, 3]")
+fn test_filter_all_match() -> array<int> {
+    let arr = [1, 2, 3];
+    arr.filter((x: int) => x > 0)
+}
+
+// --- reduce ---
+
+@test(expected_type = "int", expected_value = "15")
+fn test_reduce_sum() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    arr.reduce(0, (acc: int, x: int) => acc + x)
+}
+
+@test(expected_type = "int", expected_value = "120")
+fn test_reduce_product() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    arr.reduce(1, (acc: int, x: int) => acc * x)
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_reduce_empty() -> int {
+    let arr: array<int> = [];
+    arr.reduce(42, (acc: int, x: int) => acc + x)
+}
+
+@test(expected_type = "int", expected_value = "100")
+fn test_reduce_with_init() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    arr.reduce(85, (acc: int, x: int) => acc + x)
+}
+
+// --- for_each ---
+
+@test(expected_type = "int", expected_value = "3")
+fn test_for_each_collect() -> int {
+    let results = box([0]);
+    results.clear();
+    let arr = [10, 20, 30];
+    arr.for_each((x: int) => {
+        results.push(x);
+    });
+    results.len()
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_for_each_empty() -> int {
+    let results = box([0]);
+    results.clear();
+    let arr: array<int> = [];
+    arr.for_each((x: int) => {
+        results.push(x);
+    });
+    results.len()
+}
+
+// --- find ---
+
+@test(expected_type = "int", expected_value = "4")
+fn test_find_gt3() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    arr.find((x: int) => x > 3) ?? -1
+}
+
+@test(expected_type = "int", expected_value = "-1")
+fn test_find_none() -> int {
+    let arr = [1, 2, 3];
+    arr.find((x: int) => x > 10) ?? -1
+}
+
+@test(expected_type = "int", expected_value = "-1")
+fn test_find_empty() -> int {
+    let arr: array<int> = [];
+    arr.find((x: int) => x > 0) ?? -1
+}
+
+@test(expected_type = "int", expected_value = "2")
+fn test_find_first_even() -> int {
+    let arr = [1, 2, 4, 6];
+    arr.find((x: int) => x / 2 * 2 == x) ?? -1
+}
+
+// --- any ---
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_any_found() -> bool {
+    let arr = [1, 2, 3, 4, 5];
+    arr.any((x: int) => x > 3)
+}
+
+@test(expected_type = "bool", expected_value = "false")
+fn test_any_not_found() -> bool {
+    let arr = [1, 2, 3];
+    arr.any((x: int) => x > 10)
+}
+
+@test(expected_type = "bool", expected_value = "false")
+fn test_any_empty() -> bool {
+    let arr: array<int> = [];
+    arr.any((x: int) => x > 0)
+}
+
+// --- all ---
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_all_positive() -> bool {
+    let arr = [1, 2, 3];
+    arr.all((x: int) => x > 0)
+}
+
+@test(expected_type = "bool", expected_value = "false")
+fn test_all_not_all() -> bool {
+    let arr = [1, 2, 3, -1];
+    arr.all((x: int) => x > 0)
+}
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_all_empty() -> bool {
+    let arr: array<int> = [];
+    arr.all((x: int) => x > 0)
+}
+
+// --- chaining ---
+
+@test(expected_type = "int", expected_value = "30")
+fn test_filter_then_reduce() -> int {
+    let arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    arr.filter((x: int) => x / 2 * 2 == x).reduce(0, (a: int, b: int) => a + b)
+}
+
+@test(expected_type = "array", expected_value = "[9, 25]")
+fn test_filter_then_map() -> array<int> {
+    let arr = [1, 2, 3, 4, 5];
+    arr.filter((x: int) => x / 2 * 2 != x).filter((x: int) => x > 1).map((x: int) => x * x)
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_map_then_filter_len() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    arr.map((x: int) => x * 10).filter((x: int) => x >= 30).len()
+}
