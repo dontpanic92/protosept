@@ -567,6 +567,7 @@ impl Generator {
                     pos: Some(SourcePos {
                         line: declaration.name.line,
                         col: declaration.name.col,
+                        module: Some(self._current_module_path.clone()),
                     }),
                 }
             })?;

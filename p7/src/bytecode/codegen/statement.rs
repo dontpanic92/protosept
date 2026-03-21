@@ -660,7 +660,7 @@ impl Generator {
         if segments.is_empty() {
             return Err(SemanticError::ImportError {
                 module_path: module_path.clone(),
-                pos: SourcePos { line: 0, col: 0 },
+                pos: SourcePos { line: 0, col: 0, module: Some(self._current_module_path.clone()) },
             });
         }
 
@@ -691,7 +691,7 @@ impl Generator {
         if segments.len() < 2 {
             return Err(SemanticError::ImportError {
                 module_path: module_path.clone(),
-                pos: SourcePos { line: 0, col: 0 },
+                pos: SourcePos { line: 0, col: 0, module: Some(self._current_module_path.clone()) },
             });
         }
 
@@ -703,7 +703,7 @@ impl Generator {
             .load_module(&parent_path)
             .ok_or_else(|| SemanticError::ImportError {
                 module_path: parent_path.clone(),
-                pos: SourcePos { line: 0, col: 0 },
+                pos: SourcePos { line: 0, col: 0, module: Some(self._current_module_path.clone()) },
             })?;
 
         if !self.imported_modules.contains_key(&parent_path) {

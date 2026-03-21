@@ -29,7 +29,7 @@ macro_rules! match_token {
                 token_type: $pattern,
                 ..
             }) $(if $guard)? => $body,)*
-            Some(t) => Err(ParseError::UnexpectedToken { found: format!("{:?}", t.token_type), pos: Some(SourcePos { line: t.line, col: t.col }) }),
+                        Some(t) => Err(ParseError::UnexpectedToken { found: format!("{:?}", t.token_type), pos: Some(SourcePos { line: t.line, col: t.col, module: None }) }),
             _ => Err(ParseError::UnexpectedEof { pos: None }),
         }
     };
@@ -84,12 +84,14 @@ impl Parser {
                 pos: Some(SourcePos {
                     line: t.line,
                     col: t.col,
+                    module: None,
                 }),
             }),
             _ => Err(ParseError::UnexpectedEof {
                 pos: self.peek_previous().map(|t| SourcePos {
                     line: t.line,
                     col: t.col,
+                    module: None,
                 }),
             }),
         }
@@ -110,12 +112,14 @@ impl Parser {
                 pos: Some(SourcePos {
                     line: t.line,
                     col: t.col,
+                    module: None,
                 }),
             }),
             None => Err(ParseError::UnexpectedEof {
                 pos: self.peek_previous().map(|t| SourcePos {
                     line: t.line,
                     col: t.col,
+                    module: None,
                 }),
             }),
         }
@@ -139,12 +143,14 @@ impl Parser {
                 pos: Some(SourcePos {
                     line: t.line,
                     col: t.col,
+                    module: None,
                 }),
             }),
             _ => Err(ParseError::UnexpectedEof {
                 pos: self.peek_previous().map(|t| SourcePos {
                     line: t.line,
                     col: t.col,
+                    module: None,
                 }),
             }),
         }
@@ -297,6 +303,7 @@ impl Parser {
                                     pos: self.peek().map(|t| SourcePos {
                                         line: t.line,
                                         col: t.col,
+                                        module: None,
                                     }),
                                 });
                             }
@@ -353,6 +360,7 @@ impl Parser {
                                 pos: self.peek().map(|t| SourcePos {
                                     line: t.line,
                                     col: t.col,
+                                    module: None,
                                 }),
                             });
                         }
@@ -389,6 +397,7 @@ impl Parser {
                         pos: Some(SourcePos {
                             line: token.line,
                             col: token.col,
+                            module: None,
                         }),
                     });
                 }
@@ -398,6 +407,7 @@ impl Parser {
                 pos: self.peek_previous().map(|t| SourcePos {
                     line: t.line,
                     col: t.col,
+                    module: None,
                 }),
             });
         };
@@ -477,6 +487,7 @@ impl Parser {
                 pos: Some(SourcePos {
                     line: token.line,
                     col: token.col,
+                    module: None,
                 }),
             });
         }
@@ -839,6 +850,7 @@ impl Parser {
                     pos: Some(SourcePos {
                         line: token.line,
                         col: token.col,
+                        module: None,
                     }),
                 }),
             }
@@ -847,6 +859,7 @@ impl Parser {
                 pos: self.peek_previous().map(|t| SourcePos {
                     line: t.line,
                     col: t.col,
+                    module: None,
                 }),
             })
         }
@@ -1020,7 +1033,7 @@ impl Parser {
                     if name.name != "self" {
                         return Err(ParseError::UnexpectedToken {
                             found: format!("{:?}", TokenType::Identifier(name.name)),
-                            pos: Some(SourcePos { line: name.line, col: name.col }),
+                            pos: Some(SourcePos { line: name.line, col: name.col, module: None }),
                         });
                     }
 
@@ -1039,7 +1052,7 @@ impl Parser {
                     if name.name != "self" {
                         return Err(ParseError::UnexpectedToken {
                             found: format!("{:?}", TokenType::Identifier(name.name)),
-                            pos: Some(SourcePos { line: name.line, col: name.col }),
+                            pos: Some(SourcePos { line: name.line, col: name.col, module: None }),
                         });
                     }
 
@@ -1062,7 +1075,7 @@ impl Parser {
                     // `self` receiver; optional explicit type via `self: ...`.
                     let (line, col) = match self.consume() {
                         Some(t) => (t.line, t.col),
-                        None => return Err(ParseError::UnexpectedEof { pos: self.peek_previous().map(|t| SourcePos { line: t.line, col: t.col }) }),
+                        None => return Err(ParseError::UnexpectedEof { pos: self.peek_previous().map(|t| SourcePos { line: t.line, col: t.col, module: None }) }),
                     };
 
                     let name = Identifier { name: "self".to_string(), line, col };
@@ -1606,6 +1619,7 @@ impl Parser {
                                     pos: self.peek().map(|t| SourcePos {
                                         line: t.line,
                                         col: t.col,
+                                        module: None,
                                     }),
                                 });
                             }
@@ -1679,6 +1693,7 @@ impl Parser {
                                 pos: Some(SourcePos {
                                     line: ident.line,
                                     col: ident.col,
+                                    module: None,
                                 }),
                             });
                         }
@@ -1710,6 +1725,7 @@ impl Parser {
                     pos: Some(SourcePos {
                         line: token.line,
                         col: token.col,
+                        module: None,
                     }),
                 }),
             }
@@ -1718,6 +1734,7 @@ impl Parser {
                 pos: self.peek_previous().map(|t| SourcePos {
                     line: t.line,
                     col: t.col,
+                    module: None,
                 }),
             })
         }
@@ -1868,6 +1885,7 @@ impl Parser {
                             pos: self.peek().map(|t| SourcePos {
                                 line: t.line,
                                 col: t.col,
+                                module: None,
                             }),
                         });
                     }
@@ -1909,6 +1927,7 @@ impl Parser {
                         pos: self.peek().map(|t| SourcePos {
                             line: t.line,
                             col: t.col,
+                            module: None,
                         }),
                     });
                 }
@@ -1918,6 +1937,7 @@ impl Parser {
                         pos: Some(SourcePos {
                             line: attributes[0].name.line,
                             col: attributes[0].name.col,
+                            module: None,
                         }),
                     });
                 }
@@ -1937,6 +1957,7 @@ impl Parser {
                         pos: self.peek().map(|t| SourcePos {
                             line: t.line,
                             col: t.col,
+                            module: None,
                         }),
                     });
                 }
@@ -1946,6 +1967,7 @@ impl Parser {
                         pos: Some(SourcePos {
                             line: attributes[0].name.line,
                             col: attributes[0].name.col,
+                            module: None,
                         }),
                     });
                 }
@@ -1967,6 +1989,7 @@ impl Parser {
                         pos: self.peek().map(|t| SourcePos {
                             line: t.line,
                             col: t.col,
+                            module: None,
                         }),
                     });
                 }
@@ -1976,6 +1999,7 @@ impl Parser {
                         pos: Some(SourcePos {
                             line: attributes[0].name.line,
                             col: attributes[0].name.col,
+                            module: None,
                         }),
                     });
                 }
@@ -1991,6 +2015,7 @@ impl Parser {
                         pos: self.peek().map(|t| SourcePos {
                             line: t.line,
                             col: t.col,
+                            module: None,
                         }),
                     });
                 }
@@ -2000,6 +2025,7 @@ impl Parser {
                         pos: Some(SourcePos {
                             line: attributes[0].name.line,
                             col: attributes[0].name.col,
+                            module: None,
                         }),
                     });
                 }
@@ -2096,6 +2122,7 @@ impl Parser {
                         pos: self.peek().map(|t| SourcePos {
                             line: t.line,
                             col: t.col,
+                            module: None,
                         }),
                     });
                 }
@@ -2105,6 +2132,7 @@ impl Parser {
                         pos: Some(SourcePos {
                             line: attributes[0].name.line,
                             col: attributes[0].name.col,
+                            module: None,
                         }),
                     });
                 }

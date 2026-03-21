@@ -11,9 +11,9 @@ use crate::{
 use super::{Generator, SaResult};
 
 impl Generator {
-    /// Creates a SourcePos from line and column numbers
+    /// Creates a SourcePos from line and column numbers, including the current module path
     fn make_pos(&self, line: usize, col: usize) -> Option<SourcePos> {
-        Some(SourcePos { line, col })
+        Some(SourcePos { line, col, module: Some(self._current_module_path.clone()) })
     }
 
     /// Creates a type mismatch error

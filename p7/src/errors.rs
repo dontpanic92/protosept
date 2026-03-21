@@ -4,18 +4,22 @@ use std::fmt;
 pub struct SourcePos {
     pub line: usize,
     pub col: usize,
+    pub module: Option<String>,
 }
 
 impl SourcePos {
     /// Create an Option<SourcePos> from line and column numbers
     pub fn at(line: usize, col: usize) -> Option<Self> {
-        Some(SourcePos { line, col })
+        Some(SourcePos { line, col, module: None })
     }
 }
 
 impl fmt::Display for SourcePos {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "line {} column {}", self.line, self.col)
+        match &self.module {
+            Some(m) if m != "$root" => write!(f, "line {} column {} in module '{}'", self.line, self.col, m),
+            _ => write!(f, "line {} column {}", self.line, self.col),
+        }
     }
 }
 
