@@ -55,7 +55,7 @@ fn test_tuple_destructure_from_function() -> int {
 
 @test(expected_type = "int", expected_value = "100")
 fn test_var_tuple_destructure() -> int {
-    var (x, y) = (50, 50);
+    let mut (x, y) = (50, 50);
     x + y
 }
 

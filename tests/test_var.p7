@@ -1,9 +1,9 @@
-// Test var (mutable variables) functionality
+// Test let mut (mutable variables) functionality
 import test.test;
 
 @test(expected_type = "int", expected_value = "30")
 fn test_var_reassignment() -> int {
-    var x = 10;
+    let mut x = 10;
     x = 20;
     x = 30;
     x
@@ -11,8 +11,8 @@ fn test_var_reassignment() -> int {
 
 @test(expected_type = "int", expected_value = "15")
 fn test_var_in_loop() -> int {
-    var total = 0;
-    var i = 1;
+    let mut total = 0;
+    let mut i = 1;
     loop {
         if i > 5 {
             break;
@@ -25,7 +25,7 @@ fn test_var_in_loop() -> int {
 
 @test(expected_type = "int", expected_value = "120")
 fn test_var_with_type_annotation() -> int {
-    var x: int = 100;
+    let mut x: int = 100;
     x = 120;
     x
 }
@@ -34,7 +34,7 @@ fn test_var_with_type_annotation() -> int {
 fn test_var_shadowing() -> int {
     let x = 10;
     {
-        var x = 20;  // ok: same type int, but now mutable
+        let mut x = 20;  // ok: same type int, but now mutable
         x = 30;      // ok: x is var
         x
     }
@@ -42,8 +42,8 @@ fn test_var_shadowing() -> int {
 
 @test(expected_type = "int", expected_value = "6")
 fn test_var_in_accumulator() -> int {
-    var sum = 0;
-    var i = 1;
+    let mut sum = 0;
+    let mut i = 1;
     loop {
         if i > 3 {
             break;

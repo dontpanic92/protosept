@@ -67,7 +67,7 @@ fn test_if_with_not() -> int {
 
 @test(expected_type = "bool", expected_value = "true")
 fn test_bool_var() -> bool {
-    var flag = false;
+    let mut flag = false;
     flag = true;
     return flag;
 }

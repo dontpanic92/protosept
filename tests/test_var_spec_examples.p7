@@ -3,8 +3,8 @@ import test.test;
 
 @test(expected_type = "int", expected_value = "10")
 fn test_spec_loop_accumulator() -> int {
-    var total = 0;
-    var i = 1;
+    let mut total = 0;
+    let mut i = 1;
     loop {
         if i > 4 {
             break;
@@ -19,7 +19,7 @@ fn test_spec_loop_accumulator() -> int {
 fn test_spec_var_shadowing() -> int {
     let x = 10;
     let result = {
-        var x = 20;
+        let mut x = 20;
         x = 30;
         x
     };
@@ -28,7 +28,7 @@ fn test_spec_var_shadowing() -> int {
 
 @test(expected_type = "int", expected_value = "50")
 fn test_var_multiple_reassign() -> int {
-    var x = 10;
+    let mut x = 10;
     x = 20;
     x = 30;
     x = 40;
@@ -38,14 +38,14 @@ fn test_var_multiple_reassign() -> int {
 
 @test(expected_type = "int", expected_value = "99")
 fn test_var_type_annotation() -> int {
-    var count: int = 0;
+    let mut count: int = 0;
     count = 99;
     count
 }
 
 @test(expected_type = "int", expected_value = "25")
 fn test_var_type_consistency() -> int {
-    var x = 5;
+    let mut x = 5;
     x = 10;
     x = x + 15;
     x

@@ -529,7 +529,7 @@ impl Generator {
                 .is_variable_mutable(var_id)
             {
                 return Err(SemanticError::Other(format!(
-                    "Cannot assign to immutable variable '{}' (use 'var' instead of 'let')",
+                    "Cannot assign to immutable variable '{}' (use 'let mut' instead of 'let')",
                     identifier.name
                 )));
             }

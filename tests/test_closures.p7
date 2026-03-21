@@ -130,7 +130,7 @@ fn test_fn_type_variable() -> int {
 
 @test(expected_type = "int", expected_value = "50")
 fn test_fn_type_reassign() -> int {
-    var op: fn(int) -> int = (x: int) => x * 2;
+    let mut op: fn(int) -> int = (x: int) => x * 2;
     let a = op(10);
     op = (x: int) => x * 3;
     let b = op(10);
