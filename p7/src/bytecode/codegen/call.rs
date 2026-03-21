@@ -136,8 +136,8 @@ impl Generator {
         for expr in ordered_exprs {
             let move_info = self.compute_move_info(&expr);
             self.generate_expression(expr)?;
-            if let Some(var_id) = move_info {
-                self.mark_variable_moved(var_id);
+            if let Some((id, is_param)) = move_info {
+                if is_param { self.mark_param_moved(id); } else { self.mark_variable_moved(id); }
             }
         }
 
@@ -385,8 +385,8 @@ impl Generator {
         for expr in ordered_exprs {
             let move_info = self.compute_move_info(&expr);
             self.generate_expression(expr)?;
-            if let Some(var_id) = move_info {
-                self.mark_variable_moved(var_id);
+            if let Some((id, is_param)) = move_info {
+                if is_param { self.mark_param_moved(id); } else { self.mark_variable_moved(id); }
             }
         }
 

@@ -7,7 +7,8 @@ use super::{Generator, SaResult};
 
 impl Generator {
     /// Compute move info for an expression (identifier referring to non-Copy local/param).
-    pub(crate) fn compute_move_info(&self, expr: &Expression) -> Option<u32> {
+    /// Compute move info for an expression. Returns (id, is_param) if the value would be moved.
+    pub(crate) fn compute_move_info(&self, expr: &Expression) -> Option<(u32, bool)> {
         if let Expression::Identifier(ident) = expr {
             if let Some(var_id) = self
                 .local_scope
@@ -17,14 +18,14 @@ impl Generator {
             {
                 let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
                 if !ty.is_copy_treated(&self.symbol_table) {
-                    return Some(var_id);
+                    return Some((var_id, false));
                 }
             } else if let Some(param_id) =
                 self.local_scope.as_ref().unwrap().find_param(&ident.name)
             {
                 let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
                 if !ty.is_copy_treated(&self.symbol_table) {
-                    return Some(param_id);
+                    return Some((param_id, true));
                 }
             }
         }
@@ -137,8 +138,12 @@ impl Generator {
             let arg_ty = self.generate_expression(expr)?;
 
             // Mark variable as moved if needed
-            if let Some(var_id) = move_info {
-                self.mark_variable_moved(var_id);
+            if let Some((id, is_param)) = move_info {
+                if is_param {
+                    self.mark_param_moved(id);
+                } else {
+                    self.mark_variable_moved(id);
+                }
             }
 
             match (param_ty, &arg_ty) {

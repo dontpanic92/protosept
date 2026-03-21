@@ -47,8 +47,10 @@ pub struct Generator {
     pub(super) imported_modules: std::collections::HashMap<String, Module>,
     pub(super) compiling_modules: std::collections::HashSet<String>,
     pub(super) _current_module_path: String,
-    // Track which variables have been moved (by their index in local scope)
+    // Track which local variables have been moved (by their index in locals array)
     pub(super) moved_variables: std::collections::HashSet<u32>,
+    // Track which parameters have been moved (by their index in params array)
+    pub(super) moved_params: std::collections::HashSet<u32>,
     // Stack of loop contexts for nested loops
     pub(super) loop_context_stack: Vec<LoopContext>,
     // String constant pool for string literals
@@ -83,6 +85,7 @@ impl Generator {
             compiling_modules: std::collections::HashSet::new(),
             _current_module_path: "$root".to_string(),
             moved_variables: std::collections::HashSet::new(),
+            moved_params: std::collections::HashSet::new(),
             loop_context_stack: Vec::new(),
             string_constants: Vec::new(),
             current_self_type: None,
@@ -373,6 +376,7 @@ impl Generator {
             compiling_modules: std::collections::HashSet::new(),
             _current_module_path: module_path.clone(),
             moved_variables: std::collections::HashSet::new(),
+            moved_params: std::collections::HashSet::new(),
             loop_context_stack: Vec::new(),
             string_constants: Vec::new(),
             current_self_type: None,

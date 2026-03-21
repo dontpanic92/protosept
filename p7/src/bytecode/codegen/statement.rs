@@ -95,8 +95,8 @@ impl Generator {
             self.generate_expression_with_expected_type(expression, expected_type.as_ref())?;
 
         // Mark variable as moved if needed
-        if let Some(var_id) = move_info {
-            self.mark_variable_moved(var_id);
+        if let Some((id, is_param)) = move_info {
+            if is_param { self.mark_param_moved(id); } else { self.mark_variable_moved(id); }
         }
 
         // Validate type annotation if provided
@@ -609,7 +609,7 @@ impl Generator {
 
     fn generate_return(&mut self, expression: Expression) -> SaResult<Type> {
         // Check if this expression involves a move (before consuming it)
-        let move_info = if let Expression::Identifier(ref ident) = expression {
+        let move_info: Option<(u32, bool)> = if let Expression::Identifier(ref ident) = expression {
             if let Some(var_id) = self
                 .local_scope
                 .as_ref()
@@ -618,7 +618,7 @@ impl Generator {
             {
                 let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
                 if !ty.is_copy_treated(&self.symbol_table) {
-                    Some(var_id)
+                    Some((var_id, false))
                 } else {
                     None
                 }
@@ -627,7 +627,7 @@ impl Generator {
             {
                 let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
                 if !ty.is_copy_treated(&self.symbol_table) {
-                    Some(param_id)
+                    Some((param_id, true))
                 } else {
                     None
                 }
@@ -641,8 +641,8 @@ impl Generator {
         let ty = self.generate_expression(expression)?;
 
         // Mark variable as moved if needed
-        if let Some(var_id) = move_info {
-            self.mark_variable_moved(var_id);
+        if let Some((id, is_param)) = move_info {
+            if is_param { self.mark_param_moved(id); } else { self.mark_variable_moved(id); }
         }
 
         if matches!(ty, Type::Reference(_)) {

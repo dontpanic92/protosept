@@ -315,7 +315,7 @@ impl Generator {
             .unwrap()
             .find_param(&identifier.name)
         {
-            if self.is_variable_moved(param_id) {
+            if self.is_param_moved(param_id) {
                 return Err(SemanticError::UseAfterMove {
                     name: identifier.name,
                     pos: self.make_pos(identifier.line, identifier.col),

@@ -350,19 +350,30 @@ impl Generator {
         Ok(final_return_type)
     }
 
-    /// Helper to mark a variable as moved
+    /// Helper to mark a local variable as moved
     pub(super) fn mark_variable_moved(&mut self, var_id: u32) {
         self.moved_variables.insert(var_id);
     }
 
-    /// Helper to check if a variable has been moved
+    /// Helper to mark a parameter as moved
+    pub(super) fn mark_param_moved(&mut self, param_id: u32) {
+        self.moved_params.insert(param_id);
+    }
+
+    /// Helper to check if a local variable has been moved
     pub(super) fn is_variable_moved(&self, var_id: u32) -> bool {
         self.moved_variables.contains(&var_id)
     }
 
-    /// Helper to clear moved variables when entering a new function scope
+    /// Helper to check if a parameter has been moved
+    pub(super) fn is_param_moved(&self, param_id: u32) -> bool {
+        self.moved_params.contains(&param_id)
+    }
+
+    /// Helper to clear moved tracking when entering a new function scope
     pub(super) fn clear_moved_variables(&mut self) {
         self.moved_variables.clear();
+        self.moved_params.clear();
     }
 
     pub(super) fn bind_pattern_variable(
