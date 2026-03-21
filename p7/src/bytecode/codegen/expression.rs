@@ -495,7 +495,12 @@ impl Generator {
             Expression::FieldAccess { object, field } => {
                 self.generate_assignment_to_field(*object, field, rhs, operator)
             }
-            _ => unimplemented!("assignment to this lvalue is not implemented"),
+            Expression::ArrayIndex { array, index, pos } => {
+                self.generate_assignment_to_index(*array, *index, rhs, pos)
+            }
+            _ => Err(SemanticError::Other(
+                "Assignment to this expression is not supported".to_string(),
+            )),
         }
     }
 
@@ -630,6 +635,67 @@ impl Generator {
         }
 
         unimplemented!("Internal error: Type ID resolved to non-Struct UDT");
+    }
+
+    /// Generate assignment to a boxed array element: `a[i] = expr`
+    fn generate_assignment_to_index(
+        &mut self,
+        array: Expression,
+        index: Expression,
+        rhs: Expression,
+        pos: (usize, usize),
+    ) -> SaResult<Type> {
+        let (line, col) = pos;
+
+        // Generate array expression — must be box<array<T>>
+        let array_ty = self.generate_expression(array.clone())?;
+        let element_type = match &array_ty {
+            Type::BoxType(inner) => match inner.as_ref() {
+                Type::Array(elem_type) => elem_type.as_ref().clone(),
+                other => {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "box<array<T>>".to_string(),
+                        rhs: self.type_to_string(other),
+                        pos: self.make_pos(line, col),
+                    });
+                }
+            },
+            _ => {
+                return Err(SemanticError::Other(format!(
+                    "Cannot assign to index of non-boxed array '{}'; only box<array<T>> supports element assignment",
+                    array.get_name()
+                )));
+            }
+        };
+
+        // Generate index expression
+        let index_ty = self.generate_expression(index)?;
+        if index_ty != Type::Primitive(PrimitiveType::Int) {
+            return Err(SemanticError::TypeMismatch {
+                lhs: "int".to_string(),
+                rhs: self.type_to_string(&index_ty),
+                pos: self.make_pos(line, col),
+            });
+        }
+
+        // Generate RHS expression
+        let rhs_ty = self.generate_expression(rhs)?;
+        if !self.types_compatible(&rhs_ty, &element_type) {
+            return Err(SemanticError::TypeMismatch {
+                lhs: self.type_to_string(&element_type),
+                rhs: self.type_to_string(&rhs_ty),
+                pos: self.make_pos(line, col),
+            });
+        }
+
+        // Stack is now: [box_ref, index, elem] — call array.set
+        let string_id = self.add_string_constant("array.set".to_string());
+        self.builder.call_host_function(string_id);
+
+        // array.set pushes old element; discard it (assignment yields unit)
+        self.builder.pop();
+
+        Ok(Type::Primitive(PrimitiveType::Unit))
     }
 
     fn generate_binary_operation(

@@ -1,0 +1,70 @@
+import test.test;
+
+// --- Basic boxed-array element assignment ---
+
+@test(expected_type = "int", expected_value = "10")
+fn test_index_assign_basic() -> int {
+    let xs = box([1, 2, 3]);
+    xs[0] = 10;
+    return xs[0];
+}
+
+@test(expected_type = "int", expected_value = "2")
+fn test_index_assign_middle() -> int {
+    let xs = box([0, 0, 0]);
+    xs[1] = 2;
+    return xs[1];
+}
+
+@test(expected_type = "int", expected_value = "99")
+fn test_index_assign_last() -> int {
+    let xs = box([1, 2, 3]);
+    xs[2] = 99;
+    return xs[2];
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_index_assign_preserves_others() -> int {
+    let xs = box([1, 2, 3]);
+    xs[1] = 20;
+    return xs[0];
+}
+
+@test(expected_type = "string", expected_value = "hello")
+fn test_index_assign_string() -> string {
+    let words = box(["a", "b", "c"]);
+    words[0] = "hello";
+    return words[0];
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_index_assign_expr() -> int {
+    let xs = box([1, 2, 3]);
+    xs[0] = xs[1] + xs[2];
+    return xs[0];
+}
+
+// --- Nested field assignment on boxed-array elements ---
+
+struct Point(pub x: int, pub y: int);
+
+@test(expected_type = "int", expected_value = "10")
+fn test_index_field_assign() -> int {
+    let xs = box([Point(1, 2), Point(3, 4)]);
+    xs[0].x = 10;
+    return xs[0].x;
+}
+
+@test(expected_type = "int", expected_value = "2")
+fn test_index_field_assign_preserves_other_field() -> int {
+    let xs = box([Point(1, 2), Point(3, 4)]);
+    xs[0].x = 10;
+    return xs[0].y;
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_index_field_assign_preserves_other_element() -> int {
+    let xs = box([Point(1, 2), Point(3, 4)]);
+    xs[0].x = 10;
+    return xs[1].x;
+}
