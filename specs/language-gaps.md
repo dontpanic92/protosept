@@ -107,49 +107,14 @@ a default: `tui.set_bold(on: int = 1)`. Currently every call must provide
 all arguments explicitly. The spec intentionally excludes this for
 auditability, but it leads to verbose call sites for toggle-style functions.
 
-### 21. No cross-module struct destructuring in `let` patterns
-**Impact: MEDIUM** — The pattern `let types.Pos(r, c) = some_call()` fails
-with "Type not found: types". The parser only accepts a bare identifier for
-struct patterns (e.g., `let Pos(r, c) = ...`), not a module-qualified path.
-
-This means structs defined in a shared `types.p7` module cannot be
-destructured in consuming modules. The workaround is to assign to a
-temporary and use field access:
-```p7
-let p = some_call();
-let r = p.row;
-let c = p.col;
-```
-
-This is a significant gap because moving shared types to a common module
-(which is good architecture) breaks destructuring patterns. Either the
-parser needs to accept qualified names in struct patterns, or the type
-resolver needs to look up unqualified names through imports.
+### 21. ~~No cross-module struct destructuring in `let` patterns~~
+**RESOLVED** — see Resolved Issues table below.
 
 ### 22. ~~Import name shadows local variables (no namespace separation)~~
 **RESOLVED** — see Resolved Issues table below.
 
-### 23. No struct update / spread syntax
-**Impact: HIGH** — The `Tab` struct has 16 positional fields. To update a
-single field (e.g., `dirty`), the entire struct must be reconstructed with
-all fields explicitly listed:
-```p7
-let old = tabs[idx];
-tabs.set(idx, types.Tab(
-    old.path, old.title, old.lines, old.lang,
-    dirty, old.read_only, old.is_diff,           // <-- one field changed
-    old.cursor_row, old.cursor_col, old.scroll_row, old.scroll_col,
-    old.anchor_row, old.anchor_col, old.sel_active, old.sel_selecting,
-    old.max_line_len,
-));
-```
-A struct update syntax like `Tab { ...old, dirty: new_value }` would
-eliminate this boilerplate. Without it, large structs become very
-error-prone to update — forgetting or misordering a field is a common
-mistake, and the code is unreadable.
-
-This was the single largest source of code duplication in the NaviText
-refactoring. Every tab save/load operation repeats all 16 fields.
+### 23. ~~No struct update / spread syntax~~
+**RESOLVED** — see Resolved Issues table below.
 
 ### 24. No higher-order array methods (map, filter, for_each)
 **Impact: MEDIUM** — While closures are supported in p7 (and captured
@@ -203,3 +168,5 @@ code. The git module and tree module are full of these manual patterns.
 | 9 | No tuple returns / destructuring | Fixed: implemented tuple types `(T1, T2)`, literals `(a, b)`, field access `.0`/`.1`, destructuring `let (a, b) = ...`, and match patterns |
 | 22 | Import name shadows local variables | Fixed: local variable methods now take priority over module calls in field access dispatch. Module functions still accessible for non-method names. |
 | 25 | Box parameter move tracking overly strict | Fixed: variables and parameters had overlapping ID spaces in a shared `moved_variables` HashSet. Split into separate `moved_variables` and `moved_params` sets. |
+| 21 | No cross-module struct destructuring | Fixed: codegen tries `resolve_qualified_type_name("module.Type")` when direct lookup fails in both `let` patterns and `match` arms |
+| 23 | No struct update/spread syntax | Fixed: added `Type { ...base, field: val }` syntax — lexer (`...` token), parser, AST variant, codegen using `Ldfield` for unchanged fields + `NewStruct` |
