@@ -99,3 +99,31 @@ fn test_named_binding() -> int {
     };
     result
 }
+
+// ===== If-Expression as Value Tests =====
+
+@test(expected_type = "string", expected_value = "hello world")
+fn test_if_expr_string_value() -> string {
+    let x = "hello";
+    let y = if x == "hello" { "hello world" } else { "goodbye" };
+    y
+}
+
+@test(expected_type = "string", expected_value = "val is B")
+fn test_if_expr_string_in_format() -> string {
+    let a = "X";
+    let b = "B";
+    if a == "X" {
+        let st = if a == "?" { "?" } else { b };
+        let msg = f"val is {st}";
+        return msg;
+    }
+    return "fail";
+}
+
+@test(expected_type = "string", expected_value = "fallback")
+fn test_if_expr_else_branch() -> string {
+    let x = "other";
+    let result = if x == "match" { "matched" } else { "fallback" };
+    result
+}

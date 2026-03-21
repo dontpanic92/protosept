@@ -803,7 +803,7 @@ impl Generator {
         let jump_if_false_placeholder = self.builder.next_address();
         self.builder.jif(0);
 
-        self.generate_expression(then_branch)?;
+        let then_ty = self.generate_expression(then_branch)?;
 
         if let Some(else_branch) = else_branch {
             let jump_to_skip_else_placeholder = self.builder.next_address();
@@ -813,11 +813,19 @@ impl Generator {
             self.builder
                 .patch_jump_address(jump_if_false_placeholder, else_branch_address);
 
-            self.generate_expression(else_branch)?;
+            let else_ty = self.generate_expression(else_branch)?;
 
             let end_of_if_address = self.builder.next_address();
             self.builder
                 .patch_jump_address(jump_to_skip_else_placeholder, end_of_if_address);
+
+            // If both branches produce the same non-Unit type, this is a
+            // value-producing if-expression (e.g. `let x = if c { a } else { b }`).
+            if then_ty != Type::Primitive(PrimitiveType::Unit)
+                && self.types_compatible(&else_ty, &then_ty)
+            {
+                return Ok(then_ty);
+            }
         } else {
             let end_of_if_address = self.builder.next_address();
             self.builder
