@@ -228,11 +228,41 @@ impl Generator {
         }
 
         // Case 2: Module member call like `module.func(...)`
+        // When identifier is also a local variable, only skip module lookup if the
+        // field name is a valid method on the variable's type (prefer instance methods).
         if let Expression::Identifier(ident) = object.as_ref() {
-            if let Some(result) =
-                self.try_generate_module_call(ident, field, arguments.clone(), call_line, call_col)?
-            {
-                return Ok(result);
+            let mut skip_module = false;
+            if let Some(scope) = self.local_scope.as_ref() {
+                let var_type = scope.find_variable(&ident.name)
+                    .map(|id| scope.get_variable_type(id))
+                    .or_else(|| scope.find_param(&ident.name).map(|id| scope.get_param_type(id)));
+                if let Some(ty) = var_type {
+                    // Check if the field name is a valid method on this type
+                    let deref_ty = match ty {
+                        Type::BoxType(inner) => *inner,
+                        Type::Reference(inner) => *inner,
+                        other => other,
+                    };
+                    if let Type::Array(_) = deref_ty {
+                        // Array builtin methods
+                        let array_methods = ["len", "get", "slice", "push", "pop", "clear",
+                            "set", "insert", "remove", "index_of", "join"];
+                        if array_methods.contains(&field.name.as_str()) {
+                            skip_module = true;
+                        }
+                    }
+                    // For struct types, any field name is potentially a method
+                    if let Type::Struct(_) = deref_ty {
+                        skip_module = true;
+                    }
+                }
+            }
+            if !skip_module {
+                if let Some(result) =
+                    self.try_generate_module_call(ident, field, arguments.clone(), call_line, call_col)?
+                {
+                    return Ok(result);
+                }
             }
         }
 
