@@ -126,20 +126,8 @@ This is a significant gap because moving shared types to a common module
 parser needs to accept qualified names in struct patterns, or the type
 resolver needs to look up unqualified names through imports.
 
-### 22. Import name shadows local variables (no namespace separation)
-**Impact: HIGH** — When a module is imported with a short name that matches
-a local variable, the local variable shadows the module name, silently
-breaking all module function calls:
-```p7
-import navitext.tabs;
-let tabs = box([...]);  // shadows the module
-tabs.clear();           // ERROR: calls module function, not array method
-```
-The workaround is `import navitext.tabs as tab_ops;` to avoid the collision,
-but this is a footgun. The compiler should either:
-- Error when a local variable shadows an imported module name, or
-- Use a separate namespace for module lookups vs variable lookups, or
-- Prefer the variable for method-style calls and the module for `module.fn()` calls
+### 22. ~~Import name shadows local variables (no namespace separation)~~
+**RESOLVED** — see Resolved Issues table below.
 
 ### 23. No struct update / spread syntax
 **Impact: HIGH** — The `Tab` struct has 16 positional fields. To update a
@@ -181,32 +169,8 @@ Adding `array.map()`, `array.filter()`, `array.for_each()`, and
 `array.any()` would significantly reduce boilerplate in data processing
 code. The git module and tree module are full of these manual patterns.
 
-### 25. Box parameter move tracking may be overly strict
-**Impact: HIGH** — In the p7 type system, `box<T>` is documented as
-copy-treated (handle semantics), and `is_copy_treated()` returns `true`
-for `BoxType`. However, during the NaviText refactoring, passing a
-`box<array<T>>` function parameter to another function and then reusing
-the parameter triggered "Use of moved value":
-```p7
-pub fn open_diff(tabs: box<array<Tab>>, ...) {
-    save_tab(tabs, ...);  // passes tabs to another function
-    tabs.push(new_tab);   // ERROR: Use of moved value: tabs
-}
-```
-This contradicts the copy-treated semantics. Method calls on the same
-box (`.len()`, `.set()`, `[idx]`) work fine, but passing to a function
-marks the parameter as moved even though `box` should be a copyable
-handle.
-
-The workaround is to inline all helper function calls — which defeats
-the purpose of extracting reusable functions. This was the most impactful
-limitation during the refactoring: it forced every tab lifecycle function
-to inline ~10 lines of save/load logic rather than calling shared helpers.
-
-If box is truly copy-treated, the move checker should not flag re-use
-after passing to a function. If box is intentionally move-semantics,
-the `is_copy_treated()` implementation is wrong and `ref<box<T>>`
-should be used for borrowing — but the ergonomics of that are unclear.
+### 25. ~~Box parameter move tracking may be overly strict~~
+**RESOLVED** — see Resolved Issues table below.
 
 ---
 
@@ -237,3 +201,5 @@ should be used for borrowing — but the ergonomics of that are unclear.
 | 17 | No `string.join()` | Fixed: added `array<string>.join(sep)` as builtin intrinsic |
 | 18 | No `string.trim()` methods | Fixed: added `string.trim()`, `string.trim_start()`, `string.trim_end()` as builtin intrinsics |
 | 9 | No tuple returns / destructuring | Fixed: implemented tuple types `(T1, T2)`, literals `(a, b)`, field access `.0`/`.1`, destructuring `let (a, b) = ...`, and match patterns |
+| 22 | Import name shadows local variables | Fixed: local variable methods now take priority over module calls in field access dispatch. Module functions still accessible for non-method names. |
+| 25 | Box parameter move tracking overly strict | Fixed: variables and parameters had overlapping ID spaces in a shared `moved_variables` HashSet. Split into separate `moved_variables` and `moved_params` sets. |
