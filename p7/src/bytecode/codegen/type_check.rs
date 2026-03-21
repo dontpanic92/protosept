@@ -154,6 +154,12 @@ impl Generator {
             (Type::Reference(a), Type::Reference(e)) => {
                 return a == e;
             }
+            (Type::MutableReference(a), Type::MutableReference(e)) => {
+                return a == e;
+            }
+            (Type::MutableReference(a), Type::Reference(e)) => {
+                return a == e;
+            }
             _ => {}
         }
 
@@ -192,6 +198,10 @@ impl Generator {
             ParsedType::Reference(r) => {
                 let ty = self.get_semantic_type(r)?;
                 Ok(Type::Reference(Box::new(ty)))
+            }
+            ParsedType::MutableReference(r) => {
+                let ty = self.get_semantic_type(r)?;
+                Ok(Type::MutableReference(Box::new(ty)))
             }
             ParsedType::Array(a) => {
                 let ty = self.get_semantic_type(a)?;
@@ -486,6 +496,7 @@ impl Generator {
             (Type::Primitive(a), Type::Primitive(b)) => a == b,
             (Type::Array(a), Type::Array(b)) => self.types_equal(a, b),
             (Type::Reference(a), Type::Reference(b)) => self.types_equal(a, b),
+            (Type::MutableReference(a), Type::MutableReference(b)) => self.types_equal(a, b),
             (Type::Struct(a), Type::Struct(b)) => a == b,
             (Type::Enum(a), Type::Enum(b)) => a == b,
             (Type::Proto(a), Type::Proto(b)) => a == b,
@@ -504,6 +515,7 @@ impl Generator {
             Type::Primitive(p) => format!("{:?}", p).to_lowercase(),
             Type::Array(inner) => format!("array<{}>", self.type_to_string(inner)),
             Type::Reference(inner) => format!("ref {}", self.type_to_string(inner)),
+            Type::MutableReference(inner) => format!("ref mut {}", self.type_to_string(inner)),
             Type::Struct(id) => {
                 // Check bounds to handle type IDs from imported modules
                 if let Some(TypeDefinition::Struct(s)) = self.symbol_table.types.get(*id as usize) {

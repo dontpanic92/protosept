@@ -1,0 +1,58 @@
+import test.test;
+
+struct Counter(pub count: int) {
+    pub fn increment(ref mut self) {
+        self.count = self.count + 1;
+    }
+    pub fn get(ref self) -> int {
+        return self.count;
+    }
+    pub fn add(ref mut self, n: int) {
+        self.count = self.count + n;
+    }
+}
+
+// ref mut self on a let mut slot
+@test(expected_type = "int", expected_value = "2")
+fn test_ref_mut_self_let_mut() -> int {
+    let mut c = Counter(0);
+    c.increment();
+    c.increment();
+    return c.get();
+}
+
+// ref mut self on a boxed value
+@test(expected_type = "int", expected_value = "3")
+fn test_ref_mut_self_box() -> int {
+    let c = box(Counter(0));
+    c.increment();
+    c.increment();
+    c.increment();
+    return c.get();
+}
+
+// ref mut self with arguments
+@test(expected_type = "int", expected_value = "15")
+fn test_ref_mut_self_with_args() -> int {
+    let c = box(Counter(5));
+    c.add(10);
+    return c.get();
+}
+
+// ref mut self on boxed array element
+struct Point(pub x: int, pub y: int) {
+    pub fn shift(ref mut self, dx: int, dy: int) {
+        self.x = self.x + dx;
+        self.y = self.y + dy;
+    }
+    pub fn get_x(ref self) -> int {
+        return self.x;
+    }
+}
+
+@test(expected_type = "int", expected_value = "6")
+fn test_ref_mut_self_boxed_array_element() -> int {
+    let xs = box([Point(1, 2), Point(3, 4)]);
+    xs[0].shift(5, 0);
+    return xs[0].get_x();
+}

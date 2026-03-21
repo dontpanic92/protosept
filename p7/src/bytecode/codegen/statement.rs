@@ -963,6 +963,9 @@ impl Generator {
             Type::Reference(inner) => Type::Reference(Box::new(
                 self.map_type_from_module(module, inner, type_map)?,
             )),
+            Type::MutableReference(inner) => Type::MutableReference(Box::new(
+                self.map_type_from_module(module, inner, type_map)?,
+            )),
             Type::Array(inner) => Type::Array(Box::new(
                 self.map_type_from_module(module, inner, type_map)?,
             )),

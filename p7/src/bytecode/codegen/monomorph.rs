@@ -482,6 +482,9 @@ impl Generator {
             ParsedType::Reference(inner) => {
                 ParsedType::Reference(Box::new(self.substitute_parsed_type(inner, substitution)))
             }
+            ParsedType::MutableReference(inner) => {
+                ParsedType::MutableReference(Box::new(self.substitute_parsed_type(inner, substitution)))
+            }
             ParsedType::Array(inner) => {
                 ParsedType::Array(Box::new(self.substitute_parsed_type(inner, substitution)))
             }

@@ -39,11 +39,12 @@ impl Generator {
         Ok(())
     }
 
-    /// Extracts struct type ID from a type, handling both direct struct and boxed struct
+    /// Extracts struct type ID from a type, handling direct struct, boxed struct,
+    /// and reference/mutable-reference to struct
     fn extract_struct_type_id(&self, ty: &Type, field: &Identifier) -> SaResult<u32> {
         match ty {
             Type::Struct(type_id) => Ok(*type_id),
-            Type::BoxType(inner) => {
+            Type::BoxType(inner) | Type::Reference(inner) | Type::MutableReference(inner) => {
                 if let Type::Struct(type_id) = **inner {
                     Ok(type_id)
                 } else {
@@ -834,7 +835,7 @@ impl Generator {
 
         // Auto-deref references and boxes
         let object_ty = match object_ty {
-            Type::Reference(inner) => *inner,
+            Type::Reference(inner) | Type::MutableReference(inner) => *inner,
             Type::BoxType(inner) => *inner,
             other => other,
         };

@@ -1082,7 +1082,15 @@ impl Parser {
                 self.peek(),
                 TokenType::Ref => {
                     // Receiver shortcut: `ref self` == `self: ref Self`
-                    self.consume();
+                    // or `ref mut self` (ephemeral mutable borrow receiver)
+                    self.consume(); // consume 'ref'
+
+                    // Check for 'ref mut self'
+                    let is_mut = matches!(self.peek().map(|t| &t.token_type), Some(TokenType::Mut));
+                    if is_mut {
+                        self.consume(); // consume 'mut'
+                    }
+
                     let name = self.parse_identifier()?;
                     if name.name != "self" {
                         return Err(ParseError::UnexpectedToken {
@@ -1091,11 +1099,17 @@ impl Parser {
                         });
                     }
 
-                    let arg_type = Type::Reference(Box::new(Type::Identifier(Identifier {
+                    let self_type = Type::Identifier(Identifier {
                         name: "Self".to_string(),
                         line: name.line,
                         col: name.col,
-                    })));
+                    });
+
+                    let arg_type = if is_mut {
+                        Type::MutableReference(Box::new(self_type))
+                    } else {
+                        Type::Reference(Box::new(self_type))
+                    };
 
                     Ok(Parameter { name, arg_type, default_value: None })
                 },
