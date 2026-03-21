@@ -234,6 +234,15 @@ impl Parser {
                     operand: Box::new(expression),
                     token,
                 };
+            } else if self.peek_match(TokenType::OpenBrace) {
+                // Check for struct update syntax: TypeName { ...base, field: val }
+                // Only valid after an identifier or field access (type name)
+                let is_type_expr = matches!(expression, Expression::Identifier(_) | Expression::FieldAccess { .. });
+                if is_type_expr && self.is_struct_update_start() {
+                    expression = self.parse_struct_update(expression)?;
+                } else {
+                    break;
+                }
             } else {
                 break;
             }
@@ -547,6 +556,51 @@ impl Parser {
                 arguments,
             })),
         }
+    }
+
+    /// Check if the next tokens look like a struct update: { ...
+    fn is_struct_update_start(&self) -> bool {
+        // Peek past '{' to see if next is '...'
+        if let Some(brace) = self.tokens.get(self.position) {
+            if brace.token_type == TokenType::OpenBrace {
+                if let Some(next) = self.tokens.get(self.position + 1) {
+                    if next.token_type == TokenType::DotDotDot {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Parse struct update: TypeName { ...base, field1: val1, field2: val2 }
+    fn parse_struct_update(&mut self, struct_name: Expression) -> ParseResult<Expression> {
+        let pos = (self.peek().unwrap().line, self.peek().unwrap().col);
+        self.consume_match(TokenType::OpenBrace)?;
+        self.consume_match(TokenType::DotDotDot)?;
+
+        let base = self.parse_expression()?;
+        let mut updates = Vec::new();
+
+        while self.peek_match(TokenType::Comma) {
+            self.consume(); // consume ','
+            if self.peek_match(TokenType::CloseBrace) {
+                break; // trailing comma
+            }
+            let field_name = self.parse_identifier()?;
+            self.consume_match(TokenType::Colon)?;
+            let value = self.parse_expression()?;
+            updates.push((field_name, value));
+        }
+
+        self.consume_match(TokenType::CloseBrace)?;
+
+        Ok(Expression::StructUpdate {
+            struct_name: Box::new(struct_name),
+            base: Box::new(base),
+            updates,
+            pos,
+        })
     }
 
     fn parse_unary_expression(&mut self) -> ParseResult<Expression> {

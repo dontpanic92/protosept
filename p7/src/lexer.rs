@@ -65,6 +65,7 @@ pub enum TokenType {
     Colon,
     Comma,
     Dot,
+    DotDotDot,
     Semicolon,
     OpenBrace,
     CloseBrace,
@@ -774,7 +775,19 @@ impl Lexer {
             }
             Some('.') => {
                 self.read_char();
-                TokenType::Dot
+                if self.peek_char() == Some('.') {
+                    self.read_char();
+                    if self.peek_char() == Some('.') {
+                        self.read_char();
+                        TokenType::DotDotDot
+                    } else {
+                        // Two dots — put second dot back and return single Dot
+                        self.position -= 1;
+                        TokenType::Dot
+                    }
+                } else {
+                    TokenType::Dot
+                }
             }
             Some(';') => {
                 self.read_char();

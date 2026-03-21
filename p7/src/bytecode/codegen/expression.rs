@@ -182,6 +182,9 @@ impl Generator {
             Expression::TupleLiteral { elements, pos } => {
                 self.generate_tuple_literal(elements, pos)
             }
+            Expression::StructUpdate { struct_name, base, updates, pos } => {
+                self.generate_struct_update(*struct_name, *base, updates, pos)
+            }
         }
     }
 

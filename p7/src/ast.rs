@@ -280,6 +280,14 @@ pub enum Expression {
         elements: Vec<Expression>,
         pos: (usize, usize),
     },
+
+    // Struct update expression (e.g., Tab { ...old, dirty: true })
+    StructUpdate {
+        struct_name: Box<Expression>,
+        base: Box<Expression>,
+        updates: Vec<(Identifier, Expression)>,
+        pos: (usize, usize),
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
