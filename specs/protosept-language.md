@@ -2290,17 +2290,18 @@ For method calls on mutable places, p7 provides auto-borrow sugar when the metho
 
 **Sugar rules:**
 
-- `place.method(args...)` where `method` has a `ref mut self` receiver and `place` is a mutable place desugars as follows:
-  - If `place` is a `let mut` slot of type `Self`: desugars to `Type.method(ref_mut(place), args...)` — the compiler takes an ephemeral mutable borrow of the slot for the duration of the call.
-  - If `place` is `*b` where `b: box<Self>`: desugars to `Type.method(ref_mut(*b), args...)`.
-  - If `place` is `b.field` where `b: box<S>` and the field type is `Self`: desugars similarly.
-  - If `place` is `b[i]` where `b: box<array<Self>>`: desugars to `Type.method(ref_mut(b[i]), args...)`.
-  - If `place` is `b[i].field` where `b: box<array<S>>` and the field type is `Self`: desugars similarly.
+- `recv.method(args...)` where `method` has a `ref mut self` receiver desugars as follows:
+  - If `recv` is a `let mut` slot of type `Self`: desugars to `Type.method(ref_mut(recv), args...)` — the compiler takes an ephemeral mutable borrow of the slot for the duration of the call.
+  - If `recv` has type `box<Self>`: desugars to `Type.method(ref_mut(*recv), args...)` — the mutable borrow is taken of the dereferenced contents. The receiver may be any `box<Self>` value (including non-`let-mut` bindings); the box itself provides the mutable place via `*recv`.
+  - If `recv` is a boxed field `b.field` where `b: box<S>` and the field type is `Self`: desugars to `Type.method(ref_mut(b.field), args...)`.
+  - If `recv` is `b[i]` where `b: box<array<Self>>`: desugars to `Type.method(ref_mut(b[i]), args...)`.
+  - If `recv` is `b[i].field` where `b: box<array<S>>` and the field type is `Self`: desugars to `Type.method(ref_mut(b[i].field), args...)`.
+  - Calling a `ref mut self` method on a `robox<Self>` value is ERROR (`*rb` is not a mutable place when `rb: robox<T>`).
 
 **Restrictions:**
 
 - Applies only to methods with `ref mut self` receivers; does NOT apply to methods with `ref self`, `box self`, or value `self` receivers.
-- The receiver must be a mutable place (§7.6.1); calling a `ref mut self` method on a non-mutable-place expression is ERROR.
+- The receiver expression must either be a mutable place (§7.6.1) or an expression of type `box<Self>` (from which `*recv` is a mutable place). Calling a `ref mut self` method on any other expression is ERROR.
 - The `ref_mut(...)` desugaring in the rules above is an **internal notation only** — there is no user-visible `ref_mut<T>` type or `ref_mut(...)` expression in v1. The mutable borrow is always implicit and ephemeral.
 - The mutable borrow exists only for the duration of the method call expression; it does not outlive the call.
 - The local exclusivity restriction of §7.6.3 applies: when the receiver is a boxed-array element place, the same expression must not also structurally mutate the containing array.
@@ -2356,7 +2357,7 @@ Methods on structs, enums, and protos may declare a receiver parameter. The rece
 
 3. `ref mut self` – ephemeral mutable-borrowed receiver:
    - Denotes ephemeral mutable borrowed access to `Self` for the duration of the method call.
-   - The caller must supply a mutable place of type `Self` (§7.6.1); the compiler applies the auto-borrow sugar (§11.3.2).
+   - The caller must supply a mutable place of type `Self` (§7.6.1), or an expression of type `box<Self>` (from which the compiler takes a mutable borrow of `*recv`); the compiler applies the auto-borrow sugar (§11.3.2).
    - This form is **receiver-only** in v1: `ref mut` is not a general type constructor, and there is no first-class `ref_mut<T>` value type.
    - `ref mut self` is distinct from `let mut` (binding mutability) and from `box self` (escaping identity): it belongs to the borrow/access-capability axis and is strictly ephemeral.
    - Within the method body, `self` may be used to read and write fields of `Self`, subject to field-visibility rules (§12.1.1).
@@ -2373,10 +2374,10 @@ Methods on structs, enums, and protos may declare a receiver parameter. The rece
 - No implicit boxing occurs to satisfy a receiver:
   - A method with `self: box<Self>` requires the caller to have `box<Self>`, not just `Self`.
 - For methods with `ref self` receivers, the auto-borrow sugar (§11.3.1) applies at method call sites for `box<Self>` and `robox<Self>` receivers.
-- For methods with `ref mut self` receivers, the auto-borrow sugar (§11.3.2) applies at method call sites; the receiver expression must be a mutable place.
+- For methods with `ref mut self` receivers, the auto-borrow sugar (§11.3.2) applies at method call sites; the receiver expression must be a mutable place or a `box<Self>` value.
 - Boxed receivers (`self: box<Self>`) pass the box handle, which satisfies `Copy`. This allows multiple method calls on the same box without moving the box itself.
 - Calling a method with a `box self` receiver on a `robox<Self>` value is ERROR (capability mismatch).
-- Calling a `ref mut self` method on a non-mutable-place expression is ERROR.
+- Calling a `ref mut self` method on a non-mutable-place, non-`box<Self>` expression is ERROR.
 
 **Example:**
 ```p7
