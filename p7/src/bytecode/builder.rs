@@ -83,6 +83,18 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::Mod);
     }
 
+    pub fn bitand(&mut self) {
+        self.add_instruction(Instruction::BitAnd);
+    }
+
+    pub fn bitor(&mut self) {
+        self.add_instruction(Instruction::BitOr);
+    }
+
+    pub fn bitxor(&mut self) {
+        self.add_instruction(Instruction::BitXor);
+    }
+
     // pub fn addf(&mut self) {
     //     self.add_instruction(Instruction::Addf);
     // }

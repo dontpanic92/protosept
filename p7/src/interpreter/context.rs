@@ -585,6 +585,36 @@ impl Context {
                 Instruction::Mod => {
                     arithmetic_op!(self, %);
                 }
+                Instruction::BitAnd => {
+                    let b = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                    let a = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                    match (a, b) {
+                        (Data::Int(a), Data::Int(b)) => {
+                            self.stack_frame_mut()?.stack.push(Data::Int(a & b));
+                        }
+                        _ => return Err(RuntimeError::Other("Bitwise AND requires int operands".to_string())),
+                    }
+                }
+                Instruction::BitOr => {
+                    let b = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                    let a = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                    match (a, b) {
+                        (Data::Int(a), Data::Int(b)) => {
+                            self.stack_frame_mut()?.stack.push(Data::Int(a | b));
+                        }
+                        _ => return Err(RuntimeError::Other("Bitwise OR requires int operands".to_string())),
+                    }
+                }
+                Instruction::BitXor => {
+                    let b = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                    let a = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                    match (a, b) {
+                        (Data::Int(a), Data::Int(b)) => {
+                            self.stack_frame_mut()?.stack.push(Data::Int(a ^ b));
+                        }
+                        _ => return Err(RuntimeError::Other("Bitwise XOR requires int operands".to_string())),
+                    }
+                }
                 Instruction::Neg => {
                     if let Some(data) = self.stack_frame_mut()?.stack.pop() {
                         match data {

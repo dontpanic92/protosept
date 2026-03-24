@@ -48,6 +48,7 @@ pub enum TokenType {
     NotEquals,
     Multiply,
     Divide,
+    Percent,
     GreaterThan,
     LessThan,
     GreaterThanOrEqual,
@@ -55,6 +56,8 @@ pub enum TokenType {
     And,
     Or,
     Ampersand,
+    Pipe,
+    Caret,
     Not,
     Assignment,
     Question,
@@ -679,6 +682,10 @@ impl Lexer {
                 self.read_char();
                 TokenType::Multiply
             }
+            Some('%') => {
+                self.read_char();
+                TokenType::Percent
+            }
             Some('/') => {
                 self.read_char();
                 if self.peek_char() == Some('/') {
@@ -766,8 +773,12 @@ impl Lexer {
                     self.read_char();
                     TokenType::Or
                 } else {
-                    panic!("Unexpected character: |");
+                    TokenType::Pipe
                 }
+            }
+            Some('^') => {
+                self.read_char();
+                TokenType::Caret
             }
             Some(',') => {
                 self.read_char();

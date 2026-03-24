@@ -708,6 +708,31 @@ impl Generator {
         let lhs_ty = self.generate_expression(left)?;
         let rhs_ty = self.generate_expression(right)?;
 
+        let is_bitwise = matches!(
+            operator.token_type,
+            TokenType::Ampersand | TokenType::Pipe | TokenType::Caret
+        );
+
+        // Bitwise operators require int operands only
+        if is_bitwise {
+            if lhs_ty != Type::Primitive(PrimitiveType::Int)
+                || rhs_ty != Type::Primitive(PrimitiveType::Int)
+            {
+                return Err(self.type_mismatch_error(
+                    "int".to_string(),
+                    if lhs_ty != Type::Primitive(PrimitiveType::Int) {
+                        lhs_ty.to_string()
+                    } else {
+                        rhs_ty.to_string()
+                    },
+                    operator.line,
+                    operator.col,
+                ));
+            }
+            self.emit_binary_instruction(&operator.token_type);
+            return Ok(Type::Primitive(PrimitiveType::Int));
+        }
+
         let is_comparison = matches!(
             operator.token_type,
             TokenType::Equals
@@ -777,6 +802,10 @@ impl Generator {
             TokenType::Minus => self.builder.subi(),
             TokenType::Multiply => self.builder.muli(),
             TokenType::Divide => self.builder.divi(),
+            TokenType::Percent => self.builder.modi(),
+            TokenType::Ampersand => self.builder.bitand(),
+            TokenType::Pipe => self.builder.bitor(),
+            TokenType::Caret => self.builder.bitxor(),
             TokenType::And => self.builder.and(),
             TokenType::Or => self.builder.or(),
             TokenType::Equals => self.builder.eq(),

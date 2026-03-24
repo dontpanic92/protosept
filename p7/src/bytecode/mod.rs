@@ -197,6 +197,15 @@ pub enum Instruction {
     /// Call a closure value. Pops arg_count arguments, then the closure value.
     #[brw(magic = 46u8)]
     CallClosure(u32), // arg_count
+
+    #[brw(magic = 47u8)]
+    BitAnd,
+
+    #[brw(magic = 48u8)]
+    BitOr,
+
+    #[brw(magic = 49u8)]
+    BitXor,
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {

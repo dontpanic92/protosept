@@ -281,6 +281,9 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
         Instruction::CallClosure(arg_count) => {
             format!("{}  call_closure args={}", offset_hex, arg_count)
         }
+        Instruction::BitAnd => format!("{}  bitand", offset_hex),
+        Instruction::BitOr => format!("{}  bitor", offset_hex),
+        Instruction::BitXor => format!("{}  bitxor", offset_hex),
     }
 }
 

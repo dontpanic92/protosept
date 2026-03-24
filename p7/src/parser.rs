@@ -626,15 +626,17 @@ impl Parser {
         match token_type {
             TokenType::Assignment => 1,
             TokenType::DoubleQuestion => 2, // null-coalescing
-            TokenType::Or => 3,
+            TokenType::Or | TokenType::Pipe => 3,
             TokenType::And => 4,
-            TokenType::Equals | TokenType::NotEquals => 5,
+            TokenType::Caret => 5,
+            TokenType::Ampersand => 6,
+            TokenType::Equals | TokenType::NotEquals => 7,
             TokenType::GreaterThan
             | TokenType::GreaterThanOrEqual
             | TokenType::LessThan
-            | TokenType::LessThanOrEqual => 6,
-            TokenType::Plus | TokenType::Minus => 7,
-            TokenType::Multiply | TokenType::Divide => 8,
+            | TokenType::LessThanOrEqual => 8,
+            TokenType::Plus | TokenType::Minus => 9,
+            TokenType::Multiply | TokenType::Divide | TokenType::Percent => 10,
             _ => 0,
         }
     }
