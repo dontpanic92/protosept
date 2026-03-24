@@ -3603,14 +3603,58 @@ Note: Without pattern matching in v1, generic enums are primarily useful for:
 
 ### 20.5 Bounds
 
-Type parameter bounds use proto constraints:
+Type parameter bounds use proto constraints. A bound list is written after `:` as one or more proto names separated by `+`:
+
+```
+type_param       := ident (':' proto_bound_list)?
+proto_bound_list := proto_name ('+' proto_name)*
+```
+
+A single bound:
 ```p7
 fn print_boxed<T: Printable>(value: box<T>) -> unit { value.print(); }
 ```
 
-v1: only a single proto bound per type parameter.
+Multiple bounds:
+```p7
+fn dedup<T: Eq + Hash>(xs: array<T>) -> array<T> { ... }
+```
 
-Example with `Copy`:
+#### Normative rules
+
+1. **Conjunction**: `T: P + Q + R` requires the concrete type `T` to satisfy **all** listed protos. There is no disjunction, negation, or `where` clause in v1.
+2. **Proto names only**: Each name in a bound list MUST resolve to a proto. Providing a non-proto type name is a compile-time ERROR.
+3. **No duplicates**: Listing the same proto more than once for a single type parameter is a compile-time ERROR (e.g., `T: Eq + Hash + Eq` is ERROR).
+4. **Order not significant**: `T: Eq + Hash` and `T: Hash + Eq` are semantically equivalent.
+5. **At least one bound**: If `:` is present, at least one proto name MUST follow; a trailing `:` with no bound is ERROR.
+6. **Usable members**: Inside the generic declaration body, `T` may use any members and operations made available by any of its declared bounds.
+
+#### Examples
+
+**Function — multiple bounds:**
+```p7
+fn dedup<T: Eq + Hash>(xs: array<T>) -> array<T> { ... }
+
+fn render<T: Display + Eq>(x: T, y: T) -> string {
+  if x == y { return "equal"; }
+  return x.display();
+}
+```
+
+**Struct — multiple bounds on a key type:**
+```p7
+struct HashMap<K: Eq + Hash, V>(...);
+```
+
+**Enum — multiple bounds:**
+```p7
+enum CacheResult<K: Eq + Hash, V>(
+  Miss,
+  Hit: V,
+);
+```
+
+**Single bound (unchanged syntax):**
 ```p7
 fn duplicate<T: Copy>(x: T) -> Pair<T, T> {
   return Pair<T, T>(x, copy(x));
