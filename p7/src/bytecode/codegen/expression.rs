@@ -624,6 +624,61 @@ impl Generator {
         rhs: Expression,
         _operator: &Token,
     ) -> SaResult<Type> {
+        // Check for cross-module variable assignment (module.VAR = value)
+        if let Expression::Identifier(ref ident) = object {
+            if let Some(sym_id) = self.symbol_table.find_symbol_in_scope(&ident.name) {
+                if let Some(sym) = self.symbol_table.get_symbol(sym_id) {
+                    if let crate::semantic::SymbolKind::Module(module_id) = sym.kind {
+                        if let Some(module_info) = self.symbol_table.get_module(module_id) {
+                            let module_path = module_info.path.clone();
+                            if let Some(mod_var) = self.resolve_module_variable(&module_path, &field.name) {
+                                let raw_ty = mod_var.ty.clone();
+                                let is_mutable = mod_var.is_mutable;
+
+                                if !is_mutable {
+                                    return Err(SemanticError::Other(format!(
+                                        "Cannot assign to immutable module-level binding '{}.{}' (it is declared as 'pub let', not 'pub let mut')",
+                                        ident.name, field.name
+                                    )));
+                                }
+
+                                // Remap type IDs from the imported module's type table
+                                let imported_module = self.imported_modules.get(&module_path).unwrap().clone();
+                                let mut type_map = std::collections::HashMap::new();
+                                let lhs_ty = self.map_type_from_module(&imported_module, &raw_ty, &mut type_map)?;
+
+                                let rhs_ty = self.generate_expression(rhs)?;
+                                if !self.types_compatible(&rhs_ty, &lhs_ty) {
+                                    return Err(SemanticError::TypeMismatch {
+                                        lhs: format!(
+                                            "module-level binding '{}.{}' has type {}",
+                                            ident.name, field.name, lhs_ty.to_string()
+                                        ),
+                                        rhs: format!("assigned value has type {}", rhs_ty.to_string()),
+                                        pos: self.make_pos(field.line, field.col),
+                                    });
+                                }
+
+                                let mod_path_sid = self.add_string_constant(module_path);
+                                let var_name_sid = self.add_string_constant(field.name.clone());
+                                self.builder.stextmodvar(mod_path_sid, var_name_sid);
+                                return Ok(Type::Primitive(PrimitiveType::Unit));
+                            }
+                            // Check if the variable exists but is private
+                            if let Some(imported) = self.imported_modules.get(&module_path) {
+                                if imported.module_variables.iter().any(|v| v.name == field.name && !v.is_pub) {
+                                    return Err(SemanticError::Other(format!(
+                                        "Module variable '{}' in module '{}' is private (add 'pub' to make it accessible)",
+                                        field.name, module_path
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let object_ty = self.generate_expression(object.clone())?;
         let rhs_ty = self.generate_expression(rhs)?;
 
@@ -899,6 +954,39 @@ impl Generator {
 
     fn generate_field_access(&mut self, object: Expression, field: Identifier) -> SaResult<Type> {
         let object_name = object.get_name();
+
+        // Check for cross-module variable access (module.VAR) before resolving as type
+        if let Expression::Identifier(ref ident) = object {
+            if let Some(sym_id) = self.symbol_table.find_symbol_in_scope(&ident.name) {
+                if let Some(sym) = self.symbol_table.get_symbol(sym_id) {
+                    if let crate::semantic::SymbolKind::Module(module_id) = sym.kind {
+                        if let Some(module_info) = self.symbol_table.get_module(module_id) {
+                            let module_path = module_info.path.clone();
+                            if let Some(mod_var) = self.resolve_module_variable(&module_path, &field.name) {
+                                let raw_ty = mod_var.ty.clone();
+                                // Remap type IDs from the imported module's type table
+                                let imported_module = self.imported_modules.get(&module_path).unwrap().clone();
+                                let mut type_map = std::collections::HashMap::new();
+                                let ty = self.map_type_from_module(&imported_module, &raw_ty, &mut type_map)?;
+                                let mod_path_sid = self.add_string_constant(module_path);
+                                let var_name_sid = self.add_string_constant(field.name.clone());
+                                self.builder.ldextmodvar(mod_path_sid, var_name_sid);
+                                return Ok(ty);
+                            }
+                            // Check if the variable exists but is private
+                            if let Some(imported) = self.imported_modules.get(&module_path) {
+                                if imported.module_variables.iter().any(|v| v.name == field.name && !v.is_pub) {
+                                    return Err(SemanticError::Other(format!(
+                                        "Module variable '{}' in module '{}' is private (add 'pub' to make it accessible)",
+                                        field.name, module_path
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Resolve object type and determine if it's a static access
         let (object_ty, is_static_access) = self.resolve_field_access_object(&object)?;

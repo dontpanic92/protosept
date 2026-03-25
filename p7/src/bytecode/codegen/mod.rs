@@ -88,6 +88,17 @@ impl Generator {
         let child_id = root.children.get(member)?;
         module.symbols.get(*child_id as usize)
     }
+
+    /// Resolve a pub module-level variable from an imported module by name
+    fn resolve_module_variable<'a>(
+        &'a self,
+        module_path: &str,
+        var_name: &str,
+    ) -> Option<&'a ModuleVariable> {
+        let module = self.imported_modules.get(module_path)?;
+        module.module_variables.iter().find(|v| v.name == var_name && v.is_pub)
+    }
+
     pub fn new(module_provider: Box<dyn crate::ModuleProvider>) -> Self {
         Generator {
             builder: ByteCodeBuilder::new(),
@@ -300,6 +311,7 @@ impl Generator {
                 .collect(),
             module_var_count,
             module_init_address,
+            module_variables: self.module_variables.clone(),
         })
     }
 

@@ -259,6 +259,14 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::StModVar(var_id));
     }
 
+    pub fn ldextmodvar(&mut self, module_path_string_id: u32, var_name_string_id: u32) {
+        self.add_instruction(Instruction::LdExtModVar(module_path_string_id, var_name_string_id));
+    }
+
+    pub fn stextmodvar(&mut self, module_path_string_id: u32, var_name_string_id: u32) {
+        self.add_instruction(Instruction::StExtModVar(module_path_string_id, var_name_string_id));
+    }
+
     pub fn get_bytecode(&self) -> Vec<u8> {
         self.writer.get_ref().clone()
     }

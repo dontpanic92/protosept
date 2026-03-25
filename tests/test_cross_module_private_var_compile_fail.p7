@@ -1,0 +1,9 @@
+// compile_fail: Module variable 'secret' in module 'cross_module_test.types' is private
+import test.test;
+import cross_module_test.types;
+
+// `secret` is declared as `let secret: int = 42;` (no pub) in types.p7.
+// Accessing it should produce a compile error.
+fn test_access_private_module_var() -> int {
+    return types.secret;
+}

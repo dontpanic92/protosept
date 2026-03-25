@@ -286,6 +286,8 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
         Instruction::BitXor => format!("{}  bitxor", offset_hex),
         Instruction::LdModVar(var_id) => format!("{}  ldmodvar {}", offset_hex, var_id),
         Instruction::StModVar(var_id) => format!("{}  stmodvar {}", offset_hex, var_id),
+        Instruction::LdExtModVar(mod_id, var_id) => format!("{}  ldextmodvar {} {}", offset_hex, mod_id, var_id),
+        Instruction::StExtModVar(mod_id, var_id) => format!("{}  stextmodvar {} {}", offset_hex, mod_id, var_id),
     }
 }
 
@@ -312,6 +314,9 @@ mod tests {
             types: Vec::new(),
             string_constants: Vec::new(),
             imported_modules: std::collections::HashMap::new(),
+            module_var_count: 0,
+            module_init_address: None,
+            module_variables: Vec::new(),
         };
 
         let output = disassemble_module(&module);

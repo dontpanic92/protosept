@@ -216,6 +216,16 @@ pub enum Instruction {
     /// Parameters: var_id (index into module-level variable storage)
     #[brw(magic = 51u8)]
     StModVar(u32),
+
+    /// Load a module-level variable from an imported module onto the stack.
+    /// Parameters: (module_path_string_id, var_name_string_id)
+    #[brw(magic = 52u8)]
+    LdExtModVar(u32, u32),
+
+    /// Store top of stack into a mutable module-level variable in an imported module.
+    /// Parameters: (module_path_string_id, var_name_string_id)
+    #[brw(magic = 53u8)]
+    StExtModVar(u32, u32),
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {
@@ -247,6 +257,8 @@ pub struct Module {
     pub module_var_count: u32,
     /// Bytecode address where module-level init code begins (None if no init code)
     pub module_init_address: Option<u32>,
+    /// Exported module-level variable metadata (for cross-module access)
+    pub module_variables: Vec<codegen::ModuleVariable>,
 }
 
 impl Module {

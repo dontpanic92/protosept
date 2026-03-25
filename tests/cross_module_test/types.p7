@@ -26,3 +26,11 @@ pub fn make_pos(r: int, c: int) -> Pos {
 pub fn get_row(p: Pos) -> int {
     return p.row;
 }
+
+// Public module-level bindings (accessible cross-module)
+pub let MAX_VALUE: int = 100;
+pub let ORIGIN: Pos = Pos(0, 0);
+pub let mut counter: int = 0;
+
+// Private module-level binding (NOT accessible cross-module)
+let secret: int = 42;

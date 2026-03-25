@@ -1,0 +1,32 @@
+import test.test;
+import cross_module_test.types;
+
+@test(expected_type = "int", expected_value = "100")
+fn test_read_pub_let() -> int {
+    return types.MAX_VALUE;
+}
+
+@test(expected_type = "int", expected_value = "100")
+fn test_pub_let_in_expression() -> int {
+    let half = types.MAX_VALUE / 2;
+    return half + 50;
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_read_pub_let_mut() -> int {
+    types.counter = 1;
+    return types.counter;
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_mutate_pub_let_mut() -> int {
+    types.counter = 0;
+    types.counter = types.counter + 5;
+    return types.counter;
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_read_pub_struct_var() -> int {
+    let origin = types.ORIGIN;
+    return origin.row;
+}

@@ -699,6 +699,114 @@ impl Context {
                         return Err(RuntimeError::StackUnderflow);
                     }
                 }
+                Instruction::LdExtModVar(module_path_sid, var_name_sid) => {
+                    let current_module_idx = self.stack_frame()?.module_idx;
+                    let module_path = self.modules[current_module_idx]
+                        .string_constants
+                        .get(module_path_sid as usize)
+                        .ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Invalid string constant index for module path: {}",
+                                module_path_sid
+                            ))
+                        })?
+                        .clone();
+                    let var_name = self.modules[current_module_idx]
+                        .string_constants
+                        .get(var_name_sid as usize)
+                        .ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Invalid string constant index for var name: {}",
+                                var_name_sid
+                            ))
+                        })?
+                        .clone();
+
+                    let target_module_idx =
+                        *self.imported_modules.get(&module_path).ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Module '{}' not found in imported modules",
+                                module_path
+                            ))
+                        })?;
+
+                    let var_id = self.modules[target_module_idx]
+                        .module_variables
+                        .iter()
+                        .find(|v| v.name == var_name)
+                        .map(|v| v.var_id)
+                        .ok_or_else(|| {
+                            RuntimeError::VariableNotFound(format!(
+                                "Module variable '{}' not found in module '{}'",
+                                var_name, module_path
+                            ))
+                        })?;
+
+                    let val = self.module_vars[target_module_idx]
+                        .get(var_id as usize)
+                        .ok_or_else(|| {
+                            RuntimeError::VariableNotFound(format!(
+                                "Module variable index {} out of bounds in module '{}'",
+                                var_id, module_path
+                            ))
+                        })?
+                        .clone();
+                    self.stack_frame_mut()?.stack.push(val);
+                }
+                Instruction::StExtModVar(module_path_sid, var_name_sid) => {
+                    let current_module_idx = self.stack_frame()?.module_idx;
+                    let module_path = self.modules[current_module_idx]
+                        .string_constants
+                        .get(module_path_sid as usize)
+                        .ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Invalid string constant index for module path: {}",
+                                module_path_sid
+                            ))
+                        })?
+                        .clone();
+                    let var_name = self.modules[current_module_idx]
+                        .string_constants
+                        .get(var_name_sid as usize)
+                        .ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Invalid string constant index for var name: {}",
+                                var_name_sid
+                            ))
+                        })?
+                        .clone();
+
+                    let target_module_idx =
+                        *self.imported_modules.get(&module_path).ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Module '{}' not found in imported modules",
+                                module_path
+                            ))
+                        })?;
+
+                    let var_id = self.modules[target_module_idx]
+                        .module_variables
+                        .iter()
+                        .find(|v| v.name == var_name)
+                        .map(|v| v.var_id)
+                        .ok_or_else(|| {
+                            RuntimeError::VariableNotFound(format!(
+                                "Module variable '{}' not found in module '{}'",
+                                var_name, module_path
+                            ))
+                        })?;
+
+                    let data = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    let vars = &mut self.module_vars[target_module_idx];
+                    if (var_id as usize) >= vars.len() {
+                        vars.resize(var_id as usize + 1, Data::Int(0));
+                    }
+                    vars[var_id as usize] = data;
+                }
                 Instruction::Neg => {
                     if let Some(data) = self.stack_frame_mut()?.stack.pop() {
                         match data {
