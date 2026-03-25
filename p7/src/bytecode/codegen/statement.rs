@@ -983,8 +983,19 @@ impl Generator {
             }
         };
 
+        let qualified_name_owned = qualified_name.to_string();
         let new_id = self.symbol_table.add_type(mapped_def);
         type_map.insert(type_id, new_id);
+
+        // Insert a symbol so find_symbol_by_qualified_name can locate this type
+        // during monomorphization (type_to_parsed_type emits the qualified name).
+        let new_symbol = crate::semantic::Symbol::new(
+            qualified_name_owned.clone(),
+            qualified_name_owned,
+            SymbolKind::Type(new_id),
+        );
+        self.symbol_table.insert_symbol(new_symbol);
+
         Ok(new_id)
     }
 
