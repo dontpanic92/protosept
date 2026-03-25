@@ -71,8 +71,9 @@ A program is a sequence of top-level items:
 - Struct declarations: `struct ...`
 - Enum declarations: `enum ...`
 - Proto declarations: `proto ...`
+- Module-level binding declarations: `let ...` / `let mut ...` (see §1.3)
 
-Top-level executable statements are not allowed in v1. Execution begins when the host invokes an entrypoint function via embedding (e.g., `run_p7_code(contents, "main")`).
+Arbitrary executable code (such as standalone expressions or control-flow statements) is not allowed at the top level in v1; only the top-level item forms listed above are permitted. Execution begins when the host invokes an entrypoint function via embedding (e.g., `run_p7_code(contents, "main")`).
 
 ---
 
@@ -391,6 +392,83 @@ fn process<T>(x: T) {
 - A type name declared in the module scope.
 
 This restriction prevents confusion about which `T` a reference refers to. If shadowing is needed, use a different name (e.g., `U`, `V`).
+
+---
+
+### 1.3 Module-level bindings
+
+#### 1.3.1 Overview
+
+A **module-level binding** is a `let` or `let mut` declaration that appears at the top level of a module (outside any function, method, or block).
+
+Syntax:
+
+```p7
+let NAME: Type = expr;
+let mut NAME: Type = expr;
+```
+
+A type annotation is REQUIRED for all module-level bindings (ERROR if omitted). This maintains auditability at module boundaries.
+
+#### 1.3.2 Thread-locality
+
+Module-level bindings are **thread-local**. They MUST NOT be used to express process-wide shared mutable state:
+
+- Each thread (or runtime instance) has its own independent copy of every module-level binding.
+- A `let mut` module-level binding is mutable only within the current thread's instance. No other thread observes writes to it.
+- Spawned threads do not inherit the parent thread's module-level binding values; each thread begins with its own freshly initialized instances (see §22.3).
+
+#### 1.3.3 Initialization
+
+Initializer expressions for module-level bindings are **not** restricted to compile-time constants. Any expression that is valid in a function body is permitted as an initializer (subject to the restrictions in §1.3.4).
+
+**Initialization order**: Within a single module, bindings are initialized in declaration order. Across imported modules, the initialization order is **host-defined**; programs MUST NOT rely on a specific initialization order between module-level bindings in different modules.
+
+Initialization of a module-level binding occurs as part of module/thread initialization, before any user-defined function in that module is called.
+
+If the initializer of a module-level binding TRAPs, the entire thread initialization fails with that TRAP. If the initializer THROWs (i.e., the expression has a `throws` effect), this is ERROR at compile time; module-level binding initializers MUST NOT have a `throws` effect.
+
+#### 1.3.4 Restrictions
+
+- Module-level bindings MUST NOT have a type that contains a `ref<T>` (borrowed view), because `ref<T>` is non-escapable (§7.3) and cannot be stored beyond the scope of the borrow.
+- `let mut` module-level bindings, like `let mut` local bindings (§5.1), are **not addressable**: taking `ref(NAME)` where `NAME` is a `let mut` module-level binding is ERROR.
+- `let` (immutable) module-level bindings are addressable: `ref(NAME)` is valid and produces a borrowed view. The borrowed view is valid for the duration of the current thread. This applies regardless of whether the type is a `box<T>` or a plain value type.
+
+#### 1.3.5 Visibility
+
+By default, a module-level binding is module-private. Marking it `pub` makes it accessible from other modules via qualified access (`module.NAME`).
+
+```p7
+pub let MAX_CONNECTIONS: int = 100;
+let mut internal_counter: int = 0;
+```
+
+#### 1.3.6 Relationship to `Send` and threading
+
+Because module-level bindings are thread-local (§1.3.2), they do not satisfy `Send` in general and cannot be passed through `spawn_thread` as shared references. Values *stored in* module-level bindings may themselves be `Send`-typed or non-`Send`-typed; the threading model is unaffected by the presence of module-level bindings.
+
+#### 1.3.7 Examples
+
+```p7
+// Immutable module-level binding (constant-like, but initializer may be runtime)
+pub let VERSION: string = compute_version();
+
+// Mutable module-level binding (thread-local counter)
+let mut request_count: int = 0;
+
+fn handle_request() {
+  request_count = request_count + 1;
+}
+
+fn get_request_count() -> int {
+  request_count
+}
+```
+
+```p7
+// pub let with a complex initializer
+pub let CONFIG: box<Config> = Config.load_defaults();
+```
 
 ---
 
@@ -871,6 +949,8 @@ fn maybe_int() -> ?int {
 ## 5. Bindings, shadowing, and mutation
 
 ### 5.1 `let` and `let mut` bindings (slots)
+
+This section describes **local** `let` and `let mut` bindings — those introduced inside function bodies, closures, or blocks. For module-level bindings (top-level `let` / `let mut`), see §1.3.
 
 `let pattern = expr;` introduces one or more immutable slots by matching `expr` against `pattern`.
 
@@ -3767,6 +3847,7 @@ Rules:
 
 Semantics:
 - Requests creation of a new thread execution; host controls scheduling.
+- The new thread starts with **fresh, independently initialized instances** of all module-level bindings (§1.3.2). It does not inherit the parent thread's module-level binding values; each thread initializes its own instances as part of thread startup.
 - Host hook `on_thread_spawn(handle, info)` is invoked.
 
 ### 22.4 Thread completion outcomes
