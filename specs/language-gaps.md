@@ -169,4 +169,4 @@ code. The git module and tree module are full of these manual patterns.
 | 22 | Import name shadows local variables | Fixed: local variable methods now take priority over module calls in field access dispatch. Module functions still accessible for non-method names. |
 | 25 | Box parameter move tracking overly strict | Fixed: variables and parameters had overlapping ID spaces in a shared `moved_variables` HashSet. Split into separate `moved_variables` and `moved_params` sets. |
 | 21 | No cross-module struct destructuring | Fixed: codegen tries `resolve_qualified_type_name("module.Type")` when direct lookup fails in both `let` patterns and `match` arms |
-| 23 | No struct update/spread syntax | Fixed: added `Type { ...base, field: val }` syntax — lexer (`...` token), parser, AST variant, codegen using `Ldfield` for unchanged fields + `NewStruct` |
+| 23 | No struct update/spread syntax | Fixed: `Type(...base, field = val)` syntax — lexer (`...` token), parser, AST variant, codegen using `Ldfield` for unchanged fields + `NewStruct` |

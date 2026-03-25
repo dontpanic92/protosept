@@ -48,7 +48,7 @@ impl Generator {
         Ok(Type::Struct(type_id))
     }
 
-    /// Generate struct update: Type { ...base, field1: val1, field2: val2 }
+    /// Generate struct update: Type(...base, field1 = val1, field2 = val2)
     pub(super) fn generate_struct_update(
         &mut self,
         struct_name_expr: Expression,

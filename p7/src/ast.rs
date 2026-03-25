@@ -285,7 +285,7 @@ pub enum Expression {
         pos: (usize, usize),
     },
 
-    // Struct update expression (e.g., Tab { ...old, dirty: true })
+    // Struct update expression (e.g., Tab(...old, dirty = true))
     StructUpdate {
         struct_name: Box<Expression>,
         base: Box<Expression>,

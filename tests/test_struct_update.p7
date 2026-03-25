@@ -1,0 +1,35 @@
+// Test struct update syntax: Type(...base, field = val)
+import test.test;
+
+struct Point(
+    pub x: int,
+    pub y: int,
+);
+
+@test(expected_type = "int", expected_value = "99")
+fn test_struct_update_one_field() -> int {
+    let p = Point(1, 2);
+    let q = Point(...p, x = 99);
+    q.x
+}
+
+@test(expected_type = "int", expected_value = "2")
+fn test_struct_update_preserves_base() -> int {
+    let p = Point(1, 2);
+    let q = Point(...p, x = 99);
+    q.y
+}
+
+@test(expected_type = "int", expected_value = "55")
+fn test_struct_update_both_fields() -> int {
+    let p = Point(1, 2);
+    let q = Point(...p, x = 10, y = 45);
+    q.x + q.y
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_struct_update_no_overrides() -> int {
+    let p = Point(1, 2);
+    let q = Point(...p);
+    q.x + q.y
+}
