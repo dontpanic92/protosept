@@ -112,6 +112,8 @@ pub struct Function {
     pub intrinsic_name: Option<String>,
     // For generic functions: stores the original type parameter names
     pub type_parameters: Vec<String>,
+    // For generic functions: stores proto bounds per type parameter (parallel to type_parameters)
+    pub type_param_bounds: Vec<Vec<String>>,
     // For generic functions: stores the original parsed parameter types (before substitution)
     pub generic_param_types: Option<Vec<crate::ast::Type>>,
     // For generic functions: stores the original parsed return type (before substitution)
@@ -129,6 +131,8 @@ pub struct Enum {
     pub attributes: Vec<crate::ast::Attribute>,
     // For generic enums: stores the original type parameter names
     pub type_parameters: Vec<String>,
+    // For generic enums: stores proto bounds per type parameter (parallel to type_parameters)
+    pub type_param_bounds: Vec<Vec<String>>,
     // For generic enums: stores the original parsed variant field types (before substitution)
     pub generic_variant_types: Option<Vec<Vec<crate::ast::Type>>>,
     // For monomorphized enums: stores the base generic enum's TypeId and concrete type arguments
@@ -149,6 +153,8 @@ pub struct Struct {
     pub attributes: Vec<crate::ast::Attribute>,
     // For generic structs: stores the original type parameter names
     pub type_parameters: Vec<String>,
+    // For generic structs: stores proto bounds per type parameter (parallel to type_parameters)
+    pub type_param_bounds: Vec<Vec<String>>,
     // For generic structs: stores the original parsed field types (before substitution)
     pub generic_field_types: Option<Vec<crate::ast::Type>>,
     // For monomorphized structs: stores the base generic struct's TypeId and concrete type arguments

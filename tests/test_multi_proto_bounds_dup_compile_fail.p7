@@ -1,0 +1,11 @@
+// compile_fail: duplicate bound on type parameter
+// Spec §20.5: listing the same proto more than once is ERROR
+
+proto Printable {
+  fn print(self: ref<Printable>) -> unit;
+}
+
+// T: Printable + Printable should be an error
+fn bad<T: Printable + Printable>(x: ref<T>) -> unit {
+  x.print();
+}

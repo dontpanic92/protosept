@@ -51,6 +51,16 @@ impl Generator {
             return Ok(Type::Struct(base_type_id));
         }
 
+        // Validate type parameter bounds
+        self.check_type_param_bounds(
+            &base_struct.type_parameters,
+            &base_struct.type_param_bounds,
+            &type_args,
+            &base_struct.qualified_name,
+            line,
+            col,
+        )?;
+
         // Get the parsed field types
         let parsed_field_types = base_struct.generic_field_types.as_ref().ok_or_else(|| {
             SemanticError::TypeMismatch {
@@ -95,6 +105,7 @@ impl Generator {
             field_defaults: base_struct.field_defaults.clone(),
             attributes: base_struct.attributes.clone(),
             type_parameters: Vec::new(), // Monomorphized structs have no type parameters
+            type_param_bounds: Vec::new(),
             generic_field_types: None,
             monomorphization: Some((base_type_id, type_args.clone())),
             conforming_to: base_struct.conforming_to.clone(),
@@ -149,6 +160,16 @@ impl Generator {
             return Ok(Type::Enum(base_type_id));
         }
 
+        // Validate type parameter bounds
+        self.check_type_param_bounds(
+            &base_enum.type_parameters,
+            &base_enum.type_param_bounds,
+            &type_args,
+            &base_enum.qualified_name,
+            line,
+            col,
+        )?;
+
         // Get the parsed variant field types
         let parsed_variant_types = base_enum.generic_variant_types.as_ref().ok_or_else(|| {
             SemanticError::TypeMismatch {
@@ -197,6 +218,7 @@ impl Generator {
             variants: monomorphized_variants,
             attributes: base_enum.attributes.clone(),
             type_parameters: Vec::new(), // Monomorphized enums have no type parameters
+            type_param_bounds: Vec::new(),
             generic_variant_types: None,
             monomorphization: Some((base_type_id, type_args.clone())),
             conforming_to: base_enum.conforming_to.clone(),
@@ -276,6 +298,16 @@ impl Generator {
             });
         }
 
+        // Validate type parameter bounds
+        self.check_type_param_bounds(
+            &base_func.type_parameters,
+            &base_func.type_param_bounds,
+            &type_args,
+            &base_func.qualified_name,
+            line,
+            col,
+        )?;
+
         // Get the parsed parameter types and return type
         let parsed_param_types =
             base_func
@@ -343,6 +375,7 @@ impl Generator {
             attributes: base_func.attributes.clone(),
             intrinsic_name: base_func.intrinsic_name.clone(),
             type_parameters: Vec::new(), // Monomorphized functions have no type parameters
+            type_param_bounds: Vec::new(),
             generic_param_types: None,
             generic_return_type: None,
             generic_body: None,
@@ -523,6 +556,146 @@ impl Generator {
                     .collect();
                 ParsedType::Tuple(substituted_elements)
             }
+        }
+    }
+
+    /// Check that concrete type arguments satisfy all proto bounds declared on type parameters.
+    /// `type_param_names` and `type_param_bounds` are parallel arrays; `type_args` maps 1:1.
+    fn check_type_param_bounds(
+        &self,
+        type_param_names: &[String],
+        type_param_bounds: &[Vec<String>],
+        type_args: &[Type],
+        generic_name: &str,
+        line: usize,
+        col: usize,
+    ) -> SaResult<()> {
+        for (i, bounds) in type_param_bounds.iter().enumerate() {
+            if bounds.is_empty() {
+                continue;
+            }
+            let concrete_type = &type_args[i];
+            let param_name = &type_param_names[i];
+
+            // Get the TypeId of the concrete type (struct or enum)
+            let concrete_type_id = match concrete_type {
+                Type::Struct(tid) => Some(*tid),
+                Type::Enum(tid) => Some(*tid),
+                _ => None,
+            };
+
+            for bound_name in bounds {
+                // Resolve the bound name to a proto TypeId
+                let proto_type_id = self.resolve_bound_proto(bound_name);
+                let proto_type_id = match proto_type_id {
+                    Some(id) => id,
+                    None => {
+                        // Check builtin protos (Copy, Eq, Display, Send)
+                        return Err(SemanticError::Other(format!(
+                            "Proto '{}' not found (used as bound on type parameter '{}' of '{}')",
+                            bound_name, param_name, generic_name
+                        )));
+                    }
+                };
+
+                // Check if the concrete type satisfies this proto
+                match concrete_type_id {
+                    Some(tid) => {
+                        // Use conformance checking — the type must have all required methods
+                        if let Err(_) = self.check_type_satisfies_proto(&[proto_type_id], tid) {
+                            let type_name = self.type_display_name(concrete_type);
+                            return Err(SemanticError::Other(format!(
+                                "Type '{}' does not satisfy proto '{}' required by type parameter '{}' of '{}' at line {} column {}",
+                                type_name, bound_name, param_name, generic_name, line, col
+                            )));
+                        }
+                    }
+                    None => {
+                        // Primitive types — check if they have builtin proto conformance
+                        let type_name = self.type_display_name(concrete_type);
+                        // Primitives don't declare proto conformance explicitly,
+                        // but some may satisfy protos through builtin methods.
+                        // For now, check if the proto requires methods the type can't provide.
+                        // We try the conformance check which will fail for primitives
+                        // since they don't have explicit method definitions.
+                        return Err(SemanticError::Other(format!(
+                            "Type '{}' does not satisfy proto '{}' required by type parameter '{}' of '{}' at line {} column {}",
+                            type_name, bound_name, param_name, generic_name, line, col
+                        )));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve a bound name to a proto TypeId by searching the symbol table
+    fn resolve_bound_proto(&self, name: &str) -> Option<TypeId> {
+        for symbol in &self.symbol_table.symbols {
+            if symbol.name == name {
+                if let SymbolKind::Type(type_id) = symbol.kind {
+                    if matches!(
+                        self.symbol_table.get_type(type_id),
+                        TypeDefinition::Proto(_)
+                    ) {
+                        return Some(type_id);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Lightweight conformance check: does the type at `type_id` implement all methods required by each proto?
+    fn check_type_satisfies_proto(
+        &self,
+        proto_ids: &[TypeId],
+        type_id: TypeId,
+    ) -> Result<(), ()> {
+        for &proto_id in proto_ids {
+            let proto = match self.symbol_table.get_type(proto_id) {
+                TypeDefinition::Proto(p) => p,
+                _ => return Err(()),
+            };
+
+            let type_qualified_name = match self.symbol_table.get_type(type_id) {
+                TypeDefinition::Struct(s) => s.qualified_name.clone(),
+                TypeDefinition::Enum(e) => e.qualified_name.clone(),
+                _ => return Err(()),
+            };
+
+            for (method_name, _param_types, _return_type) in &proto.methods {
+                let qualified_method_name = format!("{}.{}", type_qualified_name, method_name);
+                let found = self.symbol_table.symbols.iter().any(|s| {
+                    s.qualified_name == qualified_method_name
+                        && matches!(s.kind, SymbolKind::Function { .. })
+                });
+                if !found {
+                    return Err(());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Get a human-readable name for a type (for error messages)
+    fn type_display_name(&self, ty: &Type) -> String {
+        match ty {
+            Type::Struct(tid) => {
+                if let TypeDefinition::Struct(s) = self.symbol_table.get_type(*tid) {
+                    s.qualified_name.clone()
+                } else {
+                    ty.to_string()
+                }
+            }
+            Type::Enum(tid) => {
+                if let TypeDefinition::Enum(e) = self.symbol_table.get_type(*tid) {
+                    e.qualified_name.clone()
+                } else {
+                    ty.to_string()
+                }
+            }
+            _ => ty.to_string(),
         }
     }
 }

@@ -1896,15 +1896,28 @@ impl Parser {
         loop {
             let name = self.parse_identifier()?;
 
-            // Check for bound: T: Printable
-            let bound = if self.peek_match(TokenType::Colon) {
+            // Check for bounds: T: Proto1 + Proto2 + ...
+            let bounds = if self.peek_match(TokenType::Colon) {
                 self.consume(); // consume ':'
-                Some(self.parse_identifier()?)
+                let mut bounds = vec![self.parse_identifier()?];
+                while self.peek_match(TokenType::Plus) {
+                    self.consume(); // consume '+'
+                    let bound = self.parse_identifier()?;
+                    // Check for duplicate bounds (spec §20.5: listing same proto twice is ERROR)
+                    if bounds.iter().any(|b| b.name == bound.name) {
+                        return Err(ParseError::UnexpectedToken {
+                            found: format!("duplicate bound '{}' on type parameter '{}'", bound.name, name.name),
+                            pos: Some(SourcePos { line: bound.line, col: bound.col, module: None }),
+                        });
+                    }
+                    bounds.push(bound);
+                }
+                bounds
             } else {
-                None
+                vec![]
             };
 
-            type_params.push(TypeParameter { name, bound });
+            type_params.push(TypeParameter { name, bounds });
 
             if self.peek_match(TokenType::Comma) {
                 self.consume(); // consume ','

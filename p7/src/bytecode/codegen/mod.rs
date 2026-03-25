@@ -60,6 +60,8 @@ pub struct Generator {
     pub(super) is_compiling_builtin: bool,
     // Track type parameters of the enclosing generic type (struct/enum) when processing methods
     pub(super) enclosing_type_params: Vec<String>,
+    // Track proto bounds of the enclosing generic type's type parameters (parallel to enclosing_type_params)
+    pub(super) enclosing_type_param_bounds: Vec<Vec<String>>,
 }
 
 impl Generator {
@@ -91,6 +93,7 @@ impl Generator {
             current_self_type: None,
             is_compiling_builtin: false,
             enclosing_type_params: Vec::new(),
+            enclosing_type_param_bounds: Vec::new(),
         }
     }
 
@@ -382,6 +385,7 @@ impl Generator {
             current_self_type: None,
             is_compiling_builtin: is_builtin,
             enclosing_type_params: Vec::new(),
+            enclosing_type_param_bounds: Vec::new(),
         };
         // Override root module metadata with this module_path
         if let Some(root) = generator.symbol_table.symbols.get_mut(0) {
@@ -439,8 +443,17 @@ impl Generator {
             .map(|tp| tp.name.name.clone())
             .collect();
 
+        let own_type_param_bounds: Vec<Vec<String>> = declaration
+            .type_parameters
+            .iter()
+            .map(|tp| tp.bounds.iter().map(|b| b.name.clone()).collect())
+            .collect();
+
         let mut all_type_param_names = self.enclosing_type_params.clone();
         all_type_param_names.extend(own_type_param_names.clone());
+
+        let mut all_type_param_bounds = self.enclosing_type_param_bounds.clone();
+        all_type_param_bounds.extend(own_type_param_bounds);
 
         let is_generic = !all_type_param_names.is_empty();
 
@@ -517,6 +530,7 @@ impl Generator {
             attributes: declaration.attributes.clone(),
             intrinsic_name: intrinsic_name.clone(),
             type_parameters: all_type_param_names.clone(),
+            type_param_bounds: all_type_param_bounds.clone(),
             generic_param_types,
             generic_return_type,
             generic_body: if is_generic {
@@ -671,10 +685,19 @@ impl Generator {
             .map(|tp| tp.name.name.clone())
             .collect();
 
+        let own_type_param_bounds: Vec<Vec<String>> = declaration
+            .type_parameters
+            .iter()
+            .map(|tp| tp.bounds.iter().map(|b| b.name.clone()).collect())
+            .collect();
+
         // Combine with enclosing type params (from generic struct/enum)
         // Enclosing params come first as they are "outer" type parameters
         let mut all_type_param_names = self.enclosing_type_params.clone();
         all_type_param_names.extend(own_type_param_names.clone());
+
+        let mut all_type_param_bounds = self.enclosing_type_param_bounds.clone();
+        all_type_param_bounds.extend(own_type_param_bounds);
 
         // A function needs deferred type resolution if it has its own type params
         // or if it's inside a generic struct/enum (has enclosing type params)
@@ -758,6 +781,7 @@ impl Generator {
             attributes: declaration.attributes.clone(),
             intrinsic_name: intrinsic_name.clone(),
             type_parameters: all_type_param_names.clone(),
+            type_param_bounds: all_type_param_bounds,
             generic_param_types,
             generic_return_type,
             generic_body: if is_generic {

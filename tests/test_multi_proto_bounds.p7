@@ -1,0 +1,104 @@
+// Test multiple proto constraints on generic type parameters
+// Spec §20.5: T: Proto1 + Proto2 syntax
+import test.test;
+
+// Define protos for testing
+proto Printable {
+  fn print(self: ref<Printable>) -> unit;
+}
+
+proto Describable {
+  fn describe(self: ref<Describable>) -> int;
+}
+
+proto Countable {
+  fn count(self: ref<Countable>) -> int;
+}
+
+// Struct conforming to Printable + Describable
+struct[Printable, Describable] Widget(
+  id: int,
+) {
+  pub fn print(self: ref<Widget>) -> unit {
+    // no-op
+  }
+
+  pub fn describe(self: ref<Widget>) -> int {
+    self.id
+  }
+}
+
+// Struct conforming to all three protos
+struct[Printable, Describable, Countable] FullWidget(
+  id: int,
+  n: int,
+) {
+  pub fn print(self: ref<FullWidget>) -> unit {
+    // no-op
+  }
+
+  pub fn describe(self: ref<FullWidget>) -> int {
+    self.id
+  }
+
+  pub fn count(self: ref<FullWidget>) -> int {
+    self.n
+  }
+}
+
+// Struct conforming to only Printable (not Describable)
+struct[Printable] SimpleWidget(
+  id: int,
+) {
+  pub fn print(self: ref<SimpleWidget>) -> unit {
+    // no-op
+  }
+}
+
+// ===== Generic function with single bound (existing feature, baseline) =====
+
+fn get_description<T: Describable>(x: ref<T>) -> int {
+  x.describe()
+}
+
+// ===== Generic function with multiple bounds =====
+
+fn print_and_describe<T: Printable + Describable>(x: ref<T>) -> int {
+  x.print();
+  x.describe()
+}
+
+// ===== Generic function with three bounds =====
+
+fn full_inspect<T: Printable + Describable + Countable>(x: ref<T>) -> int {
+  x.print();
+  let desc = x.describe();
+  let cnt = x.count();
+  desc + cnt
+}
+
+// ===== Tests =====
+
+@test(expected_type = "int", expected_value = "42")
+fn test_single_bound_function() -> int {
+  let w = Widget(id = 42);
+  get_description<Widget>(ref(w))
+}
+
+@test(expected_type = "int", expected_value = "99")
+fn test_multi_bound_function() -> int {
+  let w = Widget(id = 99);
+  print_and_describe<Widget>(ref(w))
+}
+
+@test(expected_type = "int", expected_value = "15")
+fn test_three_bound_function() -> int {
+  let fw = FullWidget(id = 10, n = 5);
+  full_inspect<FullWidget>(ref(fw))
+}
+
+@test(expected_type = "int", expected_value = "7")
+fn test_multi_bound_with_full_widget() -> int {
+  let fw = FullWidget(id = 7, n = 3);
+  print_and_describe<FullWidget>(ref(fw))
+}

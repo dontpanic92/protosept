@@ -28,7 +28,7 @@ impl Identifier {
 #[derive(Debug, PartialEq, Clone)]
 pub struct TypeParameter {
     pub name: Identifier,
-    pub bound: Option<Identifier>, // e.g., T: Printable
+    pub bounds: Vec<Identifier>, // e.g., T: Printable + Eq
 }
 
 #[derive(Debug, PartialEq, Clone)]

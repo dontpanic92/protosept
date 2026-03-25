@@ -442,10 +442,15 @@ impl Generator {
         // Resolve protocol conformances
         let conforming_to = self.resolve_conformances(&conformance)?;
 
-        // Extract type parameter names for enclosing context
+        // Extract type parameter names and bounds for enclosing context
         let type_param_names: Vec<String> = type_parameters
             .iter()
             .map(|tp| tp.name.name.clone())
+            .collect();
+
+        let type_param_bounds_list: Vec<Vec<String>> = type_parameters
+            .iter()
+            .map(|tp| tp.bounds.iter().map(|b| b.name.clone()).collect())
             .collect();
 
         let ty = Enum {
@@ -453,6 +458,7 @@ impl Generator {
             variants,
             attributes: attributes.clone(),
             type_parameters: type_param_names.clone(),
+            type_param_bounds: type_param_bounds_list.clone(),
             generic_variant_types,
             monomorphization: None,
             conforming_to: conforming_to.clone(),
@@ -472,6 +478,8 @@ impl Generator {
         // Set enclosing type params for methods to reference enum's type parameters
         let prev_enclosing_type_params =
             std::mem::replace(&mut self.enclosing_type_params, type_param_names);
+        let prev_enclosing_type_param_bounds =
+            std::mem::replace(&mut self.enclosing_type_param_bounds, type_param_bounds_list);
 
         // Two-pass method compilation for forward reference support:
         // Pass 1: Register all method signatures
@@ -487,6 +495,7 @@ impl Generator {
 
         // Restore previous enclosing type params
         self.enclosing_type_params = prev_enclosing_type_params;
+        self.enclosing_type_param_bounds = prev_enclosing_type_param_bounds;
 
         // Check conformance after processing methods
         self.check_struct_conformance(type_id, &conforming_to, name.line, name.col)?;
@@ -512,10 +521,15 @@ impl Generator {
             .symbol_table
             .get_new_symbol_qualified_name(name.name.clone());
 
-        // Extract type parameter names
+        // Extract type parameter names and bounds
         let type_param_names: Vec<String> = type_parameters
             .iter()
             .map(|tp| tp.name.name.clone())
+            .collect();
+
+        let type_param_bounds_list: Vec<Vec<String>> = type_parameters
+            .iter()
+            .map(|tp| tp.bounds.iter().map(|b| b.name.clone()).collect())
             .collect();
 
         let is_generic = !type_param_names.is_empty();
@@ -567,6 +581,7 @@ impl Generator {
             field_defaults,
             attributes: attributes.clone(),
             type_parameters: type_param_names.clone(),
+            type_param_bounds: type_param_bounds_list.clone(),
             generic_field_types,
             monomorphization: None, // This is the generic definition, not a monomorphization
             conforming_to: conforming_to.clone(),
@@ -585,6 +600,8 @@ impl Generator {
         // Set enclosing type params for methods to reference struct's type parameters
         let prev_enclosing_type_params =
             std::mem::replace(&mut self.enclosing_type_params, type_param_names);
+        let prev_enclosing_type_param_bounds =
+            std::mem::replace(&mut self.enclosing_type_param_bounds, type_param_bounds_list);
 
         // Two-pass method compilation for forward reference support:
         // Pass 1: Register all method signatures
@@ -600,6 +617,7 @@ impl Generator {
 
         // Restore previous enclosing type params
         self.enclosing_type_params = prev_enclosing_type_params;
+        self.enclosing_type_param_bounds = prev_enclosing_type_param_bounds;
 
         // Check conformance after processing methods
         self.check_struct_conformance(type_id, &conforming_to, name.line, name.col)?;
@@ -899,6 +917,7 @@ impl Generator {
                     field_defaults: s.field_defaults.clone(),
                     attributes: s.attributes.clone(),
                     type_parameters: s.type_parameters.clone(),
+                    type_param_bounds: s.type_param_bounds.clone(),
                     generic_field_types: s.generic_field_types.clone(),
                     monomorphization: s.monomorphization.clone(),
                     conforming_to,
@@ -930,6 +949,7 @@ impl Generator {
                     variants,
                     attributes: e.attributes.clone(),
                     type_parameters: e.type_parameters.clone(),
+                    type_param_bounds: e.type_param_bounds.clone(),
                     generic_variant_types: e.generic_variant_types.clone(),
                     monomorphization: e.monomorphization.clone(),
                     conforming_to,

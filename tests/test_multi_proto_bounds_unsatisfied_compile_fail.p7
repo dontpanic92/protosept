@@ -1,0 +1,32 @@
+// compile_fail: type does not satisfy proto bound
+// Spec §20.5: T: P requires concrete type to satisfy P
+
+proto Printable {
+  fn print(self: ref<Printable>) -> unit;
+}
+
+proto Describable {
+  fn describe(self: ref<Describable>) -> int;
+}
+
+// Widget only implements Printable, not Describable
+struct[Printable] Widget(
+  id: int,
+) {
+  pub fn print(self: ref<Widget>) -> unit {}
+}
+
+// Requires both Printable + Describable
+fn inspect<T: Printable + Describable>(x: ref<T>) -> int {
+  x.print();
+  x.describe()
+}
+
+import test.test;
+
+// This should fail: Widget does not satisfy Describable
+@test(expected_type = "int", expected_value = "0")
+fn test_fail() -> int {
+  let w = Widget(id = 1);
+  inspect<Widget>(ref(w))
+}
