@@ -30,7 +30,7 @@ Normative keywords:
 - `T, U, V` are types.
 - `x, y, z` are identifiers.
 - `null` denotes the null value (only inhabits nullable types).
-- **Slot**: a storage location introduced by `let`, `let mut`, or a parameter.
+- **Slot**: a storage location introduced by `let`, `let mut`, a parameter, or a module-level binding (§1.3).
 - **Addressable location** (v1): a `let`-introduced slot, a parameter slot, or a field/sub-location of an addressable base where the language provides addressability (see §7.1, §7.2, §11.4). Note: `let mut` slots are NOT addressable locations in v1.
 - **Mutable place**: a syntactic expression that may appear on the left side of an assignment statement or as the receiver of a `ref mut self` method call (see §10.2, §11.3.2, §11.4). Mutable places are ephemeral; they are not storable values.
 - **Binding mutability**: whether a named slot may be reassigned. Controlled by `let` vs `let mut`. A `let mut` binding may be rebound to a new value; a `let` binding may not.
@@ -71,8 +71,9 @@ A program is a sequence of top-level items:
 - Struct declarations: `struct ...`
 - Enum declarations: `enum ...`
 - Proto declarations: `proto ...`
+- Module-level bindings: `let ...` / `let mut ...` (see §1.3)
 
-Top-level executable statements are not allowed in v1. Execution begins when the host invokes an entrypoint function via embedding (e.g., `run_p7_code(contents, "main")`).
+Arbitrary top-level executable statements are not allowed in v1; only the item forms listed above are permitted at module scope. Module-level `let` / `let mut` bindings are the one exception: they declare named slots initialized by compile-time constant expressions (§1.3). Execution begins when the host invokes an entrypoint function via embedding (e.g., `run_p7_code(contents, "main")`).
 
 ---
 
@@ -391,6 +392,61 @@ fn process<T>(x: T) {
 - A type name declared in the module scope.
 
 This restriction prevents confusion about which `T` a reference refers to. If shadowing is needed, use a different name (e.g., `U`, `V`).
+
+---
+
+### 1.3 Module-level bindings
+
+A **module-level binding** is a named slot declared at the top level of a module using `let` or `let mut`.
+
+#### Syntax
+
+```p7
+let NAME: T = const_expr;
+let mut NAME: T = const_expr;
+pub let NAME: T = const_expr;
+pub let mut NAME: T = const_expr;
+```
+
+- The type annotation (`: T`) is REQUIRED for module-level bindings; type inference from the initializer alone is not performed at module scope.
+- The initializer MUST be a compile-time constant expression following the same rules as attribute values (§19.4): literals, constant arithmetic, and similar constructs that do not require runtime allocation or function calls. Using a non-constant initializer is ERROR.
+
+#### Semantics: thread-local, not process-global
+
+Module-level bindings are **thread-local**: each thread (or runtime instance) has its own independent copy of every module-level binding.
+
+- A module-level `let` binding is immutable for the lifetime of the owning thread instance; re-assignment is ERROR.
+- A module-level `let mut` binding may be reassigned within the thread that owns it; the same semantics as local `let mut` (§5.1) apply, including that `let mut` module bindings are NOT addressable (borrowing via `ref(x)` is ERROR).
+- Module-level bindings do **not** represent process-wide shared mutable state. Each thread/runtime instance initializes its own set of module-level binding slots from the constant initializer at startup; no slot is shared with any other thread.
+- When a new thread is spawned via `spawn_thread` (§22.3), the new thread starts with its own freshly initialized instances of all module-level bindings. The spawned thread does **not** inherit or share the parent thread's module-level binding state.
+
+#### Visibility
+
+- By default, module-level bindings are module-private (consistent with §1.1.7).
+- A `pub` modifier makes a module-level binding visible outside the module.
+- `pub let` exposes an immutable binding; an external module may read the current value through a qualified name (e.g., `mymodule.MAX_RETRIES`).
+- `pub let mut` exposes a mutable binding; external modules may read the current value (for that thread's instance) through a qualified name, but MUST NOT assign to it — only the declaring module may reassign the binding. The binding remains mutable only within the declaring module's own code.
+
+#### Examples
+
+```p7
+// Immutable module-level binding (thread-local constant)
+let MAX_RETRIES: int = 3;
+
+// Mutable module-level counter (thread-local; each thread has its own copy)
+let mut request_count: int = 0;
+
+// Public immutable binding
+pub let VERSION: string = "1.0.0";
+
+fn handle_request() {
+    request_count = request_count + 1;
+}
+```
+
+#### Interaction with local bindings
+
+A local `let` or `let mut` binding (§5.1) inside a function body may shadow a module-level binding of the same name, subject to the same-type shadowing rule (§5.2) that applies uniformly to all binding forms in Protosept: the shadowing binding MUST have the same type as the binding it shadows. This rule is not unique to module-level shadows; it applies whenever any binding shadows an outer binding of the same name.
 
 ---
 
@@ -870,7 +926,9 @@ fn maybe_int() -> ?int {
 
 ## 5. Bindings, shadowing, and mutation
 
-### 5.1 `let` and `let mut` bindings (slots)
+### 5.1 `let` and `let mut` bindings (local slots)
+
+> **Scope**: This section describes `let` and `let mut` when used inside function bodies (local bindings). For top-level module-level bindings see §1.3.
 
 `let pattern = expr;` introduces one or more immutable slots by matching `expr` against `pattern`.
 
@@ -3750,7 +3808,7 @@ When disabled, `spawn_thread` is ERROR.
 [[TODO]] define enabling mechanism.
 
 ### 22.2 Send-gated transfer
-Arguments to `spawn_thread` MUST satisfy `Send` (§6.5). This prevents shared mutable state across threads.
+Arguments to `spawn_thread` MUST satisfy `Send` (§6.5). This prevents shared mutable state across threads. Module-level bindings (§1.3) do not violate this rule because each thread receives its own independently initialized copy; no binding slot is shared between threads.
 
 ### 22.3 `spawn_thread`
 
@@ -3768,6 +3826,7 @@ Rules:
 Semantics:
 - Requests creation of a new thread execution; host controls scheduling.
 - Host hook `on_thread_spawn(handle, info)` is invoked.
+- The new thread starts with **fresh, independently initialized instances** of all module-level bindings (§1.3). The spawned thread does **not** inherit or share any module-level binding state from the spawning thread.
 
 ### 22.4 Thread completion outcomes
 
