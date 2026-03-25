@@ -473,9 +473,16 @@ impl Generator {
         let prev_enclosing_type_params =
             std::mem::replace(&mut self.enclosing_type_params, type_param_names);
 
-        // Process enum methods
+        // Two-pass method compilation for forward reference support:
+        // Pass 1: Register all method signatures
+        let mut method_decls = Vec::new();
         for method in methods {
-            self.process_function_declaration(method.function)?;
+            self.register_function_signature(&method.function)?;
+            method_decls.push(method.function);
+        }
+        // Pass 2: Generate all method bodies
+        for decl in method_decls {
+            self.generate_function_body(decl)?;
         }
 
         // Restore previous enclosing type params
@@ -579,8 +586,16 @@ impl Generator {
         let prev_enclosing_type_params =
             std::mem::replace(&mut self.enclosing_type_params, type_param_names);
 
+        // Two-pass method compilation for forward reference support:
+        // Pass 1: Register all method signatures
+        let mut method_decls = Vec::new();
         for method in methods {
-            self.process_function_declaration(method.function)?;
+            self.register_function_signature(&method.function)?;
+            method_decls.push(method.function);
+        }
+        // Pass 2: Generate all method bodies
+        for decl in method_decls {
+            self.generate_function_body(decl)?;
         }
 
         // Restore previous enclosing type params

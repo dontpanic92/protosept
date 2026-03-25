@@ -688,7 +688,7 @@ impl Generator {
     ) -> SaResult<Type> {
         // Extract the type_id for source_module lookup (works for both struct and enum)
         let type_id_opt = match object_ty {
-            Type::Reference(inner) | Type::BoxType(inner) => match inner.as_ref() {
+            Type::Reference(inner) | Type::BoxType(inner) | Type::MutableReference(inner) => match inner.as_ref() {
                 Type::Struct(id) | Type::Enum(id) => Some(*id),
                 _ => None,
             },
