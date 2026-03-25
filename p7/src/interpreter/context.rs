@@ -240,6 +240,8 @@ pub struct Context {
     // When set, the interpreter loop stops once stack depth drops to this level.
     // Used by call_closure to run a single closure invocation from a host function.
     stop_depth: Option<usize>,
+    // Module-level variables (thread-local): indexed by [module_idx][var_id]
+    module_vars: Vec<Vec<Data>>,
 }
 
 impl Context {
@@ -256,6 +258,7 @@ impl Context {
             imported_modules: HashMap::new(),
             script_dir: None,
             stop_depth: None,
+            module_vars: Vec::new(),
         };
 
         // Register builtin host functions
@@ -289,9 +292,14 @@ impl Context {
         // Push the main module first to ensure it's at index 0
         self.build_vtable(&module);
 
-        // Extract imported modules before pushing the main module
+        // Extract imported modules and init address before pushing the main module
         let imported_modules = module.imported_modules.clone();
+        let init_address = module.module_init_address;
+        // Allocate module-level variable storage
+        let var_count = module.module_var_count as usize;
+        let module_idx = self.modules.len();
         self.modules.push(module);
+        self.module_vars.push(vec![Data::Int(0); var_count]);
 
         // Now register and load all imported modules
         for (module_path, imported) in imported_modules {
@@ -300,6 +308,11 @@ impl Context {
                 .insert(module_path.clone(), imported_module_idx);
             self.load_module_internal(*imported);
         }
+
+        // Run module-level init code if present
+        if let Some(addr) = init_address {
+            self.run_module_init(module_idx, addr as usize);
+        }
     }
 
     /// Helper to load a module and recursively load its dependencies.
@@ -307,18 +320,42 @@ impl Context {
     fn load_module_internal(&mut self, module: Module) {
         self.build_vtable(&module);
 
-        // Extract imported modules before pushing this module
+        // Extract imported modules and init address before pushing this module
         let imported_modules = module.imported_modules.clone();
+        let init_address = module.module_init_address;
+        // Allocate module-level variable storage
+        let var_count = module.module_var_count as usize;
+        let module_idx = self.modules.len();
         self.modules.push(module);
+        self.module_vars.push(vec![Data::Int(0); var_count]);
 
         // Register imported modules of this module
         for (module_path, imported) in imported_modules {
             if !self.imported_modules.contains_key(&module_path) {
-                let module_idx = self.modules.len();
+                let idx = self.modules.len();
                 self.imported_modules
-                    .insert(module_path.clone(), module_idx);
+                    .insert(module_path.clone(), idx);
                 self.load_module_internal(*imported);
             }
+        }
+
+        // Run module-level init code if present
+        if let Some(addr) = init_address {
+            self.run_module_init(module_idx, addr as usize);
+        }
+    }
+
+    /// Run module-level initialization code (initializes module-level bindings).
+    fn run_module_init(&mut self, module_idx: usize, init_address: usize) {
+        let mut init_frame = StackFrame::new();
+        init_frame.pc = init_address;
+        init_frame.module_idx = module_idx;
+        self.stack.push(init_frame);
+        // Run the init code; it ends with a Ret instruction
+        let _ = self.run_interpreter_loop();
+        // Pop the init frame
+        if self.stack.len() > 1 {
+            self.stack.pop();
         }
     }
 
@@ -621,6 +658,45 @@ impl Context {
                             self.stack_frame_mut()?.stack.push(Data::Int(a ^ b));
                         }
                         _ => return Err(RuntimeError::Other("Bitwise XOR requires int operands".to_string())),
+                    }
+                }
+                Instruction::LdModVar(var_id) => {
+                    let module_idx = self.stack_frame()?.module_idx;
+                    if module_idx < self.module_vars.len() {
+                        let vars = &self.module_vars[module_idx];
+                        if (var_id as usize) < vars.len() {
+                            let val = vars[var_id as usize].clone();
+                            self.stack_frame_mut()?.stack.push(val);
+                        } else {
+                            return Err(RuntimeError::VariableNotFound(format!(
+                                "module variable index {} out of bounds (only {} module vars) at pc {}",
+                                var_id, vars.len(), pc
+                            )));
+                        }
+                    } else {
+                        return Err(RuntimeError::VariableNotFound(format!(
+                            "module index {} out of bounds for module_vars at pc {}",
+                            module_idx, pc
+                        )));
+                    }
+                }
+                Instruction::StModVar(var_id) => {
+                    let module_idx = self.stack_frame()?.module_idx;
+                    if let Some(data) = self.stack_frame_mut()?.stack.pop() {
+                        if module_idx < self.module_vars.len() {
+                            let vars = &mut self.module_vars[module_idx];
+                            if (var_id as usize) >= vars.len() {
+                                vars.resize(var_id as usize + 1, Data::Int(0));
+                            }
+                            vars[var_id as usize] = data;
+                        } else {
+                            return Err(RuntimeError::VariableNotFound(format!(
+                                "module index {} out of bounds for module_vars at pc {}",
+                                module_idx, pc
+                            )));
+                        }
+                    } else {
+                        return Err(RuntimeError::StackUnderflow);
                     }
                 }
                 Instruction::Neg => {
@@ -1450,6 +1526,13 @@ impl Context {
         // Mark from heap-allocated structs (they may contain box references)
         for struct_obj in &self.heap {
             for data in &struct_obj.fields {
+                self.mark_data(data, marked);
+            }
+        }
+
+        // Mark from module-level variables (thread-local globals)
+        for vars in &self.module_vars {
+            for data in vars {
                 self.mark_data(data, marked);
             }
         }

@@ -1,0 +1,7 @@
+// compile_fail: pub on let binding is only allowed at module level
+import test.test;
+
+fn test_pub_inside_function() -> int {
+    pub let x: int = 10;
+    x
+}

@@ -297,39 +297,40 @@ impl Generator {
             }
         }
 
-        // Try to find as local variable
-        if let Some(var_id) = self
-            .local_scope
-            .as_mut()
-            .unwrap()
-            .find_variable(&identifier.name)
-        {
-            if self.is_variable_moved(var_id) {
-                return Err(SemanticError::UseAfterMove {
-                    name: identifier.name,
-                    pos: self.make_pos(identifier.line, identifier.col),
-                });
+        // When inside a function/method, check local scope first
+        if let Some(ref mut scope) = self.local_scope {
+            // Try to find as local variable
+            if let Some(var_id) = scope.find_variable(&identifier.name) {
+                if self.is_variable_moved(var_id) {
+                    return Err(SemanticError::UseAfterMove {
+                        name: identifier.name,
+                        pos: self.make_pos(identifier.line, identifier.col),
+                    });
+                }
+                self.builder.ldvar(var_id);
+                let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
+                return Ok(ty);
             }
-            self.builder.ldvar(var_id);
-            let ty = self.local_scope.as_mut().unwrap().get_variable_type(var_id);
-            return Ok(ty);
+
+            // Try to find as parameter
+            if let Some(param_id) = scope.find_param(&identifier.name) {
+                if self.is_param_moved(param_id) {
+                    return Err(SemanticError::UseAfterMove {
+                        name: identifier.name,
+                        pos: self.make_pos(identifier.line, identifier.col),
+                    });
+                }
+                self.builder.ldpar(param_id);
+                let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
+                return Ok(ty);
+            }
         }
 
-        // Try to find as parameter
-        if let Some(param_id) = self
-            .local_scope
-            .as_mut()
-            .unwrap()
-            .find_param(&identifier.name)
-        {
-            if self.is_param_moved(param_id) {
-                return Err(SemanticError::UseAfterMove {
-                    name: identifier.name,
-                    pos: self.make_pos(identifier.line, identifier.col),
-                });
-            }
-            self.builder.ldpar(param_id);
-            let ty = self.local_scope.as_mut().unwrap().get_param_type(param_id);
+        // Try to find as module-level variable
+        if let Some(mod_var) = self.find_module_variable(&identifier.name) {
+            let ty = mod_var.ty.clone();
+            let var_id = mod_var.var_id;
+            self.builder.ldmodvar(var_id);
             return Ok(ty);
         }
 
@@ -404,6 +405,18 @@ impl Generator {
                 let inner_ty = self.generate_expression((**right).clone())?;
                 if let Type::BoxType(boxed_inner) = inner_ty {
                     return Ok(Type::Reference(boxed_inner));
+                }
+            }
+        }
+
+        // Check for ref(module_var) where module_var is a let mut module-level binding (§1.3.4)
+        if let Expression::Identifier(ref id) = expr {
+            if let Some(mod_var) = self.find_module_variable(&id.name) {
+                if mod_var.is_mutable {
+                    return Err(SemanticError::Other(format!(
+                        "Cannot take ref of mutable module-level binding '{}' (let mut module-level bindings are not addressable)",
+                        id.name
+                    )));
                 }
             }
         }
@@ -515,30 +528,69 @@ impl Generator {
     ) -> SaResult<Type> {
         let rhs_ty = self.generate_expression(rhs)?;
 
-        // Try local variable first
-        if let Some(var_id) = self
-            .local_scope
-            .as_mut()
-            .unwrap()
-            .find_variable(&identifier.name)
-        {
-            let lhs_ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
+        // When inside a function/method, check local scope first
+        if let Some(ref scope) = self.local_scope {
+            // Try local variable first
+            if let Some(var_id) = scope.find_variable(&identifier.name) {
+                let lhs_ty = scope.get_variable_type(var_id);
 
-            if matches!(lhs_ty, Type::Reference(_)) {
+                if matches!(lhs_ty, Type::Reference(_)) {
+                    return Err(SemanticError::Other(format!(
+                        "Cannot assign to read-only ref '{}'",
+                        identifier.name
+                    )));
+                }
+
+                if !scope.is_variable_mutable(var_id) {
+                    return Err(SemanticError::Other(format!(
+                        "Cannot assign to immutable variable '{}' (use 'let mut' instead of 'let')",
+                        identifier.name
+                    )));
+                }
+
+                if !self.types_compatible(&rhs_ty, &lhs_ty) {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: format!(
+                            "variable '{}' has type {}",
+                            identifier.name,
+                            lhs_ty.to_string()
+                        ),
+                        rhs: format!("assigned value has type {}", rhs_ty.to_string()),
+                        pos: self.make_pos(identifier.line, identifier.col),
+                    });
+                }
+
+                self.builder.stvar(var_id);
+                return Ok(Type::Primitive(PrimitiveType::Unit));
+            }
+
+            // Try parameter
+            if let Some(param_id) = scope.find_param(&identifier.name) {
+                let lhs_ty = scope.get_param_type(param_id);
+
+                if matches!(lhs_ty, Type::Reference(_)) {
+                    return Err(SemanticError::Other(format!(
+                        "Cannot assign to read-only ref parameter '{}'",
+                        identifier.name
+                    )));
+                }
+
                 return Err(SemanticError::Other(format!(
-                    "Cannot assign to read-only ref '{}'",
+                    "Cannot assign to immutable parameter '{}' (parameters are always immutable)",
                     identifier.name
                 )));
             }
+        }
 
-            if !self
-                .local_scope
-                .as_ref()
-                .unwrap()
-                .is_variable_mutable(var_id)
-            {
+        // Try module-level variable
+        if let Some(mod_var) = self.find_module_variable(&identifier.name) {
+            let lhs_ty = mod_var.ty.clone();
+            let is_mutable = mod_var.is_mutable;
+            let var_id = mod_var.var_id;
+
+            if !is_mutable {
                 return Err(SemanticError::Other(format!(
-                    "Cannot assign to immutable variable '{}' (use 'let mut' instead of 'let')",
+                    "Cannot assign to immutable module-level binding '{}' (use 'let mut' instead of 'let')",
                     identifier.name
                 )));
             }
@@ -546,7 +598,7 @@ impl Generator {
             if !self.types_compatible(&rhs_ty, &lhs_ty) {
                 return Err(SemanticError::TypeMismatch {
                     lhs: format!(
-                        "variable '{}' has type {}",
+                        "module-level binding '{}' has type {}",
                         identifier.name,
                         lhs_ty.to_string()
                     ),
@@ -555,30 +607,8 @@ impl Generator {
                 });
             }
 
-            self.builder.stvar(var_id);
+            self.builder.stmodvar(var_id);
             return Ok(Type::Primitive(PrimitiveType::Unit));
-        }
-
-        // Try parameter
-        if let Some(param_id) = self
-            .local_scope
-            .as_mut()
-            .unwrap()
-            .find_param(&identifier.name)
-        {
-            let lhs_ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
-
-            if matches!(lhs_ty, Type::Reference(_)) {
-                return Err(SemanticError::Other(format!(
-                    "Cannot assign to read-only ref parameter '{}'",
-                    identifier.name
-                )));
-            }
-
-            return Err(SemanticError::Other(format!(
-                "Cannot assign to immutable parameter '{}' (parameters are always immutable)",
-                identifier.name
-            )));
         }
 
         Err(SemanticError::VariableNotFound {

@@ -284,6 +284,8 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
         Instruction::BitAnd => format!("{}  bitand", offset_hex),
         Instruction::BitOr => format!("{}  bitor", offset_hex),
         Instruction::BitXor => format!("{}  bitxor", offset_hex),
+        Instruction::LdModVar(var_id) => format!("{}  ldmodvar {}", offset_hex, var_id),
+        Instruction::StModVar(var_id) => format!("{}  stmodvar {}", offset_hex, var_id),
     }
 }
 

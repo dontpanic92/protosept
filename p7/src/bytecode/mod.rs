@@ -206,6 +206,16 @@ pub enum Instruction {
 
     #[brw(magic = 49u8)]
     BitXor,
+
+    /// Load a module-level variable onto the stack.
+    /// Parameters: var_id (index into module-level variable storage)
+    #[brw(magic = 50u8)]
+    LdModVar(u32),
+
+    /// Store top of stack into a module-level variable.
+    /// Parameters: var_id (index into module-level variable storage)
+    #[brw(magic = 51u8)]
+    StModVar(u32),
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {
@@ -233,6 +243,10 @@ pub struct Module {
     pub types: Vec<crate::semantic::TypeDefinition>,
     pub string_constants: Vec<String>,
     pub imported_modules: std::collections::HashMap<String, Box<Module>>,
+    /// Number of module-level variables (thread-local bindings)
+    pub module_var_count: u32,
+    /// Bytecode address where module-level init code begins (None if no init code)
+    pub module_init_address: Option<u32>,
 }
 
 impl Module {

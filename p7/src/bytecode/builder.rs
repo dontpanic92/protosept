@@ -251,6 +251,14 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::CallClosure(arg_count));
     }
 
+    pub fn ldmodvar(&mut self, var_id: u32) {
+        self.add_instruction(Instruction::LdModVar(var_id));
+    }
+
+    pub fn stmodvar(&mut self, var_id: u32) {
+        self.add_instruction(Instruction::StModVar(var_id));
+    }
+
     pub fn get_bytecode(&self) -> Vec<u8> {
         self.writer.get_ref().clone()
     }

@@ -1,0 +1,58 @@
+// Test module-level let and let mut bindings (thread-local globals)
+import test.test;
+
+// Immutable module-level binding
+let MAX_ITEMS: int = 100;
+
+// Mutable module-level binding (thread-local counter)
+let mut request_count: int = 0;
+
+// Module-level binding with computed initializer
+let DOUBLED_MAX: int = 100 * 2;
+
+// Module-level binding with string type
+let GREETING: string = "hello";
+
+@test(expected_type = "int", expected_value = "100")
+fn test_read_immutable_module_binding() -> int {
+    MAX_ITEMS
+}
+
+@test(expected_type = "int", expected_value = "200")
+fn test_read_computed_module_binding() -> int {
+    DOUBLED_MAX
+}
+
+@test(expected_type = "string", expected_value = "hello")
+fn test_read_string_module_binding() -> string {
+    GREETING
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_mutate_module_binding() -> int {
+    request_count = request_count + 1;
+    request_count
+}
+
+@test(expected_type = "int", expected_value = "5")
+fn test_mutate_module_binding_in_loop() -> int {
+    let mut i: int = 0;
+    loop {
+        if i >= 5 {
+            break;
+        }
+        request_count = request_count + 1;
+        i = i + 1;
+    }
+    request_count
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_module_binding_used_in_expression() -> int {
+    MAX_ITEMS - 58
+}
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_module_binding_bool() -> bool {
+    MAX_ITEMS > 50
+}

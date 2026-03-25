@@ -1,0 +1,24 @@
+// Test module-level bindings with box types
+import test.test;
+
+// Module-level box binding with a simple type
+let mut boxed_val: box<int> = box(100);
+
+// Immutable module-level box
+let fixed_box: box<int> = box(42);
+
+@test(expected_type = "int", expected_value = "100")
+fn test_read_boxed_val() -> int {
+    *boxed_val
+}
+
+@test(expected_type = "int", expected_value = "200")
+fn test_mutate_boxed_binding() -> int {
+    boxed_val = box(200);
+    *boxed_val
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_immutable_box() -> int {
+    *fixed_box
+}

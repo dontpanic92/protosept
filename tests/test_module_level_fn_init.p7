@@ -1,0 +1,33 @@
+// Test module-level bindings with function call initializers
+import test.test;
+
+fn compute_max() -> int {
+    let mut result: int = 0;
+    let mut i: int = 1;
+    loop {
+        if i > 10 {
+            break;
+        }
+        result = result + i;
+        i = i + 1;
+    }
+    result
+}
+
+fn double(n: int) -> int {
+    n * 2
+}
+
+// Module-level binding initialized with a function call
+let COMPUTED_SUM: int = compute_max();
+let DOUBLED: int = double(COMPUTED_SUM);
+
+@test(expected_type = "int", expected_value = "55")
+fn test_function_call_init() -> int {
+    COMPUTED_SUM
+}
+
+@test(expected_type = "int", expected_value = "110")
+fn test_chained_function_call_init() -> int {
+    DOUBLED
+}

@@ -16,11 +16,12 @@ impl Generator {
     pub(super) fn generate_statement(&mut self, statement: Statement) -> SaResult<Type> {
         match statement {
             Statement::Let {
+                is_pub,
                 is_mutable,
                 identifier,
                 type_annotation,
                 expression,
-            } => self.generate_let(is_mutable, identifier, type_annotation, expression),
+            } => self.generate_let(is_pub, is_mutable, identifier, type_annotation, expression),
             Statement::LetDestructure {
                 is_mutable,
                 pattern,
@@ -76,11 +77,20 @@ impl Generator {
 
     fn generate_let(
         &mut self,
+        is_pub: bool,
         is_mutable: bool,
         identifier: Identifier,
         type_annotation: Option<crate::ast::Type>,
         expression: Expression,
     ) -> SaResult<Type> {
+        // pub let is only valid at module level (handled by generate() before calling generate_statement)
+        if is_pub {
+            return Err(SemanticError::Other(format!(
+                "'pub' on let binding '{}' is only allowed at module level",
+                identifier.name
+            )));
+        }
+
         // Check if this expression involves a move (before consuming it)
         let move_info = self.compute_move_info(&expression);
 

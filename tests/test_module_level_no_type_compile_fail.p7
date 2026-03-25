@@ -1,0 +1,8 @@
+// compile_fail: Module-level binding requires a type annotation
+import test.test;
+
+let x = 42;
+
+fn test_no_type() -> int {
+    x
+}

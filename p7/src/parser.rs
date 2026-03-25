@@ -2142,16 +2142,6 @@ impl Parser {
                 Ok(Statement::Throw(expr))
             }
             Some(TokenType::Let) => {
-                if is_pub {
-                    return Err(ParseError::UnexpectedToken {
-                        found: "pub keyword on let statement".to_string(),
-                        pos: self.peek().map(|t| SourcePos {
-                            line: t.line,
-                            col: t.col,
-                            module: None,
-                        }),
-                    });
-                }
                 if !attributes.is_empty() {
                     return Err(ParseError::UnexpectedToken {
                         found: "attributes on let statement".to_string(),
@@ -2245,6 +2235,7 @@ impl Parser {
                 self.consume_match(TokenType::Semicolon)?;
 
                 Ok(Statement::Let {
+                    is_pub,
                     is_mutable,
                     identifier,
                     type_annotation,

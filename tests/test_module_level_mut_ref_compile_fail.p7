@@ -1,0 +1,9 @@
+// compile_fail: Cannot take ref of mutable module-level binding
+import test.test;
+
+let mut counter: int = 0;
+
+fn test_ref_mut_module_binding() -> int {
+    let r = ref(counter);
+    0
+}

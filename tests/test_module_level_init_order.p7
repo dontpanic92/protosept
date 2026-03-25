@@ -1,0 +1,22 @@
+// Test module-level binding initialization order
+import test.test;
+
+// These should be initialized in declaration order
+let FIRST: int = 10;
+let SECOND: int = FIRST + 20;
+let THIRD: int = SECOND * 2;
+
+@test(expected_type = "int", expected_value = "10")
+fn test_first() -> int {
+    FIRST
+}
+
+@test(expected_type = "int", expected_value = "30")
+fn test_second_depends_on_first() -> int {
+    SECOND
+}
+
+@test(expected_type = "int", expected_value = "60")
+fn test_third_depends_on_second() -> int {
+    THIRD
+}

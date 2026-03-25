@@ -1,0 +1,9 @@
+// compile_fail: Cannot assign to immutable module-level binding
+import test.test;
+
+let MAX: int = 100;
+
+fn test_immutable_assign() -> int {
+    MAX = 200;
+    MAX
+}

@@ -1,0 +1,28 @@
+// Test pub let module-level bindings with visibility
+import test.test;
+
+// Public immutable binding
+pub let VERSION: int = 42;
+
+// Public mutable binding
+pub let mut counter: int = 0;
+
+// Private binding (accessible within this module)
+let mut internal: int = 10;
+
+@test(expected_type = "int", expected_value = "42")
+fn test_pub_let_read() -> int {
+    VERSION
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_pub_let_mut() -> int {
+    counter = counter + 1;
+    counter
+}
+
+@test(expected_type = "int", expected_value = "20")
+fn test_private_binding() -> int {
+    internal = internal + 10;
+    internal
+}

@@ -11,6 +11,16 @@ use crate::{
 
 use super::Module;
 
+/// A module-level binding (thread-local global variable).
+#[derive(Debug, Clone)]
+pub struct ModuleVariable {
+    pub name: String,
+    pub ty: Type,
+    pub is_mutable: bool,
+    pub is_pub: bool,
+    pub var_id: u32, // index into module-level variable storage
+}
+
 mod args;
 mod control_flow;
 pub(crate) use control_flow::LoopContext;
@@ -62,6 +72,8 @@ pub struct Generator {
     pub(super) enclosing_type_params: Vec<String>,
     // Track proto bounds of the enclosing generic type's type parameters (parallel to enclosing_type_params)
     pub(super) enclosing_type_param_bounds: Vec<Vec<String>>,
+    // Module-level bindings (thread-local globals)
+    pub(super) module_variables: Vec<ModuleVariable>,
 }
 
 impl Generator {
@@ -94,6 +106,7 @@ impl Generator {
             is_compiling_builtin: false,
             enclosing_type_params: Vec::new(),
             enclosing_type_param_bounds: Vec::new(),
+            module_variables: Vec::new(),
         }
     }
 
@@ -102,12 +115,14 @@ impl Generator {
         // (e.g. __script_dir__) are in scope for all user code.
         self.load_builtin();
 
-        // Two-pass compilation for forward reference support:
-        // Pass 1: Process all type/function declarations (register signatures)
-        // Pass 2: Generate all code (bodies can reference any declaration)
+        // Three-pass compilation for forward reference support:
+        // Pass 1: Process all type/function/module-binding declarations (register signatures)
+        // Pass 2: Generate function bodies
+        // Pass 3: Generate module-level binding initializers and other executable statements
 
-        // Separate declarations from executable statements
+        // Separate declarations, module-level bindings, and other executable statements
         let mut declarations = Vec::new();
+        let mut module_level_lets = Vec::new();
         let mut other_statements = Vec::new();
         for statement in statements {
             match &statement {
@@ -117,6 +132,10 @@ impl Generator {
                 | Statement::ProtoDeclaration { .. }
                 | Statement::Import { .. } => {
                     declarations.push(statement);
+                }
+                // Module-level let bindings (when local_scope is None, we're at module level)
+                Statement::Let { .. } if self.local_scope.is_none() => {
+                    module_level_lets.push(statement);
                 }
                 _ => {
                     other_statements.push(statement);
@@ -175,12 +194,51 @@ impl Generator {
             }
         }
 
+        // Pass 1b: Register module-level binding signatures (type, mutability, visibility)
+        for statement in &module_level_lets {
+            if let Statement::Let {
+                is_pub,
+                is_mutable,
+                identifier,
+                type_annotation,
+                ..
+            } = statement
+            {
+                self.register_module_level_binding(
+                    *is_pub,
+                    *is_mutable,
+                    identifier,
+                    type_annotation.as_ref(),
+                )?;
+            }
+        }
+
         // Pass 2: Generate function bodies
         for decl in function_decls {
             self.generate_function_body(decl)?;
         }
 
-        // Pass 3: Generate executable statements (let bindings, expressions at top level)
+        // Pass 3: Generate module-level binding initializers (in declaration order)
+        let module_init_address = if !self.module_variables.is_empty() {
+            let init_addr = self.builder.next_address();
+            for statement in module_level_lets {
+                if let Statement::Let {
+                    identifier,
+                    expression,
+                    ..
+                } = statement
+                {
+                    self.generate_module_level_init(identifier, expression)?;
+                }
+            }
+            // Emit Ret so the init function returns control after initialization
+            self.builder.ret();
+            Some(init_addr)
+        } else {
+            None
+        };
+
+        // Pass 3b: Generate other executable statements
         for statement in other_statements {
             self.generate_statement(statement)?;
         }
@@ -227,6 +285,8 @@ impl Generator {
             }
         }
 
+        let module_var_count = self.module_variables.len() as u32;
+
         Ok(Module {
             instructions: self.builder.get_bytecode(),
             symbols: self.symbol_table.symbols.clone(),
@@ -238,7 +298,126 @@ impl Generator {
                 .iter()
                 .map(|(k, v)| (k.clone(), Box::new(v.clone())))
                 .collect(),
+            module_var_count,
+            module_init_address,
         })
+    }
+
+    /// Register a module-level binding's signature (Pass 1b).
+    /// Validates type annotation, type restrictions, and records the binding.
+    fn register_module_level_binding(
+        &mut self,
+        is_pub: bool,
+        is_mutable: bool,
+        identifier: &crate::ast::Identifier,
+        type_annotation: Option<&crate::ast::Type>,
+    ) -> SaResult<()> {
+        // Type annotation is REQUIRED for module-level bindings (§1.3.1)
+        let ast_type = type_annotation.ok_or_else(|| {
+            SemanticError::Other(format!(
+                "Module-level binding '{}' requires a type annotation",
+                identifier.name
+            ))
+        })?;
+
+        let ty = self.get_semantic_type(ast_type)?;
+
+        // Module-level bindings MUST NOT have a type that contains ref<T> (§1.3.4)
+        if self.type_contains_ref(&ty) {
+            return Err(SemanticError::Other(format!(
+                "Module-level binding '{}' cannot have a type containing ref<T> (borrowed views are non-escapable)",
+                identifier.name
+            )));
+        }
+
+        // Check for duplicate module-level binding names
+        if self.module_variables.iter().any(|v| v.name == identifier.name) {
+            return Err(SemanticError::Other(format!(
+                "Duplicate module-level binding '{}'",
+                identifier.name
+            )));
+        }
+
+        let var_id = self.module_variables.len() as u32;
+        self.module_variables.push(ModuleVariable {
+            name: identifier.name.clone(),
+            ty,
+            is_mutable,
+            is_pub,
+            var_id,
+        });
+
+        Ok(())
+    }
+
+    /// Generate initializer code for a module-level binding (Pass 3).
+    fn generate_module_level_init(
+        &mut self,
+        identifier: crate::ast::Identifier,
+        expression: Expression,
+    ) -> SaResult<()> {
+        let mod_var = self
+            .module_variables
+            .iter()
+            .find(|v| v.name == identifier.name)
+            .ok_or_else(|| {
+                SemanticError::Other(format!(
+                    "Module-level binding '{}' not registered",
+                    identifier.name
+                ))
+            })?;
+
+        let expected_type = mod_var.ty.clone();
+        let var_id = mod_var.var_id;
+
+        // Set up a temporary local scope so block expressions and other
+        // constructs that need a scope work during module-level init
+        let saved_local_scope = self.local_scope.take();
+        self.local_scope = Some(LocalSymbolScope::new(Vec::new()));
+
+        // Generate the initializer expression
+        let result =
+            self.generate_expression_with_expected_type(expression, Some(&expected_type));
+
+        // Restore original scope state
+        self.local_scope = saved_local_scope;
+
+        let inferred_ty = result?;
+
+        // Check type compatibility
+        if !self.types_compatible(&inferred_ty, &expected_type) {
+            return Err(SemanticError::TypeMismatch {
+                lhs: format!("inferred type {}", inferred_ty.to_string()),
+                rhs: format!("annotated type {}", expected_type.to_string()),
+                pos: identifier.pos(),
+            });
+        }
+
+        // Emit StModVar to store the result
+        self.builder.stmodvar(var_id);
+
+        Ok(())
+    }
+
+    /// Check if a semantic type contains ref<T> anywhere
+    fn type_contains_ref(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Reference(_) | Type::MutableReference(_) => true,
+            Type::Array(inner) => self.type_contains_ref(inner),
+            Type::BoxType(inner) => self.type_contains_ref(inner),
+            Type::Nullable(inner) => self.type_contains_ref(inner),
+            Type::Tuple(elements) => elements.iter().any(|t| self.type_contains_ref(t)),
+            Type::Function { params, return_type } => {
+                params.iter().any(|t| self.type_contains_ref(t))
+                    || self.type_contains_ref(return_type)
+            }
+            _ => false,
+        }
+    }
+
+    /// Find a module-level variable by name. Returns (var_id, type, is_mutable).
+    pub(super) fn find_module_variable(&self, name: &str) -> Option<&ModuleVariable> {
+        self.module_variables.iter().find(|v| v.name == name)
     }
 
     /// Try to load a builtin type on-demand
@@ -386,6 +565,7 @@ impl Generator {
             is_compiling_builtin: is_builtin,
             enclosing_type_params: Vec::new(),
             enclosing_type_param_bounds: Vec::new(),
+            module_variables: Vec::new(),
         };
         // Override root module metadata with this module_path
         if let Some(root) = generator.symbol_table.symbols.get_mut(0) {
