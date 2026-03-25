@@ -285,7 +285,7 @@ impl Context {
 
     /// Register all builtin host functions
     fn register_builtin_host_functions(&mut self) {
-        super::builtin_impl::register_builtin_functions(self);
+        super::builtin::register_builtin_functions(self);
         super::std_impl::register_std_functions(self);
     }
 
