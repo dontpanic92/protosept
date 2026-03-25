@@ -296,11 +296,10 @@ impl Generator {
         };
 
         // If the receiver is a box but the method expects a non-box self, deref first.
-        if let (Type::BoxType(_), Some(expected_self)) = (object_ty, params.first()) {
-            if !matches!(expected_self, Type::BoxType(_)) {
+        if let (Type::BoxType(_), Some(expected_self)) = (object_ty, params.first())
+            && !matches!(expected_self, Type::BoxType(_)) {
                 self.builder.box_deref();
             }
-        }
 
         // Use shared argument processing logic
         let ordered_exprs = self.process_arguments(
@@ -609,12 +608,11 @@ impl Generator {
                 // Look for the intrinsic name in the arguments
                 for (name_opt, expr) in &attr.arguments {
                     // Check if this is a positional argument (first arg) or named "name"
-                    let is_target = name_opt.as_ref().map_or(true, |n| n.name == "name");
-                    if is_target {
-                        if let Expression::StringLiteral(s) = expr {
+                    let is_target = name_opt.as_ref().is_none_or(|n| n.name == "name");
+                    if is_target
+                        && let Expression::StringLiteral(s) = expr {
                             return Some(s.clone());
                         }
-                    }
                 }
             }
         }

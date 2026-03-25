@@ -55,14 +55,13 @@ impl Generator {
                             }
 
                             for (field_idx, sub_pat) in sub_patterns.iter().enumerate() {
-                                if !sub_pat.is_wildcard() {
-                                    if let Pattern::Identifier(id) = sub_pat {
+                                if !sub_pat.is_wildcard()
+                                    && let Pattern::Identifier(id) = sub_pat {
                                         self.builder.dup();
                                         self.builder.ldfield(field_idx as u32);
                                         let field_ty = struct_def.fields[field_idx].1.clone();
                                         self.bind_pattern_variable(&Some(id.clone()), field_ty)?;
                                     }
-                                }
                             }
 
                             let arm_ty = self.generate_expression(arm.expression.clone())?;
@@ -137,8 +136,8 @@ impl Generator {
 
                     // Extract and bind each sub-pattern
                     for (field_idx, sub_pat) in sub_patterns.iter().enumerate() {
-                        if !sub_pat.is_wildcard() {
-                            if let Pattern::Identifier(id) = sub_pat {
+                        if !sub_pat.is_wildcard()
+                            && let Pattern::Identifier(id) = sub_pat {
                                 self.builder.dup();
                                 self.builder.ldfield((field_idx + 1) as u32);
                                 let field_ty = field_types[field_idx].clone();
@@ -147,7 +146,6 @@ impl Generator {
                                     field_ty,
                                 )?;
                             }
-                        }
                     }
 
                     // Generate arm body
@@ -223,8 +221,8 @@ impl Generator {
 
                     // Extract and bind each field
                     for (field_idx, sub_pat) in field_patterns.iter().enumerate() {
-                        if !sub_pat.is_wildcard() {
-                            if let Pattern::Identifier(id) = sub_pat {
+                        if !sub_pat.is_wildcard()
+                            && let Pattern::Identifier(id) = sub_pat {
                                 self.builder.dup();
                                 self.builder.ldfield(field_idx as u32);
                                 let field_ty = struct_def.fields[field_idx].1.clone();
@@ -233,7 +231,6 @@ impl Generator {
                                     field_ty,
                                 )?;
                             }
-                        }
                     }
 
                     // Generate arm body
@@ -281,8 +278,8 @@ impl Generator {
 
                     // Extract and bind each element
                     for (idx, sub_pat) in sub_patterns.iter().enumerate() {
-                        if !sub_pat.is_wildcard() {
-                            if let Pattern::Identifier(id) = sub_pat {
+                        if !sub_pat.is_wildcard()
+                            && let Pattern::Identifier(id) = sub_pat {
                                 self.builder.dup();
                                 self.builder.ldi(idx as i64);
                                 self.builder.call_host_function(tuple_index_id);
@@ -292,7 +289,6 @@ impl Generator {
                                     elem_ty,
                                 )?;
                             }
-                        }
                     }
 
                     // Generate arm body

@@ -8,6 +8,12 @@ pub struct ByteCodeBuilder {
     writer: Cursor<Vec<u8>>,
 }
 
+impl Default for ByteCodeBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ByteCodeBuilder {
     pub fn new() -> Self {
         ByteCodeBuilder {

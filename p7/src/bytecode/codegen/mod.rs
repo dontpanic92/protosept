@@ -84,7 +84,7 @@ impl Generator {
         member: &str,
     ) -> Option<&'a crate::semantic::Symbol> {
         let module = self.imported_modules.get(module_path)?;
-        let root = module.symbols.get(0)?;
+        let root = module.symbols.first()?;
         let child_id = root.children.get(member)?;
         module.symbols.get(*child_id as usize)
     }
@@ -261,18 +261,17 @@ impl Generator {
 
             for (symbol_id, _type_id, body, param_names, params) in pending {
                 // Generate the monomorphized function's bytecode
-                let address = self.builder.next_address() as u32;
+                let address = self.builder.next_address();
 
                 // Update the symbol's address
-                if let Some(sym) = self.symbol_table.symbols.get_mut(symbol_id as usize) {
-                    if let SymbolKind::Function {
+                if let Some(sym) = self.symbol_table.symbols.get_mut(symbol_id as usize)
+                    && let SymbolKind::Function {
                         address: ref mut func_addr,
                         ..
                     } = sym.kind
                     {
                         *func_addr = address;
                     }
-                }
 
                 // Set up local scope and generate body
                 let variables: Vec<Variable> = param_names
@@ -475,11 +474,11 @@ impl Generator {
     /// the main generator's symbol table so they are callable without a module
     /// qualifier (e.g. `__script_dir__()`).
     fn import_builtin_functions(&mut self, module: &Module) {
-        let Some(root) = module.symbols.get(0) else {
+        let Some(root) = module.symbols.first() else {
             return;
         };
 
-        for (_name, child_id) in &root.children {
+        for child_id in root.children.values() {
             let Some(sym) = module.symbols.get(*child_id as usize) else {
                 continue;
             };
@@ -674,13 +673,11 @@ impl Generator {
                 .parameters
                 .iter()
                 .map(|arg| {
-                    self.get_semantic_type(&arg.arg_type).and_then(|ty| {
-                        Ok(Variable {
+                    self.get_semantic_type(&arg.arg_type).map(|ty| Variable {
                             name: arg.name.name.clone(),
                             ty,
                             is_mutable: false,
                         })
-                    })
                 })
                 .collect::<SaResult<Vec<Variable>>>()?;
             (params, None)
@@ -783,29 +780,26 @@ impl Generator {
             })?;
 
         // Patch the address to where we are now in the bytecode
-        let address = self.builder.next_address() as u32;
-        if let Some(sym) = self.symbol_table.symbols.get_mut(symbol_id as usize) {
-            if let SymbolKind::Function {
+        let address = self.builder.next_address();
+        if let Some(sym) = self.symbol_table.symbols.get_mut(symbol_id as usize)
+            && let SymbolKind::Function {
                 address: ref mut func_addr,
                 ..
             } = sym.kind
             {
                 *func_addr = address;
             }
-        }
 
         // Resolve params for body generation
         let params = declaration
             .parameters
             .iter()
             .map(|arg| {
-                self.get_semantic_type(&arg.arg_type).and_then(|ty| {
-                    Ok(Variable {
+                self.get_semantic_type(&arg.arg_type).map(|ty| Variable {
                         name: arg.name.name.clone(),
                         ty,
                         is_mutable: false,
                     })
-                })
             })
             .collect::<SaResult<Vec<Variable>>>()?;
 
@@ -923,13 +917,11 @@ impl Generator {
                 .parameters
                 .iter()
                 .map(|arg| {
-                    self.get_semantic_type(&arg.arg_type).and_then(|ty| {
-                        Ok(Variable {
+                    self.get_semantic_type(&arg.arg_type).map(|ty| Variable {
                             name: arg.name.name.clone(),
                             ty,
                             is_mutable: false, // Parameters are immutable
                         })
-                    })
                 })
                 .collect::<SaResult<Vec<Variable>>>()?;
             (params, None)
@@ -993,7 +985,7 @@ impl Generator {
             qualified_name,
             SymbolKind::Function {
                 func_id,
-                address: self.builder.next_address() as u32,
+                address: self.builder.next_address(),
             },
         );
 

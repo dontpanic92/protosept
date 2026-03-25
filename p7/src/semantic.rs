@@ -368,9 +368,9 @@ impl ToString for Type {
             Type::MutableReference(r) => format!("ref_mut<{}>", r.to_string()),
             Type::Array(a) => format!("[{}]", a.to_string()),
             Type::BoxType(b) => format!("box<{}>", b.to_string()),
-            Type::Enum(e) => format!("enum({})", e.to_string()),
-            Type::Struct(s) => format!("struct({})", s.to_string()),
-            Type::Proto(p) => format!("proto({})", p.to_string()),
+            Type::Enum(e) => format!("enum({})", e),
+            Type::Struct(s) => format!("struct({})", s),
+            Type::Proto(p) => format!("proto({})", p),
             Type::Nullable(n) => format!("?{}", n.to_string()),
             Type::Function { params, return_type } => {
                 let param_strs: Vec<String> = params.iter().map(|p| p.to_string()).collect();
@@ -414,6 +414,12 @@ pub struct SymbolTable {
     pub monomorphization_cache: HashMap<(TypeId, Vec<Type>), TypeId>,
     // Cache for monomorphized functions: (base_func_id, type_args) -> monomorphized_func_id
     pub function_monomorphization_cache: HashMap<(FunctionId, Vec<Type>), FunctionId>,
+}
+
+impl Default for SymbolTable {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SymbolTable {
@@ -509,11 +515,10 @@ impl SymbolTable {
             TypeDefinition::Proto(p) => &p.qualified_name,
         };
         self.symbols.iter().enumerate().find_map(|(i, s)| {
-            if let SymbolKind::Type(tid) = s.kind {
-                if tid == type_id && &s.qualified_name == target_qualified_name {
+            if let SymbolKind::Type(tid) = s.kind
+                && tid == type_id && &s.qualified_name == target_qualified_name {
                     return Some(i as SymbolId);
                 }
-            }
             None
         })
     }
@@ -531,13 +536,13 @@ impl SymbolTable {
 
     pub fn find_type_in_scope(&self, name: &str) -> Option<Type> {
         // Special handling: inside a struct's scope, `Self` refers to the enclosing type.
-        if name == "Self" {
-            if let Some(enclose_type) =
+        if name == "Self"
+            && let Some(enclose_type) =
                 self.find_nearest_symbol_id_by_kind(SymbolKind::discriminant_of_type())
             {
                 let type_symbol = self.get_symbol(*enclose_type).unwrap();
-                if let SymbolKind::Type(id) = type_symbol.kind {
-                    if let Some(type_def) = self.types.get(id as usize) {
+                if let SymbolKind::Type(id) = type_symbol.kind
+                    && let Some(type_def) = self.types.get(id as usize) {
                         // Determine the actual type kind
                         return match type_def {
                             TypeDefinition::Struct(_) => Some(Type::Struct(id)),
@@ -545,9 +550,7 @@ impl SymbolTable {
                             TypeDefinition::Proto(_) => Some(Type::Proto(id)),
                         };
                     }
-                }
             }
-        }
 
         let primitive_type = Self::to_primitive_type(name);
         if primitive_type.is_some() {
@@ -617,8 +620,7 @@ impl SymbolTable {
     }
 
     pub fn get_new_symbol_qualified_name(&self, name: String) -> String {
-        self.get_current_symbol()
-            .and_then(|symbol| Some(symbol.qualified_name.clone()))
+        self.get_current_symbol().map(|symbol| symbol.qualified_name.clone())
             .unwrap_or_default()
             + "."
             + &name

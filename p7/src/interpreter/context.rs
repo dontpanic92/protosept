@@ -244,6 +244,12 @@ pub struct Context {
     module_vars: Vec<Vec<Data>>,
 }
 
+impl Default for Context {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Context {
     pub fn new() -> Self {
         let mut ctx = Self {
@@ -425,7 +431,7 @@ impl Context {
     }
 
     pub fn push_function(&mut self, name: &str, params: Vec<Data>) {
-        if self.modules.len() == 0 {
+        if self.modules.is_empty() {
             panic!();
         }
 
@@ -541,11 +547,10 @@ impl Context {
 
         loop {
             // When running a closure invocation, stop once the closure frame has returned
-            if let Some(depth) = self.stop_depth {
-                if self.stack.len() <= depth {
+            if let Some(depth) = self.stop_depth
+                && self.stack.len() <= depth {
                     break;
                 }
-            }
 
             let module_idx = self.stack_frame()?.module_idx;
             let pc = self.stack_frame()?.pc;
@@ -1050,11 +1055,10 @@ impl Context {
                 Instruction::Ret => {
                     let return_value = self.stack_frame_mut()?.stack.pop();
                     self.stack.pop();
-                    if let Some(value) = return_value {
-                        if let Ok(frame) = self.stack_frame_mut() {
+                    if let Some(value) = return_value
+                        && let Ok(frame) = self.stack_frame_mut() {
                             frame.stack.push(value);
                         }
-                    }
                 }
                 Instruction::Pop => {
                     self.stack_frame_mut()?.stack.pop();
@@ -1225,7 +1229,7 @@ impl Context {
                                 .iter()
                                 .find(|(name, _, _)| Self::hash_method_name(name) == method_hash)
                                 .map(|(_, params, _)| params.len())
-                                .ok_or(RuntimeError::Other(format!("Method not found in proto")))?
+                                .ok_or(RuntimeError::Other("Method not found in proto".to_string()))?
                         } else {
                             return Err(RuntimeError::Other("Expected proto type".to_string()));
                         };
@@ -1357,7 +1361,7 @@ impl Context {
 
                     // Find the function symbol in the imported module
                     let module = &self.modules[target_module_idx];
-                    let root_symbol = module.symbols.get(0).ok_or_else(|| {
+                    let root_symbol = module.symbols.first().ok_or_else(|| {
                         RuntimeError::Other(format!("Module '{}' has no root symbol", module_path))
                     })?;
 

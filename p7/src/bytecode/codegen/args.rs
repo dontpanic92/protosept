@@ -95,7 +95,7 @@ impl Generator {
                 });
             }
 
-            for (_i, (_name_opt, expr)) in arguments.into_iter().enumerate() {
+            for (_name_opt, expr) in arguments.into_iter() {
                 ordered_exprs.push(expr);
             }
 

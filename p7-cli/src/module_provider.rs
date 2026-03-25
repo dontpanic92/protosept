@@ -36,8 +36,8 @@ impl FileSystemModuleProvider {
     /// 1. Same directory as the binary
     /// 2. Parent directory of the binary (for development: target/debug/../std)
     fn find_std_dir() -> PathBuf {
-        if let Ok(exe_path) = env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
+        if let Ok(exe_path) = env::current_exe()
+            && let Some(exe_dir) = exe_path.parent() {
                 // Check same directory as binary
                 let std_in_exe_dir = exe_dir.join("std");
                 if std_in_exe_dir.is_dir() {
@@ -60,7 +60,6 @@ impl FileSystemModuleProvider {
                     }
                 }
             }
-        }
 
         // Fallback to current directory
         PathBuf::from("std")
@@ -90,9 +89,9 @@ impl FileSystemModuleProvider {
 impl ModuleProvider for FileSystemModuleProvider {
     fn load_module(&self, module_path: &str) -> Option<String> {
         // Check if it's a std module
-        if module_path.starts_with("std.") {
+        if let Some(relative_path) = module_path.strip_prefix("std.") {
             // Strip "std." prefix and look in std directory
-            let relative_path = &module_path[4..]; // Remove "std."
+            // Remove "std."
             return self.load_from_directory(&self.std_dir, relative_path);
         }
 

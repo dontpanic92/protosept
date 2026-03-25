@@ -41,6 +41,12 @@ pub struct InMemoryModuleProvider {
     modules: Rc<HashMap<String, String>>,
 }
 
+impl Default for InMemoryModuleProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InMemoryModuleProvider {
     pub fn new() -> Self {
         InMemoryModuleProvider {
@@ -159,7 +165,7 @@ pub fn run_with_options(
     context.set_script_dir(options.script_dir);
     context.load_module(module);
     context.push_function(entrypoint, Vec::new());
-    context.resume().map_err(|e| Proto7Error::RuntimeError(e))?;
+    context.resume().map_err(Proto7Error::RuntimeError)?;
 
     let result = context.stack[0].stack.pop();
     match result {

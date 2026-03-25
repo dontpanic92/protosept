@@ -400,26 +400,23 @@ impl Generator {
 
     fn generate_ref(&mut self, expr: Expression) -> SaResult<Type> {
         // Special case: ref(*b) where b is a box
-        if let Expression::Unary { operator, right } = &expr {
-            if operator.token_type == TokenType::Multiply {
+        if let Expression::Unary { operator, right } = &expr
+            && operator.token_type == TokenType::Multiply {
                 let inner_ty = self.generate_expression((**right).clone())?;
                 if let Type::BoxType(boxed_inner) = inner_ty {
                     return Ok(Type::Reference(boxed_inner));
                 }
             }
-        }
 
         // Check for ref(module_var) where module_var is a let mut module-level binding (§1.3.4)
-        if let Expression::Identifier(ref id) = expr {
-            if let Some(mod_var) = self.find_module_variable(&id.name) {
-                if mod_var.is_mutable {
+        if let Expression::Identifier(ref id) = expr
+            && let Some(mod_var) = self.find_module_variable(&id.name)
+                && mod_var.is_mutable {
                     return Err(SemanticError::Other(format!(
                         "Cannot take ref of mutable module-level binding '{}' (let mut module-level bindings are not addressable)",
                         id.name
                     )));
                 }
-            }
-        }
 
         let ty = self.generate_expression(expr)?;
 
@@ -625,11 +622,11 @@ impl Generator {
         _operator: &Token,
     ) -> SaResult<Type> {
         // Check for cross-module variable assignment (module.VAR = value)
-        if let Expression::Identifier(ref ident) = object {
-            if let Some(sym_id) = self.symbol_table.find_symbol_in_scope(&ident.name) {
-                if let Some(sym) = self.symbol_table.get_symbol(sym_id) {
-                    if let crate::semantic::SymbolKind::Module(module_id) = sym.kind {
-                        if let Some(module_info) = self.symbol_table.get_module(module_id) {
+        if let Expression::Identifier(ref ident) = object
+            && let Some(sym_id) = self.symbol_table.find_symbol_in_scope(&ident.name)
+                && let Some(sym) = self.symbol_table.get_symbol(sym_id)
+                    && let crate::semantic::SymbolKind::Module(module_id) = sym.kind
+                        && let Some(module_info) = self.symbol_table.get_module(module_id) {
                             let module_path = module_info.path.clone();
                             if let Some(mod_var) = self.resolve_module_variable(&module_path, &field.name) {
                                 let raw_ty = mod_var.ty.clone();
@@ -665,19 +662,14 @@ impl Generator {
                                 return Ok(Type::Primitive(PrimitiveType::Unit));
                             }
                             // Check if the variable exists but is private
-                            if let Some(imported) = self.imported_modules.get(&module_path) {
-                                if imported.module_variables.iter().any(|v| v.name == field.name && !v.is_pub) {
+                            if let Some(imported) = self.imported_modules.get(&module_path)
+                                && imported.module_variables.iter().any(|v| v.name == field.name && !v.is_pub) {
                                     return Err(SemanticError::Other(format!(
                                         "Module variable '{}' in module '{}' is private (add 'pub' to make it accessible)",
                                         field.name, module_path
                                     )));
                                 }
-                            }
                         }
-                    }
-                }
-            }
-        }
 
         let object_ty = self.generate_expression(object.clone())?;
         let rhs_ty = self.generate_expression(rhs)?;
@@ -956,11 +948,11 @@ impl Generator {
         let object_name = object.get_name();
 
         // Check for cross-module variable access (module.VAR) before resolving as type
-        if let Expression::Identifier(ref ident) = object {
-            if let Some(sym_id) = self.symbol_table.find_symbol_in_scope(&ident.name) {
-                if let Some(sym) = self.symbol_table.get_symbol(sym_id) {
-                    if let crate::semantic::SymbolKind::Module(module_id) = sym.kind {
-                        if let Some(module_info) = self.symbol_table.get_module(module_id) {
+        if let Expression::Identifier(ref ident) = object
+            && let Some(sym_id) = self.symbol_table.find_symbol_in_scope(&ident.name)
+                && let Some(sym) = self.symbol_table.get_symbol(sym_id)
+                    && let crate::semantic::SymbolKind::Module(module_id) = sym.kind
+                        && let Some(module_info) = self.symbol_table.get_module(module_id) {
                             let module_path = module_info.path.clone();
                             if let Some(mod_var) = self.resolve_module_variable(&module_path, &field.name) {
                                 let raw_ty = mod_var.ty.clone();
@@ -974,19 +966,14 @@ impl Generator {
                                 return Ok(ty);
                             }
                             // Check if the variable exists but is private
-                            if let Some(imported) = self.imported_modules.get(&module_path) {
-                                if imported.module_variables.iter().any(|v| v.name == field.name && !v.is_pub) {
+                            if let Some(imported) = self.imported_modules.get(&module_path)
+                                && imported.module_variables.iter().any(|v| v.name == field.name && !v.is_pub) {
                                     return Err(SemanticError::Other(format!(
                                         "Module variable '{}' in module '{}' is private (add 'pub' to make it accessible)",
                                         field.name, module_path
                                     )));
                                 }
-                            }
                         }
-                    }
-                }
-            }
-        }
 
         // Resolve object type and determine if it's a static access
         let (object_ty, is_static_access) = self.resolve_field_access_object(&object)?;
@@ -1009,7 +996,7 @@ impl Generator {
                 // Tuple field access: t.0, t.1, etc.
                 let idx: usize = field.name.parse().map_err(|_| {
                     SemanticError::TypeMismatch {
-                        lhs: format!("tuple element index"),
+                        lhs: "tuple element index".to_string(),
                         rhs: format!("'{}' is not a valid tuple index", field.name),
                         pos: self.make_pos(field.line, field.col),
                     }
@@ -1056,15 +1043,14 @@ impl Generator {
         }
 
         // Check for type identifier (static access)
-        if let Expression::Identifier(ref identifier) = *object {
-            if let Some(ty) = self.symbol_table.find_type_in_scope(&identifier.name) {
+        if let Expression::Identifier(ref identifier) = *object
+            && let Some(ty) = self.symbol_table.find_type_in_scope(&identifier.name) {
                 return Ok((ty, true));
             }
-        }
 
         // Check for module-qualified type access (e.g., module.Type in module.Type.Variant)
-        if let Expression::FieldAccess { object: ref inner_obj, field: ref inner_field } = *object {
-            if let Expression::Identifier(ref module_ident) = **inner_obj {
+        if let Expression::FieldAccess { object: ref inner_obj, field: ref inner_field } = *object
+            && let Expression::Identifier(ref module_ident) = **inner_obj {
                 let qualified_name = format!("{}.{}", module_ident.name, inner_field.name);
                 if let Ok(ty) = self.resolve_qualified_type_name(
                     &qualified_name,
@@ -1074,7 +1060,6 @@ impl Generator {
                     return Ok((ty, true));
                 }
             }
-        }
 
         // Regular expression
         Ok((self.generate_expression(object.clone())?, false))
@@ -1561,7 +1546,7 @@ impl Generator {
         let jump_placeholder = self.builder.next_address();
         self.builder.jmp(0);
 
-        let func_addr = self.builder.next_address() as u32;
+        let func_addr = self.builder.next_address();
 
         // Generate closure body with captures + params in scope
         let saved_scope = self.local_scope.take();
@@ -1573,8 +1558,8 @@ impl Generator {
         self.local_scope = saved_scope;
 
         // Patch the jump
-        let after_body = self.builder.next_address() as u32;
-        self.builder.patch_jump_address(jump_placeholder as u32, after_body);
+        let after_body = self.builder.next_address();
+        self.builder.patch_jump_address(jump_placeholder, after_body);
 
         // Push captured values onto the stack (in order)
         for (name, _ty, is_param) in &free_vars {

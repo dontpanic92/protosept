@@ -175,15 +175,15 @@ const MAX_UNICODE_ESCAPE_DIGITS: usize = 6;
 
 impl Lexer {
     pub fn new(input: String) -> Self {
-        let lexer = Lexer {
+        
+
+        Lexer {
             input,
             position: 0,
             line: 1,
             col: 1,
             errors: vec![],
-        };
-
-        lexer
+        }
     }
 
     fn read_char(&mut self) {

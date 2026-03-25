@@ -195,8 +195,8 @@ impl Parser {
     fn parse_expression_suffix(&mut self, mut expression: Expression) -> ParseResult<Expression> {
         loop {
             // Check for generic type arguments after an identifier: Container<int>
-            if let Expression::Identifier(ref ident) = expression {
-                if self.peek_match(TokenType::LessThan) {
+            if let Expression::Identifier(ref ident) = expression
+                && self.peek_match(TokenType::LessThan) {
                     // Try to parse as generic instantiation
                     if let Ok(type_args) = self.try_parse_type_arguments() {
                         expression = Expression::GenericInstantiation {
@@ -208,7 +208,6 @@ impl Parser {
                     // If failed, it's a comparison operator, break out
                     break;
                 }
-            }
 
             if self.peek_match(TokenType::OpenParen) {
                 expression = self.parse_function_call(expression)?;
@@ -589,8 +588,8 @@ impl Parser {
     }
 
     fn parse_unary_expression(&mut self) -> ParseResult<Expression> {
-        if let Some(token) = self.peek() {
-            if UNARY_OPERATIONS.contains(&token.token_type) {
+        if let Some(token) = self.peek()
+            && UNARY_OPERATIONS.contains(&token.token_type) {
                 let operator = self.consume().unwrap().clone();
                 let right = self.parse_unary_expression()?;
                 return Ok(Expression::Unary {
@@ -598,9 +597,8 @@ impl Parser {
                     right: Box::new(right),
                 });
             }
-        }
 
-        return self.parse_primary_expression();
+        self.parse_primary_expression()
     }
 
     fn parse_expression(&mut self) -> ParseResult<Expression> {
@@ -1118,7 +1116,7 @@ impl Parser {
             statements.push(self.parse_statement()?);
         }
 
-        return Ok(statements);
+        Ok(statements)
     }
 
     fn parse_argument_list(&mut self) -> ParseResult<Vec<Parameter>> {
@@ -1546,11 +1544,11 @@ impl Parser {
             self.peek(),
             TokenType::Semicolon => {
                 self.consume();
-                return Ok(Statement::StructDeclaration { is_pub, name, attributes, conformance, type_parameters, fields, methods: vec![] });
+                Ok(Statement::StructDeclaration { is_pub, name, attributes, conformance, type_parameters, fields, methods: vec![] })
             },
             TokenType::OpenBrace => {
                 let methods = self.parse_struct_method_list()?;
-                return Ok(Statement::StructDeclaration { is_pub, name, attributes, conformance, type_parameters, fields, methods });
+                Ok(Statement::StructDeclaration { is_pub, name, attributes, conformance, type_parameters, fields, methods })
             },
         }
     }
@@ -2199,8 +2197,8 @@ impl Parser {
                 if self.peek_match(TokenType::Dot) {
                     let saved_pos = self.position;
                     self.consume(); // consume '.'
-                    if let Ok(variant_name) = self.parse_identifier() {
-                        if self.peek_match(TokenType::OpenParen) {
+                    if let Ok(variant_name) = self.parse_identifier()
+                        && self.peek_match(TokenType::OpenParen) {
                             let enum_name = identifier;
                             self.consume_match(TokenType::OpenParen)?;
                             let sub_patterns = self.parse_sub_patterns()?;
@@ -2218,7 +2216,6 @@ impl Parser {
                                 expression,
                             });
                         }
-                    }
                     self.position = saved_pos;
                 }
 

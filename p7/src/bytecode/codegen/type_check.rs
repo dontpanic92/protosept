@@ -25,11 +25,10 @@ impl Generator {
     ) -> SaResult<Type> {
         // Check if the full qualified name already exists in the symbol table
         // (handles synthetic names from monomorphization like "mod.types.Foo")
-        if let Some(existing) = self.symbol_table.find_symbol_by_qualified_name(name) {
-            if let SymbolKind::Type(type_id) = existing.kind {
+        if let Some(existing) = self.symbol_table.find_symbol_by_qualified_name(name)
+            && let SymbolKind::Type(type_id) = existing.kind {
                 return self.type_from_id(type_id);
             }
-        }
 
         let mut parts = name.split('.').collect::<Vec<_>>();
         if parts.len() < 2 {
@@ -88,8 +87,7 @@ impl Generator {
 
         let (imported_type_id, qualified_name) = {
             let root = module
-                .symbols
-                .get(0)
+                .symbols.first()
                 .ok_or_else(|| SemanticError::TypeNotFound {
                     name: name.to_string(),
                     pos: SourcePos::at(line, col),
@@ -124,11 +122,9 @@ impl Generator {
         if let Some(existing_symbol) = self
             .symbol_table
             .find_symbol_by_qualified_name(&qualified_name)
-        {
-            if let SymbolKind::Type(existing_type_id) = existing_symbol.kind {
+            && let SymbolKind::Type(existing_type_id) = existing_symbol.kind {
                 return self.type_from_id(existing_type_id);
             }
-        }
 
         let mut type_map = std::collections::HashMap::new();
         let new_type_id = self.import_type_from_module(&module, imported_type_id, &mut type_map)?;
@@ -165,11 +161,8 @@ impl Generator {
 
         // Allow implicit int -> float promotion (spec §15.1.2)
         // Note: float -> int requires explicit conversion, not allowed implicitly
-        match (actual, expected) {
-            (Type::Primitive(PrimitiveType::Int), Type::Primitive(PrimitiveType::Float)) => {
-                return true;
-            }
-            _ => {}
+        if let (Type::Primitive(PrimitiveType::Int), Type::Primitive(PrimitiveType::Float)) = (actual, expected) {
+            return true;
         }
 
         false
@@ -413,7 +406,7 @@ impl Generator {
 
                         if expected_is_unit && actual_is_unit {
                             // Both return unit, this is fine
-                        } else if !self.types_equal(&expected, &actual) {
+                        } else if !self.types_equal(expected, &actual) {
                             return Err(SemanticError::Other(format!(
                                 "Method '{}' in {} '{}' returns type '{}', but protocol '{}' requires return type '{}' at line {} column {}",
                                 method_name,
@@ -421,7 +414,7 @@ impl Generator {
                                 qualified_name,
                                 self.type_to_string(&actual),
                                 proto.qualified_name,
-                                self.type_to_string(&expected),
+                                self.type_to_string(expected),
                                 line,
                                 col
                             )));
@@ -437,7 +430,7 @@ impl Generator {
                                 type_name,
                                 qualified_name,
                                 proto.qualified_name,
-                                self.type_to_string(&expected),
+                                self.type_to_string(expected),
                                 line,
                                 col
                             )));
@@ -486,8 +479,8 @@ impl Generator {
 
         // Look through all symbols to find the method
         for symbol in &self.symbol_table.symbols {
-            if symbol.qualified_name == qualified_method_name {
-                if let SymbolKind::Function { func_id, .. } = symbol.kind {
+            if symbol.qualified_name == qualified_method_name
+                && let SymbolKind::Function { func_id, .. } = symbol.kind {
                     // Get the function from the functions table
                     let func = self.symbol_table.get_function(func_id);
                     // Proto methods have return_type as Option<Type>, but Function has return_type as Type
@@ -499,7 +492,6 @@ impl Generator {
                     };
                     return Some((func.params.clone(), return_type));
                 }
-            }
         }
 
         None

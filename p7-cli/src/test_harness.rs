@@ -136,8 +136,8 @@ fn find_test_cases(module: &p7::bytecode::Module) -> Vec<TestCase> {
     let mut test_cases = Vec::new();
 
     for symbol in &module.symbols {
-        if let SymbolKind::Function { func_id, .. } = symbol.kind {
-            if let Some(func) = module.functions.get(func_id as usize) {
+        if let SymbolKind::Function { func_id, .. } = symbol.kind
+            && let Some(func) = module.functions.get(func_id as usize) {
                 for attr in &func.attributes {
                     if let Some((expected_type, expected_value)) = parse_test_attribute(attr) {
                         test_cases.push(TestCase {
@@ -148,7 +148,6 @@ fn find_test_cases(module: &p7::bytecode::Module) -> Vec<TestCase> {
                     }
                 }
             }
-        }
     }
 
     test_cases
@@ -204,13 +203,12 @@ fn run_test_case(
                 *actual_val == expected_bool
             } else {
                 expected_value_str
-                    .parse::<i64>()
-                    .map_or(false, |expected_val| *actual_val == expected_val)
+                    .parse::<i64>() == Ok(*actual_val)
             }
         }
         P7Value::Float(actual_val) => expected_value_str
             .parse::<f64>()
-            .map_or(false, |expected_val| {
+            .is_ok_and(|expected_val| {
                 (actual_val - expected_val).abs() < 1e-9
             }),
         P7Value::String(actual_val) => actual_val == expected_value_str,
@@ -353,7 +351,7 @@ pub fn run_cli(program_name: &str, args: &[String]) -> anyhow::Result<TestSummar
 
     let mut files: Vec<PathBuf> = Vec::new();
 
-    if let Some(arg) = args.get(0) {
+    if let Some(arg) = args.first() {
         let direct = PathBuf::from(arg);
         let candidates = [
             direct.clone(),
@@ -379,13 +377,11 @@ pub fn run_cli(program_name: &str, args: &[String]) -> anyhow::Result<TestSummar
         for entry in fs::read_dir(&tests_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_file() {
-                if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                    if file_name.ends_with(".p7") {
+            if path.is_file()
+                && let Some(file_name) = path.file_name().and_then(|n| n.to_str())
+                    && file_name.ends_with(".p7") {
                         files.push(path);
                     }
-                }
-            }
         }
     }
 

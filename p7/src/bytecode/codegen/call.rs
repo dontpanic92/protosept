@@ -216,8 +216,8 @@ impl Generator {
         call_col: usize,
     ) -> SaResult<Type> {
         // Case 1: Generic type method/variant like `Option<int>.Some(...)`
-        if let Expression::GenericInstantiation { base, type_args } = object.as_ref() {
-            if let Some(result) = self.try_generate_generic_type_member_call(
+        if let Expression::GenericInstantiation { base, type_args } = object.as_ref()
+            && let Some(result) = self.try_generate_generic_type_member_call(
                 base,
                 type_args,
                 callee_expr.clone(),
@@ -225,7 +225,6 @@ impl Generator {
             )? {
                 return Ok(result);
             }
-        }
 
         // Case 2: Module member call like `module.func(...)`
         // When identifier is also a local variable, only skip module lookup if the
@@ -258,23 +257,21 @@ impl Generator {
                     }
                 }
             }
-            if !skip_module {
-                if let Some(result) =
+            if !skip_module
+                && let Some(result) =
                     self.try_generate_module_call(ident, field, arguments.clone(), call_line, call_col)?
                 {
                     return Ok(result);
                 }
-            }
         }
 
         // Case 3: Static method or enum variant like `Type.method(...)` or `Enum.Variant(...)`
-        if let Expression::Identifier(ident) = object.as_ref() {
-            if let Some(result) =
+        if let Expression::Identifier(ident) = object.as_ref()
+            && let Some(result) =
                 self.try_generate_static_call(ident, field, callee_expr.clone(), arguments.clone())?
             {
                 return Ok(result);
             }
-        }
 
         // Case 4: Instance method call like `obj.method(...)`
         self.generate_instance_method_call(object, field, arguments, call_line, call_col)
@@ -875,7 +872,7 @@ impl Generator {
         })?;
 
         // Find the type symbol in the source module
-        let root = module.symbols.get(0).ok_or_else(|| SemanticError::FunctionNotFound {
+        let root = module.symbols.first().ok_or_else(|| SemanticError::FunctionNotFound {
             name: field.name.clone(),
             pos: field.pos(),
         })?;
@@ -1012,8 +1009,8 @@ impl Generator {
         }
 
         // Try struct constructor by type name
-        if let Some(ty) = self.symbol_table.find_type_in_scope(&call_name) {
-            if let Type::Struct(type_id) = ty {
+        if let Some(ty) = self.symbol_table.find_type_in_scope(&call_name)
+            && let Type::Struct(type_id) = ty {
                 return self.generate_struct_from_call(
                     FunctionCall {
                         callee: Box::new(Expression::Identifier(Identifier {
@@ -1026,7 +1023,6 @@ impl Generator {
                     type_id,
                 );
             }
-        }
 
         // Try function call
         self.generate_regular_function_call(call_name, arguments, call_line, call_col)

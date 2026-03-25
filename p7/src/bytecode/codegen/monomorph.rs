@@ -261,11 +261,10 @@ impl Generator {
 
             // Find the symbol with this function's qualified name
             for (idx, symbol) in self.symbol_table.symbols.iter().enumerate() {
-                if symbol.qualified_name == cached_func.qualified_name {
-                    if let SymbolKind::Function { address, func_id } = symbol.kind {
+                if symbol.qualified_name == cached_func.qualified_name
+                    && let SymbolKind::Function { address, func_id } = symbol.kind {
                         return Ok((address, func_id, idx as u32));
                     }
-                }
             }
 
             return Err(SemanticError::TypeMismatch {
@@ -285,11 +284,10 @@ impl Generator {
         if base_func.type_parameters.is_empty() {
             // Find the address and symbol_id of the base function
             for (idx, symbol) in self.symbol_table.symbols.iter().enumerate() {
-                if symbol.qualified_name == base_func.qualified_name {
-                    if let SymbolKind::Function { address, func_id } = symbol.kind {
+                if symbol.qualified_name == base_func.qualified_name
+                    && let SymbolKind::Function { address, func_id } = symbol.kind {
                         return Ok((address, func_id, idx as u32));
                     }
-                }
             }
             return Err(SemanticError::TypeMismatch {
                 lhs: "function symbol".to_string(),
@@ -602,7 +600,7 @@ impl Generator {
                 match concrete_type_id {
                     Some(tid) => {
                         // Use conformance checking — the type must have all required methods
-                        if let Err(_) = self.check_type_satisfies_proto(&[proto_type_id], tid) {
+                        if self.check_type_satisfies_proto(&[proto_type_id], tid).is_err() {
                             let type_name = self.type_display_name(concrete_type);
                             return Err(SemanticError::Other(format!(
                                 "Type '{}' does not satisfy proto '{}' required by type parameter '{}' of '{}' at line {} column {}",
@@ -642,16 +640,14 @@ impl Generator {
     /// Resolve a bound name to a proto TypeId by searching the symbol table
     fn resolve_bound_proto(&self, name: &str) -> Option<TypeId> {
         for symbol in &self.symbol_table.symbols {
-            if symbol.name == name {
-                if let SymbolKind::Type(type_id) = symbol.kind {
-                    if matches!(
+            if symbol.name == name
+                && let SymbolKind::Type(type_id) = symbol.kind
+                    && matches!(
                         self.symbol_table.get_type(type_id),
                         TypeDefinition::Proto(_)
                     ) {
                         return Some(type_id);
                     }
-                }
-            }
         }
         None
     }

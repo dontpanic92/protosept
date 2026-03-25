@@ -188,8 +188,8 @@ impl Generator {
 
                 // Extract and bind each field
                 for (field_idx, sub_pat) in field_patterns.iter().enumerate() {
-                    if !sub_pat.is_wildcard() {
-                        if let Pattern::Identifier(id) = sub_pat {
+                    if !sub_pat.is_wildcard()
+                        && let Pattern::Identifier(id) = sub_pat {
                             // Dup for all but nothing extra needed
                             self.builder.dup();
                             self.builder.ldfield(field_idx as u32);
@@ -205,7 +205,6 @@ impl Generator {
                                 })?;
                             self.builder.stvar(var_id);
                         }
-                    }
                 }
 
                 // Pop the struct value from the stack
@@ -245,8 +244,8 @@ impl Generator {
                         self.generate_expression(expression)?;
 
                         for (field_idx, sub_pat) in sub_patterns.iter().enumerate() {
-                            if !sub_pat.is_wildcard() {
-                                if let Pattern::Identifier(id) = sub_pat {
+                            if !sub_pat.is_wildcard()
+                                && let Pattern::Identifier(id) = sub_pat {
                                     self.builder.dup();
                                     self.builder.ldfield(field_idx as u32);
                                     let field_ty = struct_def.fields[field_idx].1.clone();
@@ -258,7 +257,6 @@ impl Generator {
                                         })?;
                                     self.builder.stvar(var_id);
                                 }
-                            }
                         }
 
                         self.builder.pop();
@@ -308,8 +306,8 @@ impl Generator {
 
                 // Extract and bind each payload field
                 for (field_idx, sub_pat) in sub_patterns.iter().enumerate() {
-                    if !sub_pat.is_wildcard() {
-                        if let Pattern::Identifier(id) = sub_pat {
+                    if !sub_pat.is_wildcard()
+                        && let Pattern::Identifier(id) = sub_pat {
                             self.builder.dup();
                             self.builder.ldfield((field_idx + 1) as u32);
                             let field_ty = field_types[field_idx].clone();
@@ -324,7 +322,6 @@ impl Generator {
                                 })?;
                             self.builder.stvar(var_id);
                         }
-                    }
                 }
 
                 // Pop the enum value from the stack
@@ -333,11 +330,11 @@ impl Generator {
                 Ok(Type::Primitive(PrimitiveType::Unit))
                     }
                     _ => {
-                        return Err(SemanticError::TypeMismatch {
+                        Err(SemanticError::TypeMismatch {
                             lhs: "Enum or Struct type".to_string(),
                             rhs: format!("'{}.{}' is neither an enum nor a struct", enum_name.name, variant_name.name),
                             pos: enum_name.pos(),
-                        });
+                        })
                     }
                 }
             }
@@ -367,8 +364,8 @@ impl Generator {
                 let tuple_index_id = self.add_string_constant("tuple.index".to_string());
 
                 for (idx, sub_pat) in sub_patterns.iter().enumerate() {
-                    if !sub_pat.is_wildcard() {
-                        if let Pattern::Identifier(id) = sub_pat {
+                    if !sub_pat.is_wildcard()
+                        && let Pattern::Identifier(id) = sub_pat {
                             self.builder.dup();
                             self.builder.ldi(idx as i64);
                             self.builder.call_host_function(tuple_index_id);
@@ -384,7 +381,6 @@ impl Generator {
                                 })?;
                             self.builder.stvar(var_id);
                         }
-                    }
                 }
 
                 // Pop the tuple value from the stack
@@ -810,11 +806,10 @@ impl Generator {
             })?;
         // Symbols exported from parent: children of root
         let root = imported_parent
-            .symbols
-            .get(0)
+            .symbols.first()
             .ok_or_else(|| SemanticError::Other(format!("Invalid module root: {}", parent_path)))?;
-        if let Some(sym_id) = root.children.get(&symbol_name) {
-            if let Some(sym) = imported_parent.symbols.get(*sym_id as usize) {
+        if let Some(sym_id) = root.children.get(&symbol_name)
+            && let Some(sym) = imported_parent.symbols.get(*sym_id as usize) {
                 let resolved_kind = match sym.kind {
                     SymbolKind::Type(imported_type_id) => {
                         if let Some(existing_symbol) = self
@@ -847,7 +842,6 @@ impl Generator {
                 self.symbol_table.insert_symbol(new_symbol);
                 return Ok(Type::Primitive(PrimitiveType::Unit));
             }
-        }
 
         Err(SemanticError::Other(format!(
             "Symbol '{}' not found in module '{}'",
@@ -877,8 +871,7 @@ impl Generator {
 
         // Derive source module path from the module's root symbol
         let source_module_path = module
-            .symbols
-            .get(0)
+            .symbols.first()
             .map(|root| root.qualified_name.clone());
 
         let type_def = module.types.get(type_id as usize).ok_or_else(|| {
@@ -897,12 +890,10 @@ impl Generator {
         if let Some(existing_symbol) = self
             .symbol_table
             .find_symbol_by_qualified_name(qualified_name)
-        {
-            if let SymbolKind::Type(existing_type_id) = existing_symbol.kind {
+            && let SymbolKind::Type(existing_type_id) = existing_symbol.kind {
                 type_map.insert(type_id, existing_type_id);
                 return Ok(existing_type_id);
             }
-        }
 
         let mapped_def = match type_def {
             TypeDefinition::Struct(s) => {

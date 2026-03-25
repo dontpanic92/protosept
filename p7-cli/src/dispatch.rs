@@ -86,12 +86,12 @@ pub fn dispatch_from_argv(argv: &[String]) -> DispatchResult {
         break;
     }
 
-    if let Some(i) = subcommand_pos {
-        if let Some(subcommand) = Subcommand::parse(tokens[i].as_str()) {
+    if let Some(i) = subcommand_pos
+        && let Some(subcommand) = Subcommand::parse(tokens[i].as_str()) {
             let global_argv = std::iter::once(program_name.clone())
                 .chain(tokens[..i].iter().cloned())
                 .collect::<Vec<_>>();
-            let subcommand_args = tokens[i + 1..].iter().cloned().collect::<Vec<_>>();
+            let subcommand_args = tokens[i + 1..].to_vec();
             return DispatchResult {
                 mode: DispatchMode::Subcommand {
                     global_argv,
@@ -100,7 +100,6 @@ pub fn dispatch_from_argv(argv: &[String]) -> DispatchResult {
                 },
             };
         }
-    }
 
     // 2) Direct script detection: find first *.p7 token (continue scanning past `--`).
     let mut script_pos: Option<usize> = None;
@@ -123,7 +122,7 @@ pub fn dispatch_from_argv(argv: &[String]) -> DispatchResult {
             .collect::<Vec<_>>();
 
         let script_path = tokens[i].clone();
-        let script_args = tokens[i + 1..].iter().cloned().collect::<Vec<_>>();
+        let script_args = tokens[i + 1..].to_vec();
 
         return DispatchResult {
             mode: DispatchMode::Script {
