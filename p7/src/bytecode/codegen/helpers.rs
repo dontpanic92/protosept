@@ -350,6 +350,168 @@ impl Generator {
         Ok(final_return_type)
     }
 
+    /// Handle method calls on HashMap values (Map type)
+    pub(super) fn handle_hashmap_method_call(
+        &mut self,
+        key_type: &Type,
+        val_type: &Type,
+        object_ty: &Type,
+        field: &Identifier,
+        arguments: &Vec<(Option<Identifier>, Expression)>,
+        call_line: usize,
+        call_col: usize,
+    ) -> SaResult<Type> {
+        // If the receiver is a box, deref for non-mutating methods
+        let is_box = matches!(object_ty, Type::BoxType(_));
+        let needs_deref = is_box
+            && !matches!(field.name.as_str(), "set" | "remove");
+        if needs_deref {
+            self.builder.box_deref();
+        }
+
+        let (intrinsic_name, return_type): (&str, Type) = match field.name.as_str() {
+            "len" => {
+                if !arguments.is_empty() {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "0 args".to_string(),
+                        rhs: format!("{} args", arguments.len()),
+                        pos: SourcePos::at(call_line, call_col),
+                    });
+                }
+                ("hashmap.len", Type::Primitive(PrimitiveType::Int))
+            }
+            "get" => {
+                if arguments.len() != 1 {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "1 arg".to_string(),
+                        rhs: format!("{} args", arguments.len()),
+                        pos: SourcePos::at(call_line, call_col),
+                    });
+                }
+                let arg_type = self.generate_expression(arguments[0].1.clone())?;
+                if arg_type != *key_type {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: self.type_to_string(key_type),
+                        rhs: self.type_to_string(&arg_type),
+                        pos: SourcePos::at(call_line, call_col),
+                    });
+                }
+                ("hashmap.get", Type::Nullable(Box::new(val_type.clone())))
+            }
+            "set" => {
+                if !is_box {
+                    return Err(SemanticError::Other(format!(
+                        "hashmap.set requires box<HashMap> receiver at line {} column {}",
+                        call_line, call_col
+                    )));
+                }
+                if arguments.len() != 2 {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "2 args".to_string(),
+                        rhs: format!("{} args", arguments.len()),
+                        pos: SourcePos::at(call_line, call_col),
+                    });
+                }
+                // BoxRef is already on stack; push key and value, then call set
+                // The host function mutates the box heap in-place (like array.push)
+                let key_arg_type = self.generate_expression(arguments[0].1.clone())?;
+                if key_arg_type != *key_type {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: self.type_to_string(key_type),
+                        rhs: self.type_to_string(&key_arg_type),
+                        pos: SourcePos::at(call_line, call_col),
+                    });
+                }
+                let val_arg_type = self.generate_expression(arguments[1].1.clone())?;
+                if val_arg_type != *val_type {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: self.type_to_string(val_type),
+                        rhs: self.type_to_string(&val_arg_type),
+                        pos: SourcePos::at(call_line, call_col),
+                    });
+                }
+                let string_id = self.add_string_constant("hashmap.set".to_string());
+                self.builder.call_host_function(string_id);
+                return Ok(Type::Primitive(PrimitiveType::Unit));
+            }
+            "remove" => {
+                if !is_box {
+                    return Err(SemanticError::Other(format!(
+                        "hashmap.remove requires box<HashMap> receiver at line {} column {}",
+                        call_line, call_col
+                    )));
+                }
+                if arguments.len() != 1 {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "1 arg".to_string(),
+                        rhs: format!("{} args", arguments.len()),
+                        pos: SourcePos::at(call_line, call_col),
+                    });
+                }
+                // BoxRef is already on stack; push key, call remove
+                let arg_type = self.generate_expression(arguments[0].1.clone())?;
+                if arg_type != *key_type {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: self.type_to_string(key_type),
+                        rhs: self.type_to_string(&arg_type),
+                        pos: SourcePos::at(call_line, call_col),
+                    });
+                }
+                let string_id = self.add_string_constant("hashmap.remove".to_string());
+                self.builder.call_host_function(string_id);
+                return Ok(Type::Nullable(Box::new(val_type.clone())));
+            }
+            "contains_key" => {
+                if arguments.len() != 1 {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "1 arg".to_string(),
+                        rhs: format!("{} args", arguments.len()),
+                        pos: SourcePos::at(call_line, call_col),
+                    });
+                }
+                let arg_type = self.generate_expression(arguments[0].1.clone())?;
+                if arg_type != *key_type {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: self.type_to_string(key_type),
+                        rhs: self.type_to_string(&arg_type),
+                        pos: SourcePos::at(call_line, call_col),
+                    });
+                }
+                ("hashmap.contains_key", Type::Primitive(PrimitiveType::Bool))
+            }
+            "keys" => {
+                if !arguments.is_empty() {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "0 args".to_string(),
+                        rhs: format!("{} args", arguments.len()),
+                        pos: SourcePos::at(call_line, call_col),
+                    });
+                }
+                ("hashmap.keys", Type::Array(Box::new(key_type.clone())))
+            }
+            "values" => {
+                if !arguments.is_empty() {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "0 args".to_string(),
+                        rhs: format!("{} args", arguments.len()),
+                        pos: SourcePos::at(call_line, call_col),
+                    });
+                }
+                ("hashmap.values", Type::Array(Box::new(val_type.clone())))
+            }
+            _ => {
+                return Err(SemanticError::FunctionNotFound {
+                    name: format!("HashMap.{}", field.name),
+                    pos: field.pos(),
+                });
+            }
+        };
+
+        let string_id = self.add_string_constant(intrinsic_name.to_string());
+        self.builder.call_host_function(string_id);
+        Ok(return_type)
+    }
+
     /// Helper to mark a local variable as moved
     pub(super) fn mark_variable_moved(&mut self, var_id: u32) {
         self.moved_variables.insert(var_id);

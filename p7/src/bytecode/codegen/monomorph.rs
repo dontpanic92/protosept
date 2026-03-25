@@ -612,16 +612,26 @@ impl Generator {
                     }
                     None => {
                         // Primitive types — check if they have builtin proto conformance
-                        let type_name = self.type_display_name(concrete_type);
-                        // Primitives don't declare proto conformance explicitly,
-                        // but some may satisfy protos through builtin methods.
-                        // For now, check if the proto requires methods the type can't provide.
-                        // We try the conformance check which will fail for primitives
-                        // since they don't have explicit method definitions.
-                        return Err(SemanticError::Other(format!(
-                            "Type '{}' does not satisfy proto '{}' required by type parameter '{}' of '{}' at line {} column {}",
-                            type_name, bound_name, param_name, generic_name, line, col
-                        )));
+                        // Primitives implicitly satisfy Hash, Eq, and Display protos
+                        let proto_def = self.symbol_table.get_type(proto_type_id);
+                        let proto_name = match proto_def {
+                            TypeDefinition::Proto(p) => p.qualified_name.clone(),
+                            _ => String::new(),
+                        };
+                        let is_builtin_proto = proto_name.ends_with(".Hash")
+                            || proto_name == "Hash"
+                            || proto_name.ends_with(".Eq")
+                            || proto_name == "Eq"
+                            || proto_name.ends_with(".Display")
+                            || proto_name == "Display";
+
+                        if !is_builtin_proto {
+                            let type_name = self.type_display_name(concrete_type);
+                            return Err(SemanticError::Other(format!(
+                                "Type '{}' does not satisfy proto '{}' required by type parameter '{}' of '{}' at line {} column {}",
+                                type_name, bound_name, param_name, generic_name, line, col
+                            )));
+                        }
                     }
                 }
             }

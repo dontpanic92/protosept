@@ -292,6 +292,12 @@ pub enum Expression {
         updates: Vec<(Identifier, Expression)>,
         pos: (usize, usize),
     },
+
+    // Map literal expression (e.g., {key1: val1, key2: val2})
+    MapLiteral {
+        pairs: Vec<(Expression, Expression)>,
+        pos: (usize, usize),
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -418,6 +424,7 @@ impl Expression {
             Expression::Break { .. } => "break".to_string(),
             Expression::Continue { .. } => "continue".to_string(),
             Expression::TupleLiteral { .. } => "tuple".to_string(),
+            Expression::MapLiteral { .. } => "map".to_string(),
             _ => "".to_string(),
         }
     }
@@ -437,6 +444,7 @@ impl Expression {
             Expression::Break { pos, .. } => *pos,
             Expression::Continue { pos, .. } => *pos,
             Expression::TupleLiteral { pos, .. } => *pos,
+            Expression::MapLiteral { pos, .. } => *pos,
             _ => (0, 0),
         }
     }

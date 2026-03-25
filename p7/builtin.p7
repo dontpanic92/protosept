@@ -10,6 +10,14 @@ proto Display {
     fn display(ref self) -> string;
 }
 
+proto Hash {
+    fn hash(ref self) -> int;
+}
+
+proto Eq {
+    fn eq(ref self, other: ref<Eq>) -> bool;
+}
+
 @builtin()
 pub struct string() {
 
@@ -162,6 +170,38 @@ pub struct array<T>() {
     // Return true if f returns true for all elements.
     @intrinsic(name="array.all")
     pub fn all(ref self, f: fn(T) -> bool) -> bool;
+}
+
+@builtin()
+pub struct HashMap<K: Hash + Eq, V>() {
+
+    // Return the number of entries in the map.
+    @intrinsic(name="hashmap.len")
+    pub fn len(ref self) -> int;
+
+    // Return the value for key, or null if not found.
+    @intrinsic(name="hashmap.get")
+    pub fn get(ref self, key: K) -> ?V;
+
+    // Insert or update a key-value pair (requires box receiver).
+    @intrinsic(name="hashmap.set")
+    pub fn set(box self, key: K, value: V);
+
+    // Remove a key and return its value, or null if not found (requires box receiver).
+    @intrinsic(name="hashmap.remove")
+    pub fn remove(box self, key: K) -> ?V;
+
+    // Return true if the map contains the given key.
+    @intrinsic(name="hashmap.contains_key")
+    pub fn contains_key(ref self, key: K) -> bool;
+
+    // Return all keys as an array.
+    @intrinsic(name="hashmap.keys")
+    pub fn keys(ref self) -> array<K>;
+
+    // Return all values as an array.
+    @intrinsic(name="hashmap.values")
+    pub fn values(ref self) -> array<V>;
 }
 
 // Return the containing directory of the entry script, or null if the script

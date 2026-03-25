@@ -1,0 +1,41 @@
+// Test HashMap with box (mutable operations)
+import test.test;
+
+// Test 1: Box HashMap and set
+@test(expected_type = "int", expected_value = "3")
+fn test_box_hashmap_set() -> int {
+    let mut m = box({1: 10, 2: 20});
+    m.set(3, 30);
+    m.len()
+}
+
+// Test 2: Box HashMap set and get
+@test(expected_type = "int", expected_value = "30")
+fn test_box_hashmap_set_get() -> int {
+    let mut m = box({1: 10, 2: 20});
+    m.set(3, 30);
+    m[3]
+}
+
+// Test 3: Box HashMap overwrite existing key
+@test(expected_type = "int", expected_value = "99")
+fn test_box_hashmap_overwrite() -> int {
+    let mut m = box({1: 10, 2: 20});
+    m.set(1, 99);
+    m[1]
+}
+
+// Test 4: Map get returns null for missing key
+@test(expected_type = "int", expected_value = "0")
+fn test_map_get_missing() -> int {
+    let m = {1: 10, 2: 20};
+    let result = m.get(99);
+    if result != null { 1 } else { 0 }
+}
+
+// Test 5: Map indexing with string values
+@test(expected_type = "string", expected_value = "hello")
+fn test_map_string_values() -> string {
+    let m = {1: "hello", 2: "world"};
+    m[1]
+}

@@ -277,6 +277,10 @@ impl Parser {
                     Expression::Identifier(identifier)
                 }
                 TokenType::OpenBrace => {
+                    // Disambiguate: map literal {key: value, ...} vs block {stmts}
+                    if self.is_map_literal_start() {
+                        return self.parse_map_literal();
+                    }
                     let statements = self.parse_block()?;
                     Expression::Block(statements)
                 }
@@ -658,6 +662,71 @@ impl Parser {
 
     /// Check if the current position starts a closure: `(` followed by `)` `=>` or
     /// `identifier` `:` (parameter list pattern).
+    /// Check if the current `{` starts a map literal rather than a block.
+    /// Map literal: `{ expr : expr, ... }`
+    /// Uses 2-token lookahead: if token after `{` is an expression-start and the
+    /// token after that is `:`, it's a map literal.
+    fn is_map_literal_start(&self) -> bool {
+        // Current token is `{` (offset 0)
+        let after_brace = match self.peek_ahead(1) {
+            Some(t) => t,
+            None => return false,
+        };
+
+        // If next is '}', it's an empty block
+        if after_brace.token_type == TokenType::CloseBrace {
+            return false;
+        }
+
+        // If next is a keyword that starts a statement, it's a block
+        match &after_brace.token_type {
+            TokenType::Let | TokenType::Fn | TokenType::Struct | TokenType::Enum
+            | TokenType::Proto | TokenType::Import | TokenType::If | TokenType::While
+            | TokenType::Loop | TokenType::Match | TokenType::Try | TokenType::Return
+            | TokenType::Throw | TokenType::Break | TokenType::Continue
+            | TokenType::Pub | TokenType::Mut => return false,
+            _ => {}
+        }
+
+        // Check if the token two positions after `{` is `:`
+        // This covers simple keys: identifiers, string literals, int literals, bool
+        match self.peek_ahead(2) {
+            Some(t) => t.token_type == TokenType::Colon,
+            None => false,
+        }
+    }
+
+    fn parse_map_literal(&mut self) -> ParseResult<Expression> {
+        let brace = self.peek().unwrap();
+        let pos = (brace.line, brace.col);
+        self.consume(); // consume '{'
+
+        let mut pairs = Vec::new();
+
+        while !self.peek_match(TokenType::CloseBrace) {
+            let key = self.parse_expression()?;
+            self.consume_match(TokenType::Colon)?;
+            let value = self.parse_expression()?;
+            pairs.push((key, value));
+
+            if self.peek_match(TokenType::Comma) {
+                self.consume();
+            } else if !self.peek_match(TokenType::CloseBrace) {
+                return Err(ParseError::UnexpectedToken {
+                    found: format!("{:?}", self.peek().map(|t| &t.token_type)),
+                    pos: self.peek().map(|t| SourcePos {
+                        line: t.line,
+                        col: t.col,
+                        module: None,
+                    }),
+                });
+            }
+        }
+
+        self.consume_match(TokenType::CloseBrace)?;
+        Ok(Expression::MapLiteral { pairs, pos })
+    }
+
     fn is_closure_start(&self) -> bool {
         // Must start with '('
         if !self.peek_match(TokenType::OpenParen) {

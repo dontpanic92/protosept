@@ -540,6 +540,13 @@ impl Generator {
             return Ok(result);
         }
 
+        // Handle HashMap method calls
+        if let Some(result) =
+            self.try_generate_hashmap_method_call(&object_ty, field, &arguments, call_line, call_col)?
+        {
+            return Ok(result);
+        }
+
         // Handle primitive method calls
         if let Some(result) = self.try_generate_primitive_method_call(
             &object_ty, field, &arguments, call_line, call_col,
@@ -674,6 +681,35 @@ impl Generator {
         // Delegate to helper function
         let result =
             self.handle_array_method_call(object_ty, field, arguments, call_line, call_col)?;
+        Ok(Some(result))
+    }
+
+    /// Tries to generate a HashMap method call if the object is a Map type
+    fn try_generate_hashmap_method_call(
+        &mut self,
+        object_ty: &Type,
+        field: &Identifier,
+        arguments: &Vec<(Option<Identifier>, Expression)>,
+        call_line: usize,
+        call_col: usize,
+    ) -> SaResult<Option<Type>> {
+        // Extract key and value types from the Map type (possibly wrapped in ref or box)
+        let (key_type, val_type) = match object_ty {
+            Type::Map(k, v) => (k.as_ref().clone(), v.as_ref().clone()),
+            Type::BoxType(inner) => match inner.as_ref() {
+                Type::Map(k, v) => (k.as_ref().clone(), v.as_ref().clone()),
+                _ => return Ok(None),
+            },
+            Type::Reference(inner) => match inner.as_ref() {
+                Type::Map(k, v) => (k.as_ref().clone(), v.as_ref().clone()),
+                _ => return Ok(None),
+            },
+            _ => return Ok(None),
+        };
+
+        let result = self.handle_hashmap_method_call(
+            &key_type, &val_type, object_ty, field, arguments, call_line, call_col,
+        )?;
         Ok(Some(result))
     }
 

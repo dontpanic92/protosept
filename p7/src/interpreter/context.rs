@@ -48,6 +48,8 @@ pub enum Data {
     },
     /// Tuple value - immutable fixed-size collection of heterogeneous Data values
     Tuple(Vec<Data>),
+    /// Map value - ordered collection of key-value pairs
+    Map(Vec<(Data, Data)>),
 }
 
 impl From<i64> for Data {
@@ -119,6 +121,9 @@ macro_rules! arithmetic_op {
             (Data::Tuple(_), _) | (_, Data::Tuple(_)) => {
                 return Err(RuntimeError::Other("Arithmetic on tuple".to_string()));
             }
+            (Data::Map(_), _) | (_, Data::Map(_)) => {
+                return Err(RuntimeError::Other("Arithmetic on map".to_string()));
+            }
         }
     };
 }
@@ -184,6 +189,9 @@ macro_rules! comparison_op {
             }
             (Data::Tuple(_), _) | (_, Data::Tuple(_)) => {
                 return Err(RuntimeError::Other("Comparison on tuple".to_string()));
+            }
+            (Data::Map(_), _) | (_, Data::Map(_)) => {
+                return Err(RuntimeError::Other("Comparison on map".to_string()));
             }
         }
     };
@@ -1484,6 +1492,12 @@ impl Context {
                     self.mark_data(elem, marked);
                 }
             }
+            Data::Map(pairs) => {
+                for (k, v) in pairs {
+                    self.mark_data(k, marked);
+                    self.mark_data(v, marked);
+                }
+            }
             _ => {}
         }
     }
@@ -1597,6 +1611,12 @@ impl Context {
             }
             Data::Tuple(elements) => {
                 Self::update_data_vec(elements, index_map);
+            }
+            Data::Map(pairs) => {
+                for (k, v) in pairs.iter_mut() {
+                    Self::update_data(k, index_map);
+                    Self::update_data(v, index_map);
+                }
             }
             _ => {}
         }

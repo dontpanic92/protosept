@@ -202,6 +202,8 @@ pub enum Type {
     },
     /// Tuple type: (T1, T2, ..., Tn) where n >= 2
     Tuple(Vec<Type>),
+    /// Map type: HashMap<K, V>
+    Map(Box<Type>, Box<Type>),
 }
 
 impl Type {
@@ -265,8 +267,8 @@ impl Type {
                     false
                 }
             }
-            // Arrays and Protos: not copy-treated by default in v1
-            Type::Array(_) | Type::Proto(_) => false,
+            // Arrays, Protos, and Maps: not copy-treated by default in v1
+            Type::Array(_) | Type::Proto(_) | Type::Map(_, _) => false,
             // Function types (closures): copy-treated only if all captures are Copy
             // For now (non-capturing closures), always copy-treated
             Type::Function { .. } => true,
@@ -293,6 +295,7 @@ impl Clone for Type {
                 return_type: return_type.clone(),
             },
             Type::Tuple(elements) => Type::Tuple(elements.clone()),
+            Type::Map(k, v) => Type::Map(k.clone(), v.clone()),
         }
     }
 }
@@ -314,6 +317,7 @@ impl PartialEq for Type {
                 Type::Function { params: pb, return_type: rb },
             ) => pa == pb && ra == rb,
             (Type::Tuple(a), Type::Tuple(b)) => a == b,
+            (Type::Map(ka, va), Type::Map(kb, vb)) => ka == kb && va == vb,
             _ => false,
         }
     }
@@ -340,6 +344,10 @@ impl std::hash::Hash for Type {
             }
             Type::Tuple(elements) => {
                 elements.hash(state);
+            }
+            Type::Map(k, v) => {
+                k.hash(state);
+                v.hash(state);
             }
         }
     }
@@ -371,6 +379,9 @@ impl ToString for Type {
             Type::Tuple(elements) => {
                 let elem_strs: Vec<String> = elements.iter().map(|t| t.to_string()).collect();
                 format!("({})", elem_strs.join(", "))
+            }
+            Type::Map(k, v) => {
+                format!("HashMap<{}, {}>", k.to_string(), v.to_string())
             }
         }
     }

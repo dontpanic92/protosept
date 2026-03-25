@@ -186,6 +186,9 @@ impl Generator {
             Expression::StructUpdate { struct_name, base, updates, pos } => {
                 self.generate_struct_update(*struct_name, *base, updates, pos)
             }
+            Expression::MapLiteral { pairs, pos } => {
+                self.generate_map_literal(pairs, pos)
+            }
         }
     }
 
@@ -1217,6 +1220,53 @@ impl Generator {
         Ok(Type::Tuple(element_types))
     }
 
+    fn generate_map_literal(
+        &mut self,
+        pairs: Vec<(Expression, Expression)>,
+        pos: (usize, usize),
+    ) -> SaResult<Type> {
+        let (line, col) = pos;
+
+        if pairs.is_empty() {
+            return Err(SemanticError::Other(format!(
+                "Cannot infer type for empty map literal at {}:{} - use HashMap<K, V>() constructor",
+                line, col
+            )));
+        }
+
+        // Generate code for all key-value pairs and check types are consistent
+        let first_key_type = self.generate_expression(pairs[0].0.clone())?;
+        let first_val_type = self.generate_expression(pairs[0].1.clone())?;
+
+        for (key_expr, val_expr) in &pairs[1..] {
+            let key_type = self.generate_expression(key_expr.clone())?;
+            if key_type != first_key_type {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: self.type_to_string(&first_key_type),
+                    rhs: self.type_to_string(&key_type),
+                    pos: self.make_pos(line, col),
+                });
+            }
+            let val_type = self.generate_expression(val_expr.clone())?;
+            if val_type != first_val_type {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: self.type_to_string(&first_val_type),
+                    rhs: self.type_to_string(&val_type),
+                    pos: self.make_pos(line, col),
+                });
+            }
+        }
+
+        // Push pair count onto stack
+        self.builder.ldi(pairs.len() as i64);
+
+        // Call hashmap.new host function
+        let string_id = self.add_string_constant("hashmap.new".to_string());
+        self.builder.call_host_function(string_id);
+
+        Ok(Type::Map(Box::new(first_key_type), Box::new(first_val_type)))
+    }
+
     fn generate_array_index(
         &mut self,
         array: Expression,
@@ -1225,17 +1275,66 @@ impl Generator {
     ) -> SaResult<Type> {
         let (line, col) = pos;
 
-        // Generate code for array expression
-        let array_type = self.generate_expression(array)?;
+        // Generate code for array/map expression
+        let container_type = self.generate_expression(array)?;
+
+        // Check if it's a map type — handle map[key] indexing
+        match &container_type {
+            Type::Map(key_type, val_type) => {
+                let index_type = self.generate_expression(index)?;
+                if index_type != **key_type {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: self.type_to_string(key_type),
+                        rhs: self.type_to_string(&index_type),
+                        pos: self.make_pos(line, col),
+                    });
+                }
+                let string_id = self.add_string_constant("hashmap.index".to_string());
+                self.builder.call_host_function(string_id);
+                return Ok(*val_type.clone());
+            }
+            Type::Reference(inner) => {
+                if let Type::Map(key_type, val_type) = inner.as_ref() {
+                    let index_type = self.generate_expression(index)?;
+                    if index_type != **key_type {
+                        return Err(SemanticError::TypeMismatch {
+                            lhs: self.type_to_string(key_type),
+                            rhs: self.type_to_string(&index_type),
+                            pos: self.make_pos(line, col),
+                        });
+                    }
+                    let string_id = self.add_string_constant("hashmap.index".to_string());
+                    self.builder.call_host_function(string_id);
+                    return Ok(*val_type.clone());
+                }
+            }
+            Type::BoxType(inner) => {
+                if let Type::Map(key_type, val_type) = inner.as_ref() {
+                    self.builder.box_deref();
+                    let index_type = self.generate_expression(index)?;
+                    if index_type != **key_type {
+                        return Err(SemanticError::TypeMismatch {
+                            lhs: self.type_to_string(key_type),
+                            rhs: self.type_to_string(&index_type),
+                            pos: self.make_pos(line, col),
+                        });
+                    }
+                    let string_id = self.add_string_constant("hashmap.index".to_string());
+                    self.builder.call_host_function(string_id);
+                    return Ok(*val_type.clone());
+                }
+            }
+            _ => {}
+        }
 
         // Check that it's an array type
-        let element_type = match array_type {
+        let element_type = match container_type {
             Type::Array(elem_type) => *elem_type,
             Type::Reference(inner) => match *inner {
                 Type::Array(elem_type) => *elem_type,
                 other => {
                     return Err(SemanticError::TypeMismatch {
-                        lhs: "array".to_string(),
+                        lhs: "array or HashMap".to_string(),
                         rhs: self.type_to_string(&other),
                         pos: self.make_pos(line, col),
                     });
@@ -1248,7 +1347,7 @@ impl Generator {
                 }
                 other => {
                     return Err(SemanticError::TypeMismatch {
-                        lhs: "array".to_string(),
+                        lhs: "array or HashMap".to_string(),
                         rhs: self.type_to_string(&other),
                         pos: self.make_pos(line, col),
                     });
@@ -1256,8 +1355,8 @@ impl Generator {
             },
             _ => {
                 return Err(SemanticError::TypeMismatch {
-                    lhs: "array".to_string(),
-                    rhs: self.type_to_string(&array_type),
+                    lhs: "array or HashMap".to_string(),
+                    rhs: self.type_to_string(&container_type),
                     pos: self.make_pos(line, col),
                 });
             }

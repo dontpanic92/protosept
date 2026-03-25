@@ -1,0 +1,100 @@
+// Test map literal syntax and HashMap operations
+import test.test;
+
+// Test 1: Simple map literal with integer keys
+@test(expected_type = "int", expected_value = "2")
+fn test_map_literal_int_keys() -> int {
+    let m = {1: 10, 2: 20};
+    m.len()
+}
+
+// Test 2: Map indexing
+@test(expected_type = "int", expected_value = "20")
+fn test_map_index() -> int {
+    let m = {1: 20, 2: 40};
+    m[1]
+}
+
+// Test 3: Map literal with string keys
+@test(expected_type = "int", expected_value = "42")
+fn test_map_string_keys() -> int {
+    let m = {"hello": 42, "world": 99};
+    m["hello"]
+}
+
+// Test 4: Map len
+@test(expected_type = "int", expected_value = "3")
+fn test_map_len() -> int {
+    let m = {"a": 1, "b": 2, "c": 3};
+    m.len()
+}
+
+// Test 5: Map get returns Some for existing key
+@test(expected_type = "int", expected_value = "10")
+fn test_map_get_existing() -> int {
+    let m = {1: 10, 2: 20};
+    m.get(1)!
+}
+
+// Test 6: Map contains_key
+@test(expected_type = "int", expected_value = "1")
+fn test_map_contains_key_true() -> int {
+    let m = {"x": 1, "y": 2};
+    if m.contains_key("x") { 1 } else { 0 }
+}
+
+// Test 7: Map contains_key false
+@test(expected_type = "int", expected_value = "0")
+fn test_map_contains_key_false() -> int {
+    let m = {"x": 1, "y": 2};
+    if m.contains_key("z") { 1 } else { 0 }
+}
+
+// Test 8: Block still works (regression test)
+@test(expected_type = "int", expected_value = "42")
+fn test_block_still_works() -> int {
+    let x = {
+        let a = 40;
+        a + 2
+    };
+    x
+}
+
+// Test 9: Empty block still works
+@test(expected_type = "int", expected_value = "5")
+fn test_empty_block_regression() -> int {
+    {};
+    5
+}
+
+// Test 10: Map with variable keys
+@test(expected_type = "int", expected_value = "100")
+fn test_map_variable_keys() -> int {
+    let k1 = 1;
+    let k2 = 2;
+    let m = {k1: 100, k2: 200};
+    m[1]
+}
+
+// Test 11: Single-entry map
+@test(expected_type = "int", expected_value = "1")
+fn test_single_entry_map() -> int {
+    let m = {42: 99};
+    m.len()
+}
+
+// Test 12: Map keys
+@test(expected_type = "int", expected_value = "2")
+fn test_map_keys() -> int {
+    let m = {"a": 1, "b": 2};
+    let ks = m.keys();
+    ks.len()
+}
+
+// Test 13: Map values
+@test(expected_type = "int", expected_value = "2")
+fn test_map_values() -> int {
+    let m = {"a": 1, "b": 2};
+    let vs = m.values();
+    vs.len()
+}

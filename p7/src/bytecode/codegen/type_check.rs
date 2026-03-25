@@ -240,6 +240,21 @@ impl Generator {
                     return Ok(Type::Array(Box::new(inner_ty)));
                 }
 
+                // Handle HashMap<K, V> specially (builtin generic type)
+                if base.name == "HashMap" {
+                    if type_args.len() != 2 {
+                        return Err(SemanticError::Other(format!(
+                            "HashMap<K, V> requires exactly two type arguments, found {} at line {} column {}",
+                            type_args.len(),
+                            base.line,
+                            base.col
+                        )));
+                    }
+                    let key_ty = self.get_semantic_type(&type_args[0])?;
+                    let val_ty = self.get_semantic_type(&type_args[1])?;
+                    return Ok(Type::Map(Box::new(key_ty), Box::new(val_ty)));
+                }
+
                 // Implement proper generic type resolution with monomorphization
 
                 // First, find the base generic type
@@ -505,6 +520,9 @@ impl Generator {
             (Type::Tuple(a), Type::Tuple(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| self.types_equal(x, y))
             }
+            (Type::Map(ka, va), Type::Map(kb, vb)) => {
+                self.types_equal(ka, kb) && self.types_equal(va, vb)
+            }
             _ => false,
         }
     }
@@ -549,6 +567,9 @@ impl Generator {
             Type::Tuple(elements) => {
                 let elem_strs: Vec<String> = elements.iter().map(|t| self.type_to_string(t)).collect();
                 format!("({})", elem_strs.join(", "))
+            }
+            Type::Map(k, v) => {
+                format!("HashMap<{}, {}>", self.type_to_string(k), self.type_to_string(v))
             }
         }
     }

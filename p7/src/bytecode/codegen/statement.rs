@@ -1035,6 +1035,10 @@ impl Generator {
                     .map(|t| self.map_type_from_module(module, t, type_map))
                     .collect::<SaResult<Vec<_>>>()?,
             ),
+            Type::Map(k, v) => Type::Map(
+                Box::new(self.map_type_from_module(module, k, type_map)?),
+                Box::new(self.map_type_from_module(module, v, type_map)?),
+            ),
         };
 
         Ok(mapped)
