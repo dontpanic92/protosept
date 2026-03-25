@@ -131,7 +131,7 @@ impl Context {
         if let Some(TypeDefinition::Proto(proto)) = self.modules[0].types.get(proto_id as usize) {
             for (method_name, _, _) in &proto.methods {
                 if Self::hash_method_name(method_name) == method_hash {
-                    return Ok(method_name.clone());
+                    return Ok(method_name.to_string());
                 }
             }
         }

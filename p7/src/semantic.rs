@@ -1,10 +1,12 @@
 use std::{collections::HashMap, fmt::Debug};
 
+use crate::intern::InternedString;
+
 #[derive(Debug, Clone)]
 pub enum Constant {
     Integer(i64),
     Float(f64),
-    String(String),
+    String(InternedString),
     Boolean(bool),
 }
 
@@ -61,14 +63,14 @@ impl SymbolKind {
 
 #[derive(Debug, Clone)]
 pub struct Symbol {
-    pub name: String,
-    pub qualified_name: String,
+    pub name: InternedString,
+    pub qualified_name: InternedString,
     pub kind: SymbolKind,
-    pub children: HashMap<String, SymbolId>,
+    pub children: HashMap<InternedString, SymbolId>,
 }
 
 impl Symbol {
-    pub fn new(name: String, qualified_name: String, kind: SymbolKind) -> Self {
+    pub fn new(name: InternedString, qualified_name: InternedString, kind: SymbolKind) -> Self {
         Symbol {
             name,
             qualified_name,
@@ -101,19 +103,19 @@ impl Symbol {
 
 #[derive(Debug, Clone)]
 pub struct Function {
-    pub qualified_name: String,
+    pub qualified_name: InternedString,
     pub params: Vec<Type>,
-    pub param_names: Vec<String>,
+    pub param_names: Vec<InternedString>,
     pub param_defaults: Vec<Option<crate::ast::Expression>>,
     pub return_type: Type,
     pub attributes: Vec<crate::ast::Attribute>,
     // Intrinsic name if this is an intrinsic function (e.g., "box_new" for box() constructor)
     // Extracted from @intrinsic("name") attribute for special compiler-recognized functions
-    pub intrinsic_name: Option<String>,
+    pub intrinsic_name: Option<InternedString>,
     // For generic functions: stores the original type parameter names
-    pub type_parameters: Vec<String>,
+    pub type_parameters: Vec<InternedString>,
     // For generic functions: stores proto bounds per type parameter (parallel to type_parameters)
-    pub type_param_bounds: Vec<Vec<String>>,
+    pub type_param_bounds: Vec<Vec<InternedString>>,
     // For generic functions: stores the original parsed parameter types (before substitution)
     pub generic_param_types: Option<Vec<crate::ast::Type>>,
     // For generic functions: stores the original parsed return type (before substitution)
@@ -126,13 +128,13 @@ pub struct Function {
 
 #[derive(Debug, Clone)]
 pub struct Enum {
-    pub qualified_name: String,
-    pub variants: Vec<(String, Vec<Type>)>, // (variant_name, field_types)
+    pub qualified_name: InternedString,
+    pub variants: Vec<(InternedString, Vec<Type>)>, // (variant_name, field_types)
     pub attributes: Vec<crate::ast::Attribute>,
     // For generic enums: stores the original type parameter names
-    pub type_parameters: Vec<String>,
+    pub type_parameters: Vec<InternedString>,
     // For generic enums: stores proto bounds per type parameter (parallel to type_parameters)
-    pub type_param_bounds: Vec<Vec<String>>,
+    pub type_param_bounds: Vec<Vec<InternedString>>,
     // For generic enums: stores the original parsed variant field types (before substitution)
     pub generic_variant_types: Option<Vec<Vec<crate::ast::Type>>>,
     // For monomorphized enums: stores the base generic enum's TypeId and concrete type arguments
@@ -142,19 +144,19 @@ pub struct Enum {
     // Associated methods
     pub methods: Vec<FunctionId>,
     // Source module path (set when type is imported from another module)
-    pub source_module: Option<String>,
+    pub source_module: Option<InternedString>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Struct {
-    pub qualified_name: String,
-    pub fields: Vec<(String, Type)>,
+    pub qualified_name: InternedString,
+    pub fields: Vec<(InternedString, Type)>,
     pub field_defaults: Vec<Option<crate::ast::Expression>>,
     pub attributes: Vec<crate::ast::Attribute>,
     // For generic structs: stores the original type parameter names
-    pub type_parameters: Vec<String>,
+    pub type_parameters: Vec<InternedString>,
     // For generic structs: stores proto bounds per type parameter (parallel to type_parameters)
-    pub type_param_bounds: Vec<Vec<String>>,
+    pub type_param_bounds: Vec<Vec<InternedString>>,
     // For generic structs: stores the original parsed field types (before substitution)
     pub generic_field_types: Option<Vec<crate::ast::Type>>,
     // For monomorphized structs: stores the base generic struct's TypeId and concrete type arguments
@@ -164,13 +166,13 @@ pub struct Struct {
     // Associated methods
     pub methods: Vec<FunctionId>,
     // Source module path (set when type is imported from another module)
-    pub source_module: Option<String>,
+    pub source_module: Option<InternedString>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Proto {
-    pub qualified_name: String,
-    pub methods: Vec<(String, Vec<Type>, Option<Type>)>, // (name, params, return_type)
+    pub qualified_name: InternedString,
+    pub methods: Vec<(InternedString, Vec<Type>, Option<Type>)>, // (name, params, return_type)
     pub attributes: Vec<crate::ast::Attribute>,
 }
 
@@ -396,7 +398,7 @@ pub enum TypeDefinition {
 }
 
 pub struct ModuleInfo {
-    pub path: String,
+    pub path: InternedString,
     pub root_symbol_id: SymbolId,
 }
 
@@ -406,7 +408,7 @@ pub struct SymbolTable {
     pub types: Vec<TypeDefinition>,
 
     pub modules: Vec<ModuleInfo>,
-    pub module_path_to_id: HashMap<String, ModuleId>,
+    pub module_path_to_id: HashMap<InternedString, ModuleId>,
 
     pub symbol_chain: Vec<SymbolId>,
 
@@ -439,20 +441,20 @@ impl SymbolTable {
 
     pub fn new() -> Self {
         let root = Symbol::new(
-            "$root".to_string(),
-            "$root".to_string(),
+            InternedString::from("$root"),
+            InternedString::from("$root"),
             SymbolKind::Module(0),
         );
 
         let mut module_path_to_id = HashMap::new();
-        module_path_to_id.insert("$root".to_string(), 0);
+        module_path_to_id.insert(InternedString::from("$root"), 0);
 
         SymbolTable {
             symbols: vec![root],
             functions: Vec::new(),
             types: Vec::new(),
             modules: vec![ModuleInfo {
-                path: "$root".to_string(),
+                path: InternedString::from("$root"),
                 root_symbol_id: 0,
             }],
             module_path_to_id,
@@ -584,8 +586,8 @@ impl SymbolTable {
         self.modules.get(module_id as usize)
     }
 
-    pub fn register_module(&mut self, path: String, root_symbol_id: SymbolId) -> ModuleId {
-        if let Some(id) = self.module_path_to_id.get(&path) {
+    pub fn register_module(&mut self, path: InternedString, root_symbol_id: SymbolId) -> ModuleId {
+        if let Some(id) = self.module_path_to_id.get(&*path) {
             return *id;
         }
         let id = self.modules.len() as ModuleId;
@@ -619,11 +621,12 @@ impl SymbolTable {
             .find(|s| s.qualified_name == qualified_name)
     }
 
-    pub fn get_new_symbol_qualified_name(&self, name: String) -> String {
-        self.get_current_symbol().map(|symbol| symbol.qualified_name.clone())
+    pub fn get_new_symbol_qualified_name(&self, name: &str) -> InternedString {
+        let qn = self.get_current_symbol().map(|symbol| symbol.qualified_name.to_string())
             .unwrap_or_default()
             + "."
-            + &name
+            + name;
+        InternedString::from(qn)
     }
 
     // Function management
@@ -707,7 +710,7 @@ pub type LocalSymbolScopeResult<T> = Result<T, LocalSymbolScopeError>;
 
 #[derive(Debug, Clone)]
 pub struct Variable {
-    pub name: String,
+    pub name: InternedString,
     pub ty: Type,
     pub is_mutable: bool,
 }
@@ -739,7 +742,7 @@ impl LocalSymbolScope {
 
     pub fn add_variable(
         &mut self,
-        name: String,
+        name: InternedString,
         var_type: Type,
         is_mutable: bool,
     ) -> LocalSymbolScopeResult<u32> {

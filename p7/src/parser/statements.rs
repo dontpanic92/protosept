@@ -2,6 +2,7 @@ use crate::ast::{
     Expression, Identifier, NamedPattern, Pattern, Statement,
 };
 use crate::errors::{ParseError, SourcePos};
+use crate::intern::InternedString;
 use crate::lexer::{Token, TokenType};
 
 use super::{ParseResult, Parser};
@@ -195,7 +196,7 @@ impl Parser {
                 let pattern = NamedPattern {
                     name: None,
                     pattern: Pattern::Identifier(Identifier {
-                        name: "_".to_string(),
+                        name: InternedString::from("_"),
                         line: 0,
                         col: 0,
                     }),
@@ -329,7 +330,7 @@ impl Parser {
 
         self.consume_match(TokenType::Semicolon)?;
 
-        Ok(Statement::Import { module_path, alias })
+        Ok(Statement::Import { module_path: InternedString::from(module_path), alias })
     }
 
     pub(crate) fn parse_statement(&mut self) -> ParseResult<Statement> {

@@ -1,5 +1,6 @@
 use crate::ast::{Expression, FunctionCall, Identifier, InterpolatedStringPart};
 use crate::errors::SemanticError;
+use crate::intern::InternedString;
 use crate::semantic::{LocalSymbolScope, PrimitiveType, Type, Variable};
 
 use super::super::{Generator, SaResult};
@@ -9,18 +10,18 @@ impl Generator {
         &mut self,
         parts: Vec<InterpolatedStringPart>,
     ) -> SaResult<Type> {
-        let concat_id = self.add_string_constant("string.concat".to_string());
+        let concat_id = self.add_string_constant("string.concat");
         let mut has_value = false;
 
         for part in parts {
             let part_ty = match part {
-                InterpolatedStringPart::Literal(value) => self.generate_string_literal(value)?,
+                InterpolatedStringPart::Literal(value) => self.generate_string_literal(&value)?,
                 InterpolatedStringPart::Expr(expr) => {
                     let display_call = Expression::FunctionCall(FunctionCall {
                         callee: Box::new(Expression::FieldAccess {
                             object: Box::new(expr),
                             field: Identifier {
-                                name: "display".to_string(),
+                                name: InternedString::from("display"),
                                 line: 0,
                                 col: 0,
                             },
@@ -48,7 +49,7 @@ impl Generator {
         }
 
         if !has_value {
-            let empty_id = self.add_string_constant(String::new());
+            let empty_id = self.add_string_constant("");
             self.builder.lds(empty_id);
         }
 
@@ -73,7 +74,7 @@ impl Generator {
             if let Some(var_id) = scope.find_variable(&identifier.name) {
                 if self.is_variable_moved(var_id) {
                     return Err(SemanticError::UseAfterMove {
-                        name: identifier.name,
+                        name: identifier.name.to_string(),
                         pos: self.make_pos(identifier.line, identifier.col),
                     });
                 }
@@ -86,7 +87,7 @@ impl Generator {
             if let Some(param_id) = scope.find_param(&identifier.name) {
                 if self.is_param_moved(param_id) {
                     return Err(SemanticError::UseAfterMove {
-                        name: identifier.name,
+                        name: identifier.name.to_string(),
                         pos: self.make_pos(identifier.line, identifier.col),
                     });
                 }
@@ -105,18 +106,18 @@ impl Generator {
         }
 
         Err(SemanticError::VariableNotFound {
-            name: identifier.name,
+            name: identifier.name.to_string(),
             pos: self.make_pos(identifier.line, identifier.col),
         })
     }
 
-    pub(in crate::bytecode::codegen) fn generate_string_literal(&mut self, value: String) -> SaResult<Type> {
-        let string_index = if let Some(idx) = self.string_constants.iter().position(|s| s == &value)
+    pub(in crate::bytecode::codegen) fn generate_string_literal(&mut self, value: &str) -> SaResult<Type> {
+        let string_index = if let Some(idx) = self.string_constants.iter().position(|s| s == value)
         {
             idx as u32
         } else {
             let idx = self.string_constants.len() as u32;
-            self.string_constants.push(value);
+            self.string_constants.push(value.to_string());
             idx
         };
 
@@ -165,7 +166,7 @@ impl Generator {
         self.builder.ldi(elements.len() as i64);
 
         // Call array.new host function
-        let string_id = self.add_string_constant("array.new".to_string());
+        let string_id = self.add_string_constant("array.new");
         self.builder.call_host_function(string_id);
 
         Ok(Type::Array(Box::new(element_type)))
@@ -193,7 +194,7 @@ impl Generator {
 
         self.builder.ldi(elements.len() as i64);
 
-        let string_id = self.add_string_constant("tuple.new".to_string());
+        let string_id = self.add_string_constant("tuple.new");
         self.builder.call_host_function(string_id);
 
         Ok(Type::Tuple(element_types))
@@ -240,7 +241,7 @@ impl Generator {
         self.builder.ldi(pairs.len() as i64);
 
         // Call hashmap.new host function
-        let string_id = self.add_string_constant("hashmap.new".to_string());
+        let string_id = self.add_string_constant("hashmap.new");
         self.builder.call_host_function(string_id);
 
         Ok(Type::Map(Box::new(first_key_type), Box::new(first_val_type)))
@@ -268,7 +269,7 @@ impl Generator {
                         pos: self.make_pos(line, col),
                     });
                 }
-                let string_id = self.add_string_constant("hashmap.index".to_string());
+                let string_id = self.add_string_constant("hashmap.index");
                 self.builder.call_host_function(string_id);
                 return Ok(*val_type.clone());
             }
@@ -282,7 +283,7 @@ impl Generator {
                             pos: self.make_pos(line, col),
                         });
                     }
-                    let string_id = self.add_string_constant("hashmap.index".to_string());
+                    let string_id = self.add_string_constant("hashmap.index");
                     self.builder.call_host_function(string_id);
                     return Ok(*val_type.clone());
                 }
@@ -298,7 +299,7 @@ impl Generator {
                             pos: self.make_pos(line, col),
                         });
                     }
-                    let string_id = self.add_string_constant("hashmap.index".to_string());
+                    let string_id = self.add_string_constant("hashmap.index");
                     self.builder.call_host_function(string_id);
                     return Ok(*val_type.clone());
                 }
@@ -354,7 +355,7 @@ impl Generator {
         }
 
         // Call array.index host function
-        let string_id = self.add_string_constant("array.index".to_string());
+        let string_id = self.add_string_constant("array.index");
         self.builder.call_host_function(string_id);
 
         Ok(element_type)
@@ -379,12 +380,12 @@ impl Generator {
             .collect::<SaResult<Vec<_>>>()?;
 
         let param_types: Vec<Type> = params.iter().map(|v| v.ty.clone()).collect();
-        let param_names: std::collections::HashSet<String> =
+        let param_names: std::collections::HashSet<InternedString> =
             params.iter().map(|v| v.name.clone()).collect();
 
         // Collect free variables: names referenced in body that exist in the
         // enclosing scope but are not closure parameters
-        let mut free_vars: Vec<(String, Type, bool)> = Vec::new(); // (name, type, is_param)
+        let mut free_vars: Vec<(InternedString, Type, bool)> = Vec::new(); // (name, type, is_param)
         let mut seen = std::collections::HashSet::new();
         let referenced = Self::collect_identifiers(&body);
 
@@ -461,13 +462,13 @@ impl Generator {
     }
 
     /// Collect all identifier names referenced in an expression (shallow scan)
-    fn collect_identifiers(expr: &Expression) -> Vec<String> {
+    fn collect_identifiers(expr: &Expression) -> Vec<InternedString> {
         let mut names = Vec::new();
         Self::collect_identifiers_recursive(expr, &mut names);
         names
     }
 
-    fn collect_identifiers_recursive(expr: &Expression, names: &mut Vec<String>) {
+    fn collect_identifiers_recursive(expr: &Expression, names: &mut Vec<InternedString>) {
         match expr {
             Expression::Identifier(id) => {
                 names.push(id.name.clone());

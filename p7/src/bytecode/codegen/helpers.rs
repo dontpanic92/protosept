@@ -1,6 +1,7 @@
 use crate::ast::Type as ParsedType;
 use crate::errors::SemanticError;
 use crate::errors::SourcePos;
+use crate::intern::InternedString;
 use crate::{
     ast::{Expression, Identifier, Pattern},
     semantic::{PrimitiveType, SymbolId, Type, TypeDefinition},
@@ -70,16 +71,16 @@ impl Generator {
     }
 
     /// Helper to add a string constant to the pool and return its index
-    pub(super) fn add_string_constant(&mut self, s: String) -> u32 {
+    pub(super) fn add_string_constant(&mut self, s: &str) -> u32 {
         if let Some(idx) = self
             .string_constants
             .iter()
-            .position(|existing| existing == &s)
+            .position(|existing| existing == s)
         {
             idx as u32
         } else {
             let idx = self.string_constants.len() as u32;
-            self.string_constants.push(s);
+            self.string_constants.push(s.to_string());
             idx
         }
     }
@@ -116,7 +117,7 @@ impl Generator {
                 let intrinsic_name =
                     Self::extract_intrinsic_name(&function_def.attributes).unwrap();
 
-                let param_names: Vec<String> = function_def.param_names.clone();
+                let param_names = function_def.param_names.clone();
                 let param_defaults: Vec<Option<Expression>> = function_def.param_defaults.clone();
 
                 // Use shared argument processing logic
@@ -136,7 +137,7 @@ impl Generator {
                     call_line,
                     call_col,
                 )?;
-                let string_id = self.add_string_constant(intrinsic_name.clone());
+                let string_id = self.add_string_constant(&intrinsic_name);
                 self.builder.call_host_function(string_id);
                 Ok(function_def.return_type.clone())
             }
@@ -169,7 +170,7 @@ impl Generator {
                     PrimitiveType::String => unreachable!(),
                 };
 
-                let string_id = self.add_string_constant(intrinsic_name.to_string());
+                let string_id = self.add_string_constant(intrinsic_name);
                 self.builder.call_host_function(string_id);
                 Ok(Type::Primitive(PrimitiveType::String))
             }
@@ -253,21 +254,21 @@ impl Generator {
 
         let substitution = if generic_param_types.is_some() {
             // Build substitution map: T -> element_type, Self -> array<element_type>
-            let mut substitution: std::collections::HashMap<String, ParsedType> =
+            let mut substitution: std::collections::HashMap<InternedString, ParsedType> =
                 std::collections::HashMap::new();
             let parsed_element_type = self.type_to_parsed_type(&element_type);
-            substitution.insert("T".to_string(), parsed_element_type.clone());
+            substitution.insert(InternedString::from("T"), parsed_element_type.clone());
 
             // Self should resolve to array<T> with the actual element type
             let self_type = ParsedType::Generic {
                 base: crate::ast::Identifier {
-                    name: "array".to_string(),
+                    name: InternedString::from("array"),
                     line: 0,
                     col: 0,
                 },
                 type_args: vec![parsed_element_type],
             };
-            substitution.insert("Self".to_string(), self_type);
+            substitution.insert(InternedString::from("Self"), self_type);
             substitution
         } else {
             std::collections::HashMap::new()
@@ -321,7 +322,7 @@ impl Generator {
         )?;
 
         // Call the intrinsic host function
-        let string_id = self.add_string_constant(intrinsic_name.clone());
+        let string_id = self.add_string_constant(&intrinsic_name);
         self.builder.call_host_function(string_id);
 
         // Resolve the return type: if is_self_return is true, it means the method
@@ -429,7 +430,7 @@ impl Generator {
                         pos: SourcePos::at(call_line, call_col),
                     });
                 }
-                let string_id = self.add_string_constant("hashmap.set".to_string());
+                let string_id = self.add_string_constant("hashmap.set");
                 self.builder.call_host_function(string_id);
                 return Ok(Type::Primitive(PrimitiveType::Unit));
             }
@@ -456,7 +457,7 @@ impl Generator {
                         pos: SourcePos::at(call_line, call_col),
                     });
                 }
-                let string_id = self.add_string_constant("hashmap.remove".to_string());
+                let string_id = self.add_string_constant("hashmap.remove");
                 self.builder.call_host_function(string_id);
                 return Ok(Type::Nullable(Box::new(val_type.clone())));
             }
@@ -506,7 +507,7 @@ impl Generator {
             }
         };
 
-        let string_id = self.add_string_constant(intrinsic_name.to_string());
+        let string_id = self.add_string_constant(intrinsic_name);
         self.builder.call_host_function(string_id);
         Ok(return_type)
     }
@@ -549,7 +550,7 @@ impl Generator {
                 .unwrap()
                 .add_variable(name.name.clone(), value_type, false) // Pattern bindings are immutable
                 .map_err(|_| SemanticError::VariableOutsideFunction {
-                    name: name.name.clone(),
+                    name: name.name.to_string(),
                     pos: name.pos(),
                 })?;
             self.builder.stvar(var_id);
@@ -602,7 +603,7 @@ impl Generator {
         }
     }
 
-    pub(super) fn extract_intrinsic_name(attributes: &[crate::ast::Attribute]) -> Option<String> {
+    pub(super) fn extract_intrinsic_name(attributes: &[crate::ast::Attribute]) -> Option<InternedString> {
         for attr in attributes {
             if attr.name.name == "intrinsic" {
                 // Look for the intrinsic name in the arguments
@@ -628,7 +629,7 @@ impl Generator {
             .symbol_table
             .find_type_in_scope(&proto_name.name)
             .ok_or_else(|| SemanticError::TypeNotFound {
-                name: proto_name.name.clone(),
+                name: proto_name.name.to_string(),
                 pos: proto_name.pos(),
             })?;
 

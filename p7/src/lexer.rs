@@ -6,6 +6,8 @@ pub struct Token {
     pub length: usize,
 }
 
+use crate::intern::InternedString;
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenType {
     // Keywords
@@ -35,10 +37,10 @@ pub enum TokenType {
     False,
 
     // Identifiers and Literals
-    Identifier(String),
+    Identifier(InternedString),
     Integer(i64),
     Float(f64),
-    StringLiteral(String),
+    StringLiteral(InternedString),
     InterpolatedString(Vec<InterpolatedStringPart>),
 
     // Operators
@@ -86,8 +88,8 @@ pub enum TokenType {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum InterpolatedStringPart {
-    Literal(String),
-    Expr(String),
+    Literal(InternedString),
+    Expr(InternedString),
 }
 
 impl TokenType {
@@ -497,13 +499,13 @@ impl Lexer {
                 }
 
                 if !current.is_empty() {
-                    parts.push(InterpolatedStringPart::Literal(current));
+                    parts.push(InterpolatedStringPart::Literal(InternedString::from(current)));
                     current = String::new();
                 }
 
                 self.read_char(); // Skip '{'
                 let expr = self.read_interpolation_expr()?;
-                parts.push(InterpolatedStringPart::Expr(expr));
+                parts.push(InterpolatedStringPart::Expr(InternedString::from(expr)));
                 continue;
             }
 
@@ -529,7 +531,7 @@ impl Lexer {
         }
 
         if !current.is_empty() {
-            parts.push(InterpolatedStringPart::Literal(current));
+            parts.push(InterpolatedStringPart::Literal(InternedString::from(current)));
         }
 
         self.read_char(); // Skip closing "
@@ -837,7 +839,7 @@ impl Lexer {
                 TokenType::At
             }
             Some('"') => match self.read_string() {
-                Ok(string) => TokenType::StringLiteral(string),
+                Ok(string) => TokenType::StringLiteral(InternedString::from(string)),
                 Err(err) => {
                     self.errors.push(err);
                     TokenType::EOF
@@ -858,7 +860,7 @@ impl Lexer {
                                 literal.push_str(&chunk);
                             }
                         }
-                        TokenType::StringLiteral(literal)
+                        TokenType::StringLiteral(InternedString::from(literal))
                     }
                 }
                 Err(err) => {
@@ -895,7 +897,7 @@ impl Lexer {
                         "null" => TokenType::Null,
                         "true" => TokenType::True,
                         "false" => TokenType::False,
-                        _ => TokenType::Identifier(ident),
+                        _ => TokenType::Identifier(InternedString::from(ident)),
                     }
                 } else if c.is_numeric() {
                     let num = self.read_number();

@@ -95,7 +95,7 @@ impl Generator {
 
             let child_id =
                 root.children
-                    .get(&member_name)
+                    .get(member_name.as_str())
                     .ok_or_else(|| SemanticError::TypeNotFound {
                         name: name.to_string(),
                         pos: SourcePos::at(line, col),
@@ -183,7 +183,7 @@ impl Generator {
                     Ok(ty)
                 } else {
                     Err(SemanticError::TypeNotFound {
-                        name: identifier.name.clone(),
+                        name: identifier.name.to_string(),
                         pos: identifier.pos(),
                     })
                 }
@@ -529,7 +529,7 @@ impl Generator {
             Type::Struct(id) => {
                 // Check bounds to handle type IDs from imported modules
                 if let Some(TypeDefinition::Struct(s)) = self.symbol_table.types.get(*id as usize) {
-                    s.qualified_name.clone()
+                    s.qualified_name.to_string()
                 } else {
                     format!("struct#{}", id)
                 }
@@ -537,7 +537,7 @@ impl Generator {
             Type::Enum(id) => {
                 // Check bounds to handle type IDs from imported modules
                 if let Some(TypeDefinition::Enum(e)) = self.symbol_table.types.get(*id as usize) {
-                    e.qualified_name.clone()
+                    e.qualified_name.to_string()
                 } else {
                     format!("enum#{}", id)
                 }
@@ -545,7 +545,7 @@ impl Generator {
             Type::Proto(id) => {
                 // Check bounds to handle type IDs from imported modules
                 if let Some(TypeDefinition::Proto(p)) = self.symbol_table.types.get(*id as usize) {
-                    p.qualified_name.clone()
+                    p.qualified_name.to_string()
                 } else {
                     format!("proto#{}", id)
                 }

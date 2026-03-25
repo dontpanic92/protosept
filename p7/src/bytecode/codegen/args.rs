@@ -1,6 +1,7 @@
 use crate::ast::{Expression, Identifier};
 use crate::errors::SemanticError;
 use crate::errors::SourcePos;
+use crate::intern::InternedString;
 use crate::semantic::Type;
 
 use super::{Generator, SaResult};
@@ -40,7 +41,7 @@ impl Generator {
         call_line: usize,
         call_col: usize,
         arguments: Vec<(Option<Identifier>, Expression)>,
-        param_names: &[String],
+        param_names: &[InternedString],
         param_defaults: &[Option<Expression>],
     ) -> SaResult<Vec<Expression>> {
         let has_named = arguments.iter().any(|(n, _)| n.is_some());
@@ -72,7 +73,7 @@ impl Generator {
                     ordered_exprs.push(default_expr);
                 } else {
                     return Err(SemanticError::MissingArgument {
-                        param_name: param_name.clone(),
+                        param_name: param_name.to_string(),
                         func_name: call_name.to_string(),
                         pos: SourcePos::at(call_line, call_col),
                     });
@@ -105,7 +106,7 @@ impl Generator {
                     ordered_exprs.push(default_expr);
                 } else {
                     return Err(SemanticError::MissingArgument {
-                        param_name: param_names[i].clone(),
+                        param_name: param_names[i].to_string(),
                         func_name: call_name.to_string(),
                         pos: SourcePos::at(call_line, call_col),
                     });

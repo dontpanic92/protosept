@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod bytecode;
 pub mod errors;
+pub mod intern;
 pub mod interpreter;
 pub mod lexer;
 pub mod parser;

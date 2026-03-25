@@ -1,17 +1,18 @@
+use crate::intern::InternedString;
 use crate::lexer::Token;
 
 use crate::errors::SourcePos;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Identifier {
-    pub name: String,
+    pub name: InternedString,
     pub line: usize,
     pub col: usize,
 }
 
 impl Identifier {
     /// Create a synthetic identifier with position (0, 0)
-    pub fn synthetic(name: impl Into<String>) -> Self {
+    pub fn synthetic(name: impl Into<InternedString>) -> Self {
         Identifier {
             name: name.into(),
             line: 0,
@@ -54,7 +55,7 @@ pub enum Type {
 impl Type {
     pub fn get_name(&self) -> String {
         match self {
-            Type::Identifier(identifier) => identifier.name.clone(),
+            Type::Identifier(identifier) => identifier.name.to_string(),
             Type::Reference(r) => {
                 format!("ref<{}>", r.get_name())
             }
@@ -161,7 +162,7 @@ pub struct ProtoMethod {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct EnumVariant {
-    pub name: String,
+    pub name: InternedString,
     pub fields: Vec<Type>, // Empty for unit variants, contains types for payload variants
 }
 
@@ -169,7 +170,7 @@ pub type StatementBlock = Vec<Statement>;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum InterpolatedStringPart {
-    Literal(String),
+    Literal(InternedString),
     Expr(Expression),
 }
 
@@ -178,7 +179,7 @@ pub enum Expression {
     Identifier(Identifier),
     IntegerLiteral(i64),
     FloatLiteral(f64),
-    StringLiteral(String),
+    StringLiteral(InternedString),
     InterpolatedString {
         parts: Vec<InterpolatedStringPart>,
     },
@@ -311,7 +312,7 @@ pub enum Pattern {
     Identifier(Identifier),
     IntegerLiteral(i64),
     FloatLiteral(f64),
-    StringLiteral(String),
+    StringLiteral(InternedString),
     BooleanLiteral(bool),
     FieldAccess {
         object: Box<Pattern>,
@@ -389,15 +390,15 @@ pub enum Statement {
     },
     Return(Box<Expression>),
     Import {
-        module_path: String,
-        alias: Option<String>,
+        module_path: InternedString,
+        alias: Option<InternedString>,
     },
 }
 
 impl Expression {
     pub fn get_name(&self) -> String {
         match self {
-            Expression::Identifier(identifier) => identifier.name.clone(),
+            Expression::Identifier(identifier) => identifier.name.to_string(),
             Expression::NullLiteral => "null".to_string(),
             Expression::InterpolatedString { .. } => "interpolated_string".to_string(),
             Expression::ForceUnwrap { operand, .. } => format!("{}!", operand.get_name()),

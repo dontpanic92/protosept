@@ -5,6 +5,7 @@ use crate::ast::{
 use crate::bytecode::Module;
 use crate::errors::SemanticError;
 use crate::errors::SourcePos;
+use crate::intern::InternedString;
 use crate::{
     ast::{Expression, Statement},
     semantic::{Enum, PrimitiveType, Proto, Struct, Symbol, SymbolKind, Type, TypeDefinition},
@@ -132,7 +133,7 @@ impl Generator {
             .unwrap()
             .add_variable(identifier.name.clone(), final_ty, is_mutable)
             .map_err(|_| SemanticError::VariableOutsideFunction {
-                name: identifier.name.clone(),
+                name: identifier.name.to_string(),
                 pos: identifier.pos(),
             })?;
 
@@ -200,7 +201,7 @@ impl Generator {
                                 .unwrap()
                                 .add_variable(id.name.clone(), field_ty, is_mutable)
                                 .map_err(|_| SemanticError::VariableOutsideFunction {
-                                    name: id.name.clone(),
+                                    name: id.name.to_string(),
                                     pos: id.pos(),
                                 })?;
                             self.builder.stvar(var_id);
@@ -253,7 +254,7 @@ impl Generator {
                                         .local_scope.as_mut().unwrap()
                                         .add_variable(id.name.clone(), field_ty, is_mutable)
                                         .map_err(|_| SemanticError::VariableOutsideFunction {
-                                            name: id.name.clone(), pos: id.pos(),
+                                            name: id.name.to_string(), pos: id.pos(),
                                         })?;
                                     self.builder.stvar(var_id);
                                 }
@@ -317,7 +318,7 @@ impl Generator {
                                 .unwrap()
                                 .add_variable(id.name.clone(), field_ty, is_mutable)
                                 .map_err(|_| SemanticError::VariableOutsideFunction {
-                                    name: id.name.clone(),
+                                    name: id.name.to_string(),
                                     pos: id.pos(),
                                 })?;
                             self.builder.stvar(var_id);
@@ -361,7 +362,7 @@ impl Generator {
                     )));
                 }
 
-                let tuple_index_id = self.add_string_constant("tuple.index".to_string());
+                let tuple_index_id = self.add_string_constant("tuple.index");
 
                 for (idx, sub_pat) in sub_patterns.iter().enumerate() {
                     if !sub_pat.is_wildcard()
@@ -376,7 +377,7 @@ impl Generator {
                                 .unwrap()
                                 .add_variable(id.name.clone(), elem_ty, is_mutable)
                                 .map_err(|_| SemanticError::VariableOutsideFunction {
-                                    name: id.name.clone(),
+                                    name: id.name.to_string(),
                                     pos: id.pos(),
                                 })?;
                             self.builder.stvar(var_id);
@@ -418,9 +419,7 @@ impl Generator {
     ) -> SaResult<Type> {
         let qualified_name = self
             .symbol_table
-            .get_new_symbol_qualified_name(name.name.clone());
-
-        // Check if this is a generic enum
+            .get_new_symbol_qualified_name(&name.name);
         let is_generic = !type_parameters.is_empty();
 
         let (variants, generic_variant_types) = if is_generic {
@@ -428,7 +427,7 @@ impl Generator {
             let generic_types: Vec<Vec<crate::ast::Type>> =
                 values.iter().map(|v| v.fields.clone()).collect();
             // Don't resolve types yet - will be done during monomorphization
-            let variants: Vec<(String, Vec<Type>)> =
+            let variants: Vec<(InternedString, Vec<Type>)> =
                 values.iter().map(|v| (v.name.clone(), vec![])).collect();
             (variants, Some(generic_types))
         } else {
@@ -449,12 +448,12 @@ impl Generator {
         let conforming_to = self.resolve_conformances(&conformance)?;
 
         // Extract type parameter names and bounds for enclosing context
-        let type_param_names: Vec<String> = type_parameters
+        let type_param_names: Vec<InternedString> = type_parameters
             .iter()
             .map(|tp| tp.name.name.clone())
             .collect();
 
-        let type_param_bounds_list: Vec<Vec<String>> = type_parameters
+        let type_param_bounds_list: Vec<Vec<InternedString>> = type_parameters
             .iter()
             .map(|tp| tp.bounds.iter().map(|b| b.name.clone()).collect())
             .collect();
@@ -525,15 +524,15 @@ impl Generator {
     ) -> SaResult<Type> {
         let qualified_name = self
             .symbol_table
-            .get_new_symbol_qualified_name(name.name.clone());
+            .get_new_symbol_qualified_name(&name.name);
 
         // Extract type parameter names and bounds
-        let type_param_names: Vec<String> = type_parameters
+        let type_param_names: Vec<InternedString> = type_parameters
             .iter()
             .map(|tp| tp.name.name.clone())
             .collect();
 
-        let type_param_bounds_list: Vec<Vec<String>> = type_parameters
+        let type_param_bounds_list: Vec<Vec<InternedString>> = type_parameters
             .iter()
             .map(|tp| tp.bounds.iter().map(|b| b.name.clone()).collect())
             .collect();
@@ -547,7 +546,7 @@ impl Generator {
                 fields.iter().map(|f| f.field_type.clone()).collect();
 
             // Use Unit as placeholder - these will be properly typed during monomorphization
-            let placeholder_fields: Vec<(String, Type)> = fields
+            let placeholder_fields: Vec<(InternedString, Type)> = fields
                 .iter()
                 .enumerate()
                 .map(|(idx, f)| {
@@ -555,7 +554,7 @@ impl Generator {
                         .name
                         .as_ref()
                         .map(|n| n.name.clone())
-                        .unwrap_or_else(|| idx.to_string());
+                        .unwrap_or_else(|| InternedString::from(idx.to_string()));
                     (field_name, Type::Primitive(PrimitiveType::Unit))
                 })
                 .collect();
@@ -570,7 +569,7 @@ impl Generator {
                     .name
                     .as_ref()
                     .map(|n| n.name.clone())
-                    .unwrap_or_else(|| idx.to_string());
+                    .unwrap_or_else(|| InternedString::from(idx.to_string()));
                 resolved_fields.push((field_name, field_type));
             }
             (resolved_fields, None)
@@ -644,9 +643,7 @@ impl Generator {
     ) -> SaResult<Type> {
         let qualified_name = self
             .symbol_table
-            .get_new_symbol_qualified_name(name.name.clone());
-
-        // First add the proto to the symbol table as a forward declaration
+            .get_new_symbol_qualified_name(&name.name);
         // so that method parameters can reference it
         let ty = Proto {
             qualified_name: qualified_name.clone(),
@@ -739,20 +736,20 @@ impl Generator {
         Ok(Type::Primitive(PrimitiveType::Unit))
     }
 
-    pub(super) fn generate_import(&mut self, module_path: String, alias: Option<String>) -> SaResult<Type> {
+    pub(super) fn generate_import(&mut self, module_path: InternedString, alias: Option<InternedString>) -> SaResult<Type> {
         // Import semantics: try module first, then symbol from parent module
         let segments: Vec<&str> = module_path.split('.').filter(|s| !s.is_empty()).collect();
         if segments.is_empty() {
             return Err(SemanticError::ImportError {
-                module_path: module_path.clone(),
-                pos: SourcePos { line: 0, col: 0, module: Some(self._current_module_path.clone()) },
+                module_path: module_path.to_string(),
+                pos: SourcePos { line: 0, col: 0, module: Some(self._current_module_path.to_string()) },
             });
         }
 
         // Binding name: alias or last segment
-        let binding_name = alias
+        let binding_name: InternedString = alias
             .clone()
-            .unwrap_or_else(|| segments.last().unwrap().to_string());
+            .unwrap_or_else(|| InternedString::from(segments.last().unwrap().to_string()));
 
         // 1) Try module import: load full module_path
         if let Some(source) = self.module_provider.load_module(&module_path) {
@@ -775,8 +772,8 @@ impl Generator {
         // 2) Fallback: treat last segment as symbol name in parent module
         if segments.len() < 2 {
             return Err(SemanticError::ImportError {
-                module_path: module_path.clone(),
-                pos: SourcePos { line: 0, col: 0, module: Some(self._current_module_path.clone()) },
+                module_path: module_path.to_string(),
+                pos: SourcePos { line: 0, col: 0, module: Some(self._current_module_path.to_string()) },
             });
         }
 
@@ -788,18 +785,18 @@ impl Generator {
             .load_module(&parent_path)
             .ok_or_else(|| SemanticError::ImportError {
                 module_path: parent_path.clone(),
-                pos: SourcePos { line: 0, col: 0, module: Some(self._current_module_path.clone()) },
+                pos: SourcePos { line: 0, col: 0, module: Some(self._current_module_path.to_string()) },
             })?;
 
-        if !self.imported_modules.contains_key(&parent_path) {
+        if !self.imported_modules.contains_key(parent_path.as_str()) {
             let imported_module = self.compile_module(&parent_path, parent_source)?;
             self.imported_modules
-                .insert(parent_path.clone(), imported_module);
+                .insert(InternedString::from(parent_path.clone()), imported_module);
         }
 
         let imported_parent = self
             .imported_modules
-            .get(&parent_path)
+            .get(parent_path.as_str())
             .cloned()
             .ok_or_else(|| {
                 SemanticError::Other(format!("Invalid module import: {}", parent_path))
@@ -808,7 +805,7 @@ impl Generator {
         let root = imported_parent
             .symbols.first()
             .ok_or_else(|| SemanticError::Other(format!("Invalid module root: {}", parent_path)))?;
-        if let Some(sym_id) = root.children.get(&symbol_name)
+        if let Some(sym_id) = root.children.get(symbol_name.as_str())
             && let Some(sym) = imported_parent.symbols.get(*sym_id as usize) {
                 let resolved_kind = match sym.kind {
                     SymbolKind::Type(imported_type_id) => {
@@ -983,7 +980,7 @@ impl Generator {
             }
         };
 
-        let qualified_name_owned = qualified_name.to_string();
+        let qualified_name_owned = qualified_name.clone();
         let new_id = self.symbol_table.add_type(mapped_def);
         type_map.insert(type_id, new_id);
 

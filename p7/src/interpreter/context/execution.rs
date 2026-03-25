@@ -966,7 +966,7 @@ impl Context {
                             RuntimeError::Other(format!("Invalid symbol id: {}", method_sym_id))
                         })?
                     } else {
-                        let symbol_id = root_symbol.children.get(&symbol_name).ok_or_else(|| {
+                        let symbol_id = root_symbol.children.get(symbol_name.as_str()).ok_or_else(|| {
                             RuntimeError::Other(format!(
                                 "Symbol '{}' not found in module '{}'",
                                 symbol_name, module_path

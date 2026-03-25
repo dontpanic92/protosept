@@ -1,5 +1,6 @@
 use crate::ast::{Identifier, Type, TypeParameter};
 use crate::errors::{ParseError, SourcePos};
+use crate::intern::InternedString;
 use crate::lexer::TokenType;
 
 use super::{ParseResult, Parser};
@@ -31,7 +32,7 @@ impl Parser {
                     self.consume_match(TokenType::GreaterThan)?;
                     Ok(Type::Generic {
                         base: Identifier {
-                            name: "box".to_string(),
+                            name: InternedString::from("box"),
                             line,
                             col,
                         },
@@ -91,7 +92,7 @@ impl Parser {
                         self.parse_type()?
                     } else {
                         Type::Identifier(Identifier {
-                            name: "unit".to_string(),
+                            name: InternedString::from("unit"),
                             line: 0,
                             col: 0,
                         })
@@ -106,7 +107,7 @@ impl Parser {
 
                     // Support module-qualified types like `ui.Message`
                     if self.peek_match(TokenType::Dot) {
-                        let mut full_name = ident.name.clone();
+                        let mut full_name = ident.name.to_string();
                         let line = ident.line;
                         let col = ident.col;
 
@@ -118,7 +119,7 @@ impl Parser {
                         }
 
                         ident = Identifier {
-                            name: full_name,
+                            name: InternedString::from(full_name),
                             line,
                             col,
                         };

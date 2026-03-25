@@ -1,5 +1,6 @@
 use crate::ast::Identifier;
 use crate::errors::{ParseError, SourcePos};
+use crate::intern::InternedString;
 use crate::lexer::{Token, TokenType};
 
 use super::{ParseResult, Parser};
@@ -107,7 +108,7 @@ impl Parser {
                 col: *col,
             }),
             Some(t) => Err(ParseError::ExpectedToken {
-                expected: format!("{:?}", TokenType::Identifier("".to_string())),
+                expected: format!("{:?}", TokenType::Identifier(InternedString::from(""))),
                 found: format!("{:?}", t.token_type),
                 pos: Some(SourcePos {
                     line: t.line,

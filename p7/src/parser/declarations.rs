@@ -5,6 +5,7 @@ use crate::ast::{
     Parameter, ProtoMethod, Statement, StructField, StructMethod, Type,
 };
 use crate::errors::{ParseError, SourcePos};
+use crate::intern::InternedString;
 use crate::lexer::{Token, TokenType};
 
 use super::{ParseResult, Parser};
@@ -41,7 +42,7 @@ impl Parser {
                     }
 
                     let self_type = Type::Identifier(Identifier {
-                        name: "Self".to_string(),
+                        name: InternedString::from("Self"),
                         line: name.line,
                         col: name.col,
                     });
@@ -67,12 +68,12 @@ impl Parser {
 
                     let arg_type = Type::Generic {
                         base: Identifier {
-                            name: "box".to_string(),
+                            name: InternedString::from("box"),
                             line: name.line,
                             col: name.col,
                         },
                         type_args: vec![Type::Identifier(Identifier {
-                            name: "Self".to_string(),
+                            name: InternedString::from("Self"),
                             line: name.line,
                             col: name.col,
                         })],
@@ -87,12 +88,12 @@ impl Parser {
                         None => return Err(ParseError::UnexpectedEof { pos: self.peek_previous().map(|t| SourcePos { line: t.line, col: t.col, module: None }) }),
                     };
 
-                    let name = Identifier { name: "self".to_string(), line, col };
+                    let name = Identifier { name: InternedString::from("self"), line, col };
 
                     let arg_type = if self.consume_match(TokenType::Colon).is_ok() {
                         self.parse_type()?
                     } else {
-                        Type::Identifier(Identifier { name: "Self".to_string(), line, col })
+                        Type::Identifier(Identifier { name: InternedString::from("Self"), line, col })
                     };
 
                     Ok(Parameter { name, arg_type, default_value: None })

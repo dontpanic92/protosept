@@ -1,5 +1,6 @@
 use crate::errors::SemanticError;
 use crate::errors::SourcePos;
+use crate::intern::InternedString;
 use crate::{
     ast::{Identifier, Type as ParsedType},
     semantic::{
@@ -71,7 +72,7 @@ impl Generator {
         })?;
 
         // Build type parameter substitution map for parsed types
-        let mut parsed_type_substitution: std::collections::HashMap<String, ParsedType> =
+        let mut parsed_type_substitution: std::collections::HashMap<InternedString, ParsedType> =
             std::collections::HashMap::new();
         for (param_name, concrete_type) in base_struct.type_parameters.iter().zip(type_args.iter())
         {
@@ -81,7 +82,7 @@ impl Generator {
         }
 
         // Substitute and resolve field types
-        let mut monomorphized_fields: Vec<(String, Type)> = Vec::new();
+        let mut monomorphized_fields: Vec<(InternedString, Type)> = Vec::new();
         for (i, (field_name, _)) in base_struct.fields.iter().enumerate() {
             let parsed_field_type = &parsed_field_types[i];
             let substituted_parsed_type =
@@ -96,7 +97,7 @@ impl Generator {
             .map(|t| t.to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        let monomorphized_name = format!("{}<{}>", base_struct.qualified_name, type_args_str);
+        let monomorphized_name = InternedString::from(format!("{}<{}>", base_struct.qualified_name, type_args_str));
 
         // Create the monomorphized struct
         let monomorphized_struct = Struct {
@@ -180,7 +181,7 @@ impl Generator {
         })?;
 
         // Build type parameter substitution map for parsed types
-        let mut parsed_type_substitution: std::collections::HashMap<String, ParsedType> =
+        let mut parsed_type_substitution: std::collections::HashMap<InternedString, ParsedType> =
             std::collections::HashMap::new();
         for (param_name, concrete_type) in base_enum.type_parameters.iter().zip(type_args.iter()) {
             // Convert the semantic Type back to ParsedType for substitution
@@ -189,7 +190,7 @@ impl Generator {
         }
 
         // Substitute and resolve variant field types
-        let mut monomorphized_variants: Vec<(String, Vec<Type>)> = Vec::new();
+        let mut monomorphized_variants: Vec<(InternedString, Vec<Type>)> = Vec::new();
         for (i, (variant_name, _)) in base_enum.variants.iter().enumerate() {
             let parsed_field_types = &parsed_variant_types[i];
             let mut resolved_field_types = Vec::new();
@@ -210,7 +211,7 @@ impl Generator {
             .map(|t| t.to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        let monomorphized_name = format!("{}<{}>", base_enum.qualified_name, type_args_str);
+        let monomorphized_name = InternedString::from(format!("{}<{}>", base_enum.qualified_name, type_args_str));
 
         // Create the monomorphized enum
         let monomorphized_enum = Enum {
@@ -329,7 +330,7 @@ impl Generator {
             })?;
 
         // Build type parameter substitution map for parsed types
-        let mut parsed_type_substitution: std::collections::HashMap<String, ParsedType> =
+        let mut parsed_type_substitution: std::collections::HashMap<InternedString, ParsedType> =
             std::collections::HashMap::new();
         for (param_name, concrete_type) in base_func.type_parameters.iter().zip(type_args.iter()) {
             // Convert the semantic Type back to ParsedType for substitution
@@ -361,7 +362,7 @@ impl Generator {
             .map(|t| t.to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        let monomorphized_name = format!("{}<{}>", base_func.qualified_name, type_args_str);
+        let monomorphized_name = InternedString::from(format!("{}<{}>", base_func.qualified_name, type_args_str));
 
         // Create the monomorphized function metadata
         let monomorphized_func = Function {
@@ -391,7 +392,7 @@ impl Generator {
         // Create symbol for the monomorphized function with placeholder address
         // We'll generate the actual bytecode later to avoid inline generation
         let symbol = Symbol::new(
-            base_name.to_string(),
+            InternedString::from(base_name),
             monomorphized_name.clone(),
             SymbolKind::Function {
                 func_id: new_func_id,
@@ -431,7 +432,7 @@ impl Generator {
                     PrimitiveType::Unit => "unit",
                 };
                 ParsedType::Identifier(Identifier {
-                    name: name.to_string(),
+                    name: InternedString::from(name),
                     line: SYNTHETIC_LINE,
                     col: SYNTHETIC_COL,
                 })
@@ -442,7 +443,7 @@ impl Generator {
             Type::Array(inner) => ParsedType::Array(Box::new(self.type_to_parsed_type(inner))),
             Type::BoxType(inner) => ParsedType::Generic {
                 base: Identifier {
-                    name: "box".to_string(),
+                    name: InternedString::from("box"),
                     line: SYNTHETIC_LINE,
                     col: SYNTHETIC_COL,
                 },
@@ -460,7 +461,7 @@ impl Generator {
                 } else {
                     // Fallback
                     ParsedType::Identifier(Identifier {
-                        name: format!("struct_{}", type_id),
+                        name: InternedString::from(format!("struct_{}", type_id)),
                         line: SYNTHETIC_LINE,
                         col: SYNTHETIC_COL,
                     })
@@ -478,7 +479,7 @@ impl Generator {
                 } else {
                     // Fallback
                     ParsedType::Identifier(Identifier {
-                        name: format!("enum_{}", type_id),
+                        name: InternedString::from(format!("enum_{}", type_id)),
                         line: SYNTHETIC_LINE,
                         col: SYNTHETIC_COL,
                     })
@@ -487,7 +488,7 @@ impl Generator {
             _ => {
                 // For other types, create a simple identifier
                 ParsedType::Identifier(Identifier {
-                    name: ty.to_string(),
+                    name: InternedString::from(ty.to_string()),
                     line: SYNTHETIC_LINE,
                     col: SYNTHETIC_COL,
                 })
@@ -499,7 +500,7 @@ impl Generator {
     pub(super) fn substitute_parsed_type(
         &self,
         parsed_type: &ParsedType,
-        substitution: &std::collections::HashMap<String, ParsedType>,
+        substitution: &std::collections::HashMap<InternedString, ParsedType>,
     ) -> ParsedType {
         match parsed_type {
             ParsedType::Identifier(ident) => {
@@ -561,8 +562,8 @@ impl Generator {
     /// `type_param_names` and `type_param_bounds` are parallel arrays; `type_args` maps 1:1.
     fn check_type_param_bounds(
         &self,
-        type_param_names: &[String],
-        type_param_bounds: &[Vec<String>],
+        type_param_names: &[InternedString],
+        type_param_bounds: &[Vec<InternedString>],
         type_args: &[Type],
         generic_name: &str,
         line: usize,
@@ -612,9 +613,9 @@ impl Generator {
                         // Primitive types — check if they have builtin proto conformance
                         // Primitives implicitly satisfy Hash, Eq, and Display protos
                         let proto_def = self.symbol_table.get_type(proto_type_id);
-                        let proto_name = match proto_def {
-                            TypeDefinition::Proto(p) => p.qualified_name.clone(),
-                            _ => String::new(),
+                        let proto_name: &str = match proto_def {
+                            TypeDefinition::Proto(p) => &p.qualified_name,
+                            _ => "",
                         };
                         let is_builtin_proto = proto_name.ends_with(".Hash")
                             || proto_name == "Hash"
@@ -689,14 +690,14 @@ impl Generator {
         match ty {
             Type::Struct(tid) => {
                 if let TypeDefinition::Struct(s) = self.symbol_table.get_type(*tid) {
-                    s.qualified_name.clone()
+                    s.qualified_name.to_string()
                 } else {
                     ty.to_string()
                 }
             }
             Type::Enum(tid) => {
                 if let TypeDefinition::Enum(e) = self.symbol_table.get_type(*tid) {
-                    e.qualified_name.clone()
+                    e.qualified_name.to_string()
                 } else {
                     ty.to_string()
                 }

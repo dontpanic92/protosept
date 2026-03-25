@@ -274,7 +274,7 @@ impl Generator {
                         )?;
                     }
 
-                    let tuple_index_id = self.add_string_constant("tuple.index".to_string());
+                    let tuple_index_id = self.add_string_constant("tuple.index");
 
                     // Extract and bind each element
                     for (idx, sub_pat) in sub_patterns.iter().enumerate() {

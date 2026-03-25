@@ -1,6 +1,7 @@
 use crate::ast::{Expression, FunctionCall, Identifier};
 use crate::errors::SemanticError;
 use crate::errors::SourcePos;
+use crate::intern::InternedString;
 use crate::semantic::{Type, TypeDefinition, TypeId};
 
 use super::{Generator, SaResult};
@@ -25,7 +26,7 @@ impl Generator {
             }
         };
 
-        let field_names: Vec<String> = struct_def
+        let field_names: Vec<InternedString> = struct_def
             .fields
             .iter()
             .map(|(name, _)| name.clone())
@@ -78,7 +79,7 @@ impl Generator {
         };
 
         // Build a map of field name → update expression
-        let mut update_map: std::collections::HashMap<String, Expression> = std::collections::HashMap::new();
+        let mut update_map: std::collections::HashMap<InternedString, Expression> = std::collections::HashMap::new();
         for (field_name, expr) in updates {
             if update_map.contains_key(&field_name.name) {
                 return Err(SemanticError::Other(format!(
@@ -86,20 +87,20 @@ impl Generator {
                 )));
             }
             // Validate field exists
-            if !struct_def.fields.iter().any(|(f, _)| f == &field_name.name) {
+            if !struct_def.fields.iter().any(|(f, _)| *f == field_name.name) {
                 return Err(SemanticError::TypeMismatch {
                     lhs: format!("Struct '{}'", type_name),
                     rhs: format!("Unknown field '{}'", field_name.name),
                     pos: SourcePos::at(field_name.line, field_name.col),
                 });
             }
-            update_map.insert(field_name.name, expr);
+            update_map.insert(field_name.name.clone(), expr);
         }
 
         // Generate base expression and store in a temporary variable
         let base_ty = self.generate_expression(base)?;
         let base_var = self.local_scope.as_mut().unwrap()
-            .add_variable("$struct_update_base".to_string(), base_ty, false)
+            .add_variable(InternedString::from("$struct_update_base"), base_ty, false)
             .map_err(|_| SemanticError::Other("Cannot create struct update temp".to_string()))?;
         self.builder.stvar(base_var);
 

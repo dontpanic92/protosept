@@ -99,7 +99,7 @@ pub struct TestSummary {
 
 fn extract_string_from_expression(expr: &Expression) -> Option<String> {
     match expr {
-        Expression::StringLiteral(s) => Some(s.clone()),
+        Expression::StringLiteral(s) => Some(s.to_string()),
         _ => None,
     }
 }
@@ -141,7 +141,7 @@ fn find_test_cases(module: &p7::bytecode::Module) -> Vec<TestCase> {
                 for attr in &func.attributes {
                     if let Some((expected_type, expected_value)) = parse_test_attribute(attr) {
                         test_cases.push(TestCase {
-                            function_name: symbol.name.clone(),
+                            function_name: symbol.name.to_string(),
                             expected_type,
                             expected_value,
                         });

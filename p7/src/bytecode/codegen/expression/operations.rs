@@ -264,7 +264,7 @@ impl Generator {
         }
 
         Err(SemanticError::VariableNotFound {
-            name: identifier.name.clone(),
+            name: identifier.name.to_string(),
             pos: self.make_pos(identifier.line, identifier.col),
         })
     }
@@ -311,8 +311,8 @@ impl Generator {
                                     });
                                 }
 
-                                let mod_path_sid = self.add_string_constant(module_path);
-                                let var_name_sid = self.add_string_constant(field.name.clone());
+                                let mod_path_sid = self.add_string_constant(&module_path);
+                                let var_name_sid = self.add_string_constant(&field.name);
                                 self.builder.stextmodvar(mod_path_sid, var_name_sid);
                                 return Ok(Type::Primitive(PrimitiveType::Unit));
                             }
@@ -425,7 +425,7 @@ impl Generator {
         }
 
         // Stack is now: [box_ref, index, elem] — call array.set
-        let string_id = self.add_string_constant("array.set".to_string());
+        let string_id = self.add_string_constant("array.set");
         self.builder.call_host_function(string_id);
 
         // array.set pushes old element; discard it (assignment yields unit)
@@ -518,7 +518,7 @@ impl Generator {
         if operator.token_type == TokenType::Plus
             && matches!(result_ty, Type::Primitive(PrimitiveType::String))
         {
-            let host_fn_idx = self.add_string_constant("string.concat".to_string());
+            let host_fn_idx = self.add_string_constant("string.concat");
             self.builder.call_host_function(host_fn_idx);
         } else {
             self.emit_binary_instruction(&operator.token_type);
@@ -615,8 +615,8 @@ impl Generator {
                                 let imported_module = self.imported_modules.get(&module_path).unwrap().clone();
                                 let mut type_map = std::collections::HashMap::new();
                                 let ty = self.map_type_from_module(&imported_module, &raw_ty, &mut type_map)?;
-                                let mod_path_sid = self.add_string_constant(module_path);
-                                let var_name_sid = self.add_string_constant(field.name.clone());
+                                let mod_path_sid = self.add_string_constant(&module_path);
+                                let var_name_sid = self.add_string_constant(&field.name);
                                 self.builder.ldextmodvar(mod_path_sid, var_name_sid);
                                 return Ok(ty);
                             }
@@ -666,7 +666,7 @@ impl Generator {
                 let result_type = element_types[idx].clone();
                 // Push index and call tuple.index
                 self.builder.ldi(idx as i64);
-                let string_id = self.add_string_constant("tuple.index".to_string());
+                let string_id = self.add_string_constant("tuple.index");
                 self.builder.call_host_function(string_id);
                 Ok(result_type)
             }
@@ -691,7 +691,7 @@ impl Generator {
                 return Ok((concrete_ty, true));
             } else {
                 return Err(SemanticError::TypeNotFound {
-                    name: base.name.clone(),
+                    name: base.name.to_string(),
                     pos: self.make_pos(base.line, base.col),
                 });
             }

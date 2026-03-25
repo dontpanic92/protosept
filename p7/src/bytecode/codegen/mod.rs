@@ -3,6 +3,7 @@ use core::panic;
 use crate::{
     ast::{Expression, FunctionDeclaration, Statement},
     bytecode::builder::ByteCodeBuilder,
+    intern::InternedString,
     semantic::{
         Function, FunctionId, LocalSymbolScope, PrimitiveType, Symbol, SymbolKind, SymbolTable,
         Type, TypeDefinition, Variable,
@@ -14,7 +15,7 @@ use super::Module;
 /// A module-level binding (thread-local global variable).
 #[derive(Debug, Clone)]
 pub struct ModuleVariable {
-    pub name: String,
+    pub name: InternedString,
     pub ty: Type,
     pub is_mutable: bool,
     pub is_pub: bool,
@@ -43,7 +44,7 @@ pub(super) const SYNTHETIC_LINE: usize = 0;
 pub(super) const SYNTHETIC_COL: usize = 0;
 
 pub struct ExternSymbolId {
-    pub module_path: String,
+    pub module_path: InternedString,
     pub symbol_id: u32,
 }
 
@@ -52,11 +53,11 @@ pub struct Generator {
     pub(super) symbol_table: SymbolTable,
     pub(super) local_scope: Option<LocalSymbolScope>,
     pub(super) pending_monomorphizations:
-        Vec<(u32, FunctionId, Vec<Statement>, Vec<String>, Vec<Type>)>, // (symbol_id, func_id, body, param_names, params)
+        Vec<(u32, FunctionId, Vec<Statement>, Vec<InternedString>, Vec<Type>)>,
     pub(super) module_provider: Box<dyn crate::ModuleProvider>,
-    pub(super) imported_modules: std::collections::HashMap<String, Module>,
-    pub(super) compiling_modules: std::collections::HashSet<String>,
-    pub(super) _current_module_path: String,
+    pub(super) imported_modules: std::collections::HashMap<InternedString, Module>,
+    pub(super) compiling_modules: std::collections::HashSet<InternedString>,
+    pub(super) _current_module_path: InternedString,
     // Track which local variables have been moved (by their index in locals array)
     pub(super) moved_variables: std::collections::HashSet<u32>,
     // Track which parameters have been moved (by their index in params array)
@@ -69,9 +70,9 @@ pub struct Generator {
     pub(super) current_self_type: Option<Type>,
     pub(super) is_compiling_builtin: bool,
     // Track type parameters of the enclosing generic type (struct/enum) when processing methods
-    pub(super) enclosing_type_params: Vec<String>,
+    pub(super) enclosing_type_params: Vec<InternedString>,
     // Track proto bounds of the enclosing generic type's type parameters (parallel to enclosing_type_params)
-    pub(super) enclosing_type_param_bounds: Vec<Vec<String>>,
+    pub(super) enclosing_type_param_bounds: Vec<Vec<InternedString>>,
     // Module-level bindings (thread-local globals)
     pub(super) module_variables: Vec<ModuleVariable>,
 }
@@ -108,7 +109,7 @@ impl Generator {
             module_provider,
             imported_modules: std::collections::HashMap::new(),
             compiling_modules: std::collections::HashSet::new(),
-            _current_module_path: "$root".to_string(),
+            _current_module_path: InternedString::from("$root"),
             moved_variables: std::collections::HashSet::new(),
             moved_params: std::collections::HashSet::new(),
             loop_context_stack: Vec::new(),
@@ -306,7 +307,7 @@ impl Generator {
             imported_modules: self
                 .imported_modules
                 .iter()
-                .map(|(k, v)| (k.clone(), Box::new(v.clone())))
+                .map(|(k, v)| (k.to_string(), Box::new(v.clone())))
                 .collect(),
             module_var_count,
             module_init_address,
@@ -456,7 +457,7 @@ impl Generator {
 
                     // Store the compiled module
                     self.imported_modules
-                        .insert(MODULE_PATH.to_string(), module);
+                        .insert(InternedString::from(MODULE_PATH), module);
                 }
                 Err(e) => {
                     eprintln!("DEBUG try_load_builtin_type: compile error = {:?}", e);
@@ -516,7 +517,7 @@ impl Generator {
                 module_path
             )));
         }
-        self.compiling_modules.insert(module_path.to_string());
+        self.compiling_modules.insert(InternedString::from(module_path));
 
         // Parse the module source
         let mut lexer = crate::lexer::Lexer::new(source);
@@ -546,7 +547,7 @@ impl Generator {
 
         // Create a new generator for the imported module with a cloned provider
         let mut module_gen =
-            Generator::new_for_module(self.module_provider.clone_boxed(), module_path.to_string());
+            Generator::new_for_module(self.module_provider.clone_boxed(), InternedString::from(module_path));
         let result = module_gen.generate(statements);
         self.compiling_modules.remove(module_path);
         result
@@ -555,10 +556,10 @@ impl Generator {
     /// Create a new generator for compiling imported modules
     fn new_for_module(
         module_provider: Box<dyn crate::ModuleProvider>,
-        module_path: String,
+        module_path: InternedString,
     ) -> Self {
         // When compiling the builtin module itself, skip preloading builtins
-        let is_builtin = module_path == "builtin";
+        let is_builtin = *module_path == *"builtin";
         let mut generator = Generator {
             builder: ByteCodeBuilder::new(),
             symbol_table: SymbolTable::new(),
@@ -626,15 +627,15 @@ impl Generator {
 
         let qualified_name = self
             .symbol_table
-            .get_new_symbol_qualified_name(declaration.name.name.clone());
+            .get_new_symbol_qualified_name(&declaration.name.name);
 
-        let own_type_param_names: Vec<String> = declaration
+        let own_type_param_names: Vec<InternedString> = declaration
             .type_parameters
             .iter()
             .map(|tp| tp.name.name.clone())
             .collect();
 
-        let own_type_param_bounds: Vec<Vec<String>> = declaration
+        let own_type_param_bounds: Vec<Vec<InternedString>> = declaration
             .type_parameters
             .iter()
             .map(|tp| tp.bounds.iter().map(|b| b.name.clone()).collect())
@@ -750,7 +751,7 @@ impl Generator {
 
     /// Pass 2 helper: Generate the body of a previously registered function.
     fn generate_function_body(&mut self, declaration: FunctionDeclaration) -> SaResult<()> {
-        let own_type_param_names: Vec<String> = declaration
+        let own_type_param_names: Vec<InternedString> = declaration
             .type_parameters
             .iter()
             .map(|tp| tp.name.name.clone())
@@ -770,11 +771,11 @@ impl Generator {
             .find_symbol(&declaration.name.name)
             .ok_or_else(|| {
                 SemanticError::FunctionNotFound {
-                    name: declaration.name.name.clone(),
+                    name: declaration.name.name.to_string(),
                     pos: Some(SourcePos {
                         line: declaration.name.line,
                         col: declaration.name.col,
-                        module: Some(self._current_module_path.clone()),
+                        module: Some(self._current_module_path.to_string()),
                     }),
                 }
             })?;
@@ -838,7 +839,7 @@ impl Generator {
         }
 
         let _ty = if let Some(ref intrinsic_fn_name) = intrinsic_name {
-            let host_fn_name_idx = self.add_string_constant(intrinsic_fn_name.clone());
+            let host_fn_name_idx = self.add_string_constant(intrinsic_fn_name);
             self.builder.call_host_function(host_fn_name_idx);
             return_type.clone()
         } else {
@@ -862,16 +863,16 @@ impl Generator {
 
         let qualified_name = self
             .symbol_table
-            .get_new_symbol_qualified_name(declaration.name.name.clone());
+            .get_new_symbol_qualified_name(&declaration.name.name);
 
         // Extract type parameter names from the function itself
-        let own_type_param_names: Vec<String> = declaration
+        let own_type_param_names: Vec<InternedString> = declaration
             .type_parameters
             .iter()
             .map(|tp| tp.name.name.clone())
             .collect();
 
-        let own_type_param_bounds: Vec<Vec<String>> = declaration
+        let own_type_param_bounds: Vec<Vec<InternedString>> = declaration
             .type_parameters
             .iter()
             .map(|tp| tp.bounds.iter().map(|b| b.name.clone()).collect())
@@ -1023,7 +1024,7 @@ impl Generator {
             // For intrinsic functions, generate a call_host_function instead of the body
             let ty = if let Some(ref intrinsic_fn_name) = intrinsic_name {
                 // Emit call_host_function with the intrinsic name
-                let host_fn_name_idx = self.add_string_constant(intrinsic_fn_name.clone());
+                let host_fn_name_idx = self.add_string_constant(intrinsic_fn_name);
                 self.builder.call_host_function(host_fn_name_idx);
                 return_type.clone()
             } else {

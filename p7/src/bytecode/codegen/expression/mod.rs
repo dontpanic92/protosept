@@ -14,7 +14,7 @@ mod operations;
 impl Generator {
     /// Creates a SourcePos from line and column numbers, including the current module path
     fn make_pos(&self, line: usize, col: usize) -> Option<SourcePos> {
-        Some(SourcePos { line, col, module: Some(self._current_module_path.clone()) })
+        Some(SourcePos { line, col, module: Some(self._current_module_path.to_string()) })
     }
 
     /// Creates a type mismatch error
@@ -113,7 +113,7 @@ impl Generator {
                 self.builder.ldf(value);
                 Ok(Type::Primitive(PrimitiveType::Float))
             }
-            Expression::StringLiteral(value) => self.generate_string_literal(value),
+            Expression::StringLiteral(value) => self.generate_string_literal(&value),
             Expression::InterpolatedString { parts } => self.generate_interpolated_string(parts),
             Expression::BooleanLiteral(value) => {
                 self.builder.ldi(if value { 1 } else { 0 });

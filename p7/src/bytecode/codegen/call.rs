@@ -4,6 +4,7 @@ use std::hash::{Hash, Hasher};
 use crate::ast::{Expression, FunctionCall, Identifier};
 use crate::bytecode::Instruction;
 use crate::errors::{SemanticError, SourcePos};
+use crate::intern::InternedString;
 use crate::semantic::{PrimitiveType, SymbolId, SymbolKind, Type, TypeDefinition};
 
 use super::{Generator, SaResult};
@@ -421,13 +422,13 @@ impl Generator {
         // Check if this is an intrinsic function
         if let Some(intrinsic_name) = &function_def.intrinsic_name {
             // For intrinsic functions, use InvokeHost with the intrinsic name
-            let string_id = self.add_string_constant(intrinsic_name.clone());
+            let string_id = self.add_string_constant(intrinsic_name);
             self.builder.call_host_function(string_id);
         } else {
             // For non-intrinsic functions, emit CallExternal instruction
             // Store module path and function name in string constants for runtime resolution
-            let module_path_idx = self.add_string_constant(module_path.clone());
-            let symbol_name_idx = self.add_string_constant(field.name.clone());
+            let module_path_idx = self.add_string_constant(&module_path);
+            let symbol_name_idx = self.add_string_constant(&field.name);
             self.builder.call_external(module_path_idx, symbol_name_idx);
         }
 
@@ -778,7 +779,7 @@ impl Generator {
         // Fallback: look for the method in the source module (cross-module method call)
         let type_id = type_id_opt
             .ok_or_else(|| SemanticError::FunctionNotFound {
-                name: field.name.clone(),
+                name: field.name.to_string(),
                 pos: field.pos(),
             })?;
 
@@ -824,10 +825,10 @@ impl Generator {
         }
 
         // Emit CallExternal for cross-module method call
-        let module_path_idx = self.add_string_constant(source_module_path);
+        let module_path_idx = self.add_string_constant(&source_module_path);
         // Use qualified method name: "TypeName.method_name"
         let method_qualified_name = format!("{}.{}", type_name, field.name);
-        let symbol_name_idx = self.add_string_constant(method_qualified_name);
+        let symbol_name_idx = self.add_string_constant(&method_qualified_name);
         self.builder.call_external(module_path_idx, symbol_name_idx);
 
         Ok(mapped_return_type)
@@ -839,10 +840,10 @@ impl Generator {
         &mut self,
         type_id: u32,
         field: &Identifier,
-    ) -> SaResult<(String, String, crate::semantic::Function, Type)> {
+    ) -> SaResult<(InternedString, String, crate::semantic::Function, Type)> {
         let type_def = self.symbol_table.types.get(type_id as usize).ok_or_else(|| {
             SemanticError::FunctionNotFound {
-                name: field.name.clone(),
+                name: field.name.to_string(),
                 pos: field.pos(),
             }
         })?;
@@ -860,33 +861,33 @@ impl Generator {
         };
 
         let module_path = source_module.ok_or_else(|| SemanticError::FunctionNotFound {
-            name: field.name.clone(),
+            name: field.name.to_string(),
             pos: field.pos(),
         })?;
 
         let module = self.imported_modules.get(&module_path).cloned().ok_or_else(|| {
             SemanticError::FunctionNotFound {
-                name: field.name.clone(),
+                name: field.name.to_string(),
                 pos: field.pos(),
             }
         })?;
 
         // Find the type symbol in the source module
         let root = module.symbols.first().ok_or_else(|| SemanticError::FunctionNotFound {
-            name: field.name.clone(),
+            name: field.name.to_string(),
             pos: field.pos(),
         })?;
 
-        let type_sym_id = root.children.get(&type_name).ok_or_else(|| {
+        let type_sym_id = root.children.get(type_name.as_str()).ok_or_else(|| {
             SemanticError::FunctionNotFound {
-                name: field.name.clone(),
+                name: field.name.to_string(),
                 pos: field.pos(),
             }
         })?;
 
         let type_sym = module.symbols.get(*type_sym_id as usize).ok_or_else(|| {
             SemanticError::FunctionNotFound {
-                name: field.name.clone(),
+                name: field.name.to_string(),
                 pos: field.pos(),
             }
         })?;
@@ -894,14 +895,14 @@ impl Generator {
         // Find the method in the type's children
         let method_sym_id = type_sym.children.get(&field.name).ok_or_else(|| {
             SemanticError::FunctionNotFound {
-                name: field.name.clone(),
+                name: field.name.to_string(),
                 pos: field.pos(),
             }
         })?;
 
         let method_sym = module.symbols.get(*method_sym_id as usize).ok_or_else(|| {
             SemanticError::FunctionNotFound {
-                name: field.name.clone(),
+                name: field.name.to_string(),
                 pos: field.pos(),
             }
         })?;
@@ -910,7 +911,7 @@ impl Generator {
             SymbolKind::Function { func_id, .. } => func_id,
             _ => {
                 return Err(SemanticError::FunctionNotFound {
-                    name: field.name.clone(),
+                    name: field.name.to_string(),
                     pos: field.pos(),
                 });
             }
@@ -918,7 +919,7 @@ impl Generator {
 
         let function_def = module.functions.get(func_id as usize).ok_or_else(|| {
             SemanticError::FunctionNotFound {
-                name: field.name.clone(),
+                name: field.name.to_string(),
                 pos: field.pos(),
             }
         })?.clone();
@@ -939,7 +940,7 @@ impl Generator {
         let type_symbol = self.symbol_table.get_symbol(type_symbol_id).unwrap();
         let method_symbol_id = type_symbol.children.get(&field.name).cloned().ok_or(
             SemanticError::FunctionNotFound {
-                name: field.name.clone(),
+                name: field.name.to_string(),
                 pos: field.pos(),
             },
         )?;
@@ -949,7 +950,7 @@ impl Generator {
             SymbolKind::Function { func_id, .. } => func_id,
             _ => {
                 return Err(SemanticError::FunctionNotFound {
-                    name: field.name.clone(),
+                    name: field.name.to_string(),
                     pos: field.pos(),
                 });
             }
@@ -1014,7 +1015,7 @@ impl Generator {
                 return self.generate_struct_from_call(
                     FunctionCall {
                         callee: Box::new(Expression::Identifier(Identifier {
-                            name: call_name.clone(),
+                            name: call_name.clone().into(),
                             line: call_line,
                             col: call_col,
                         })),
@@ -1075,7 +1076,7 @@ impl Generator {
             Type::Struct(type_id) => self.generate_struct_from_call(
                 FunctionCall {
                     callee: Box::new(Expression::Identifier(Identifier {
-                        name: "Self".to_string(),
+                        name: "Self".into(),
                         line: call_line,
                         col: call_col,
                     })),
@@ -1123,7 +1124,7 @@ impl Generator {
                 return self.generate_struct_from_call(
                     FunctionCall {
                         callee: Box::new(Expression::Identifier(Identifier {
-                            name: call_name.clone(),
+                            name: call_name.clone().into(),
                             line: call_line,
                             col: call_col,
                         })),
@@ -1160,7 +1161,7 @@ impl Generator {
         // Check if this is an intrinsic function
         if let Some(intrinsic_name) = &function_def.intrinsic_name {
             // For intrinsic functions, use InvokeHost instead of Call
-            let string_id = self.add_string_constant(intrinsic_name.clone());
+            let string_id = self.add_string_constant(intrinsic_name);
             self.builder.call_host_function(string_id);
         } else {
             // For regular functions, use Call

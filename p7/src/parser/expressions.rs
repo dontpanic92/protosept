@@ -4,6 +4,7 @@ use crate::ast::{
     Expression, FunctionCall, Identifier, InterpolatedStringPart, Parameter,
 };
 use crate::errors::{ParseError, SourcePos};
+use crate::intern::InternedString;
 use crate::lexer::{InterpolatedStringPart as LexInterpolatedStringPart, Lexer, Token, TokenType};
 
 use super::{ParseResult, Parser, UNARY_OPERATIONS};
@@ -20,7 +21,7 @@ impl Parser {
                 col,
                 ..
             }) => {
-                let name = n.to_string();
+                let name = InternedString::from(n.to_string());
                 let line = *line;
                 let col = *col;
                 self.consume(); // consume the integer token
@@ -230,7 +231,7 @@ impl Parser {
                     self.consume_match(TokenType::CloseParen)?;
                     Expression::FunctionCall(FunctionCall {
                         callee: std::boxed::Box::new(Expression::Identifier(Identifier {
-                            name: "box".to_string(),
+                            name: InternedString::from("box"),
                             line: pos.0,
                             col: pos.1,
                         })),
@@ -273,7 +274,7 @@ impl Parser {
                     ast_parts.push(InterpolatedStringPart::Literal(text));
                 }
                 LexInterpolatedStringPart::Expr(source) => {
-                    let expr = self.parse_interpolated_expression(source)?;
+                    let expr = self.parse_interpolated_expression(source.to_string())?;
                     ast_parts.push(InterpolatedStringPart::Expr(expr));
                 }
             }
@@ -290,7 +291,7 @@ impl Parser {
                     combined.push_str(&text);
                 }
             }
-            return Ok(Expression::StringLiteral(combined));
+            return Ok(Expression::StringLiteral(InternedString::from(combined)));
         }
 
         Ok(Expression::InterpolatedString { parts: ast_parts })

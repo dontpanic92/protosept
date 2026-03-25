@@ -165,10 +165,10 @@ fn collect_functions(module: &Module) -> Vec<FunctionMeta> {
 
             functions.push(FunctionMeta {
                 symbol_id: symbol_id as u32,
-                qualified_name: symbol.qualified_name.clone(),
+                qualified_name: symbol.qualified_name.to_string(),
                 address,
                 func_id,
-                param_names,
+                param_names: param_names.iter().map(|s| s.to_string()).collect(),
                 param_types,
                 return_type,
             });
