@@ -2691,6 +2691,22 @@ struct Vec2(
 
 Method receivers are defined in §11.4. Structs may use `self`, `ref self`, `ref mut self`, or `box self` receivers.
 
+#### 12.5.1 Non-instance methods
+
+A method **without** a receiver parameter is a non-instance (static) method. It is called on the type itself using `Type.method(args)` syntax:
+
+```p7
+struct Rectangle(width: int, height: int) {
+  fn square(size: int) -> Self {
+    return Self(size, size);
+  }
+}
+
+let sq = Rectangle.square(5);
+```
+
+Non-instance methods may use `Self` as a return type and as a constructor.
+
 ### 12.6 Builtin structs: `@builtin()`
 
 A struct may be declared with the `@builtin()` attribute to indicate a compiler-defined, opaque nominal type:
@@ -2875,6 +2891,23 @@ enum Option<T>(
   pub fn is_some(ref self) -> bool { ... }
 }
 ```
+
+#### 13.3.1 Non-instance methods
+
+Enums support non-instance (static) methods, called via `EnumType.method(args)` syntax. When `EnumType.name(...)` is encountered, the compiler first checks whether `name` is a variant; if not, it resolves as a static method call.
+
+```p7
+enum Color(Red, Green, Blue) {
+  fn default() -> Self {
+    return Self.Blue;
+  }
+}
+
+let c = Color.default();  // Calls static method
+let r = Color.Red;        // Constructs variant
+```
+
+Non-instance methods may use `Self` as a return type and as a variant constructor (e.g., `Self.VariantName(...)`).
 
 ---
 

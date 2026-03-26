@@ -1,0 +1,141 @@
+// Tests for non-instance (static) methods on enums
+import test.test;
+
+// Test 1: Basic enum static method returning Self
+enum Color(Red, Green, Blue) {
+    fn default() -> Self {
+        return Self.Blue;
+    }
+}
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_enum_static_default() -> bool {
+    let c = Color.default();
+    match c {
+        Color.Blue => true,
+        _ => false,
+    }
+}
+
+// Test 2: Static method with parameters
+enum Direction(North, South, East, West) {
+    fn from_index(i: int) -> Self {
+        if i == 0 {
+            return Self.North;
+        }
+        if i == 1 {
+            return Self.South;
+        }
+        if i == 2 {
+            return Self.East;
+        }
+        return Self.West;
+    }
+}
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_enum_static_with_param() -> bool {
+    let d = Direction.from_index(2);
+    match d {
+        Direction.East => true,
+        _ => false,
+    }
+}
+
+// Test 3: Enum with both instance and static methods
+enum Shape(
+    Circle: int,
+    Square: int,
+) {
+    fn unit_circle() -> Self {
+        return Self.Circle(1);
+    }
+
+    fn area(ref self) -> int {
+        match self {
+            Shape.Circle(r) => r * r * 3,
+            Shape.Square(s) => s * s,
+        }
+    }
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_enum_mixed_static_and_instance() -> int {
+    let s = Shape.unit_circle();
+    let b = box(s);
+    b.area()
+}
+
+// Test 4: Static method on enum with payload variants
+enum Result(
+    Ok: int,
+    Err: string,
+) {
+    fn ok(value: int) -> Self {
+        return Self.Ok(value);
+    }
+
+    fn err(msg: string) -> Self {
+        return Self.Err(msg);
+    }
+}
+
+@test(expected_type = "int", expected_value = "42")
+fn test_enum_static_payload() -> int {
+    let r = Result.ok(42);
+    match r {
+        Result.Ok(v) => v,
+        Result.Err(e) => 0,
+    }
+}
+
+@test(expected_type = "string", expected_value = "oops")
+fn test_enum_static_payload_err() -> string {
+    let r = Result.err("oops");
+    match r {
+        Result.Ok(v) => "ok",
+        Result.Err(e) => e,
+    }
+}
+
+// Test 5: Variant construction still works alongside static methods
+@test(expected_type = "int", expected_value = "99")
+fn test_enum_variant_still_works() -> int {
+    let r = Result.Ok(99);
+    match r {
+        Result.Ok(v) => v,
+        Result.Err(e) => 0,
+    }
+}
+
+// Test 6: Multiple static methods
+enum Priority(Low, Medium, High) {
+    fn lowest() -> Self {
+        return Self.Low;
+    }
+
+    fn highest() -> Self {
+        return Self.High;
+    }
+
+    fn between(a: int) -> Self {
+        if a < 5 {
+            return Self.Low;
+        }
+        if a < 10 {
+            return Self.Medium;
+        }
+        return Self.High;
+    }
+}
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_enum_multiple_static_methods() -> bool {
+    let low = Priority.lowest();
+    let high = Priority.highest();
+    let med = Priority.between(7);
+    match med {
+        Priority.Medium => true,
+        _ => false,
+    }
+}

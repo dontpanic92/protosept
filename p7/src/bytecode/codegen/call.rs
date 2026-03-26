@@ -5,7 +5,7 @@ use crate::ast::{Expression, FunctionCall, Identifier};
 use crate::bytecode::Instruction;
 use crate::errors::{SemanticError, SourcePos};
 use crate::intern::InternedString;
-use crate::semantic::{PrimitiveType, SymbolId, SymbolKind, Type, TypeDefinition};
+use crate::semantic::{PrimitiveType, SymbolId, SymbolKind, Type, TypeDefinition, TypeId};
 
 use super::{Generator, SaResult};
 
@@ -297,11 +297,34 @@ impl Generator {
         let concrete_ty = self.get_semantic_type(&parsed_type)?;
 
         if let Type::Enum(type_id) = concrete_ty {
-            return Ok(Some(self.generate_enum_variant_from_call(
-                callee_expr,
-                arguments,
-                type_id,
-            )?));
+            // Extract the field name from callee_expr to check if it's a variant
+            let field_name = if let Expression::FieldAccess { field, .. } = &callee_expr {
+                Some(field.name.clone())
+            } else {
+                None
+            };
+
+            let is_variant = field_name
+                .as_ref()
+                .map_or(true, |name| self.is_enum_variant(type_id, name));
+
+            if is_variant {
+                return Ok(Some(self.generate_enum_variant_from_call(
+                    callee_expr,
+                    arguments,
+                    type_id,
+                )?));
+            }
+
+            // Not a variant — try static method call on the generic enum
+            if let Some(field_ident) =
+                if let Expression::FieldAccess { field, .. } = &callee_expr { Some(field.clone()) } else { None }
+            {
+                let result = self.generate_static_type_method_call(base, &field_ident, arguments)?;
+                return Ok(Some(result));
+            }
+
+            return Ok(None);
         }
 
         // TODO: Handle static methods on generic structs if needed
@@ -449,20 +472,36 @@ impl Generator {
 
         match ty {
             Type::Struct(_) => {
-                let result = self.generate_static_struct_method_call(ident, field, arguments)?;
+                let result = self.generate_static_type_method_call(ident, field, arguments)?;
                 Ok(Some(result))
             }
             Type::Enum(type_id) => {
-                let result =
-                    self.generate_enum_variant_from_call(callee_expr, arguments, type_id)?;
-                Ok(Some(result))
+                // Check if the field name is an enum variant; if so, construct the variant.
+                // Otherwise, treat it as a static method call on the enum.
+                if self.is_enum_variant(type_id, &field.name) {
+                    let result =
+                        self.generate_enum_variant_from_call(callee_expr, arguments, type_id)?;
+                    Ok(Some(result))
+                } else {
+                    let result = self.generate_static_type_method_call(ident, field, arguments)?;
+                    Ok(Some(result))
+                }
             }
             _ => Ok(None),
         }
     }
 
-    /// Generates a static method call on a struct like `Type.method(...)`
-    fn generate_static_struct_method_call(
+    /// Returns true if `name` is a variant of the enum identified by `type_id`.
+    fn is_enum_variant(&self, type_id: TypeId, name: &str) -> bool {
+        if let TypeDefinition::Enum(e) = self.symbol_table.get_type(type_id) {
+            e.variants.iter().any(|(vname, _)| vname.as_str() == name)
+        } else {
+            false
+        }
+    }
+
+    /// Generates a static (non-instance) method call like `Type.method(...)`
+    fn generate_static_type_method_call(
         &mut self,
         ident: &Identifier,
         field: &Identifier,
