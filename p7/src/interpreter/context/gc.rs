@@ -128,6 +128,11 @@ impl Context {
             Self::update_data_vec(&mut frame.params, index_map);
         }
 
+        // Update references in module-level variables
+        for vars in &mut self.module_vars {
+            Self::update_data_vec(vars, index_map);
+        }
+
         // Update references in heap structs
         for struct_obj in &mut self.heap {
             Self::update_data_vec(&mut struct_obj.fields, index_map);
