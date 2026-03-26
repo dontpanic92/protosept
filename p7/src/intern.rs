@@ -10,6 +10,19 @@ use std::rc::Rc;
 #[derive(Clone, Eq, Hash, Ord, PartialOrd)]
 pub struct InternedString(Rc<str>);
 
+impl serde::Serialize for InternedString {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for InternedString {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(InternedString::from(s))
+    }
+}
+
 impl InternedString {
     /// Get the underlying string slice.
     pub fn as_str(&self) -> &str {

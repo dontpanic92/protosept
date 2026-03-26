@@ -13,7 +13,7 @@ use crate::{
 use super::Module;
 
 /// A module-level binding (thread-local global variable).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ModuleVariable {
     pub name: InternedString,
     pub ty: Type,

@@ -245,7 +245,7 @@ pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {
     insts
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Module {
     pub instructions: Vec<u8>,
     pub symbols: Vec<Symbol>,
@@ -266,5 +266,13 @@ impl Module {
         self.symbols
             .iter()
             .find(|sym| sym.name == name && matches!(sym.kind, SymbolKind::Function { .. }))
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        bincode::serialize(self).expect("Module serialization failed")
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        bincode::deserialize(bytes).map_err(|e| format!("Module deserialization failed: {e}"))
     }
 }

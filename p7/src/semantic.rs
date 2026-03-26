@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Debug};
 
 use crate::intern::InternedString;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Constant {
     Integer(i64),
     Float(f64),
@@ -22,7 +22,7 @@ pub type SymbolId = u32;
 /// Unique identifier for modules in the symbol table
 pub type ModuleId = u32;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SymbolKind {
     Constant(Constant),
     Function { func_id: FunctionId, address: u32 },
@@ -61,7 +61,7 @@ impl SymbolKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Symbol {
     pub name: InternedString,
     pub qualified_name: InternedString,
@@ -101,13 +101,15 @@ impl Symbol {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Function {
     pub qualified_name: InternedString,
     pub params: Vec<Type>,
     pub param_names: Vec<InternedString>,
+    #[serde(skip)]
     pub param_defaults: Vec<Option<crate::ast::Expression>>,
     pub return_type: Type,
+    #[serde(skip)]
     pub attributes: Vec<crate::ast::Attribute>,
     // Intrinsic name if this is an intrinsic function (e.g., "box_new" for box() constructor)
     // Extracted from @intrinsic("name") attribute for special compiler-recognized functions
@@ -117,25 +119,30 @@ pub struct Function {
     // For generic functions: stores proto bounds per type parameter (parallel to type_parameters)
     pub type_param_bounds: Vec<Vec<InternedString>>,
     // For generic functions: stores the original parsed parameter types (before substitution)
+    #[serde(skip)]
     pub generic_param_types: Option<Vec<crate::ast::Type>>,
     // For generic functions: stores the original parsed return type (before substitution)
+    #[serde(skip)]
     pub generic_return_type: Option<crate::ast::Type>,
     // For generic functions: stores the function body AST for monomorphization
+    #[serde(skip)]
     pub generic_body: Option<Vec<crate::ast::Statement>>,
     // For monomorphized functions: stores the base generic function's FunctionId and concrete type arguments
     pub monomorphization: Option<(FunctionId, Vec<Type>)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Enum {
     pub qualified_name: InternedString,
     pub variants: Vec<(InternedString, Vec<Type>)>, // (variant_name, field_types)
+    #[serde(skip)]
     pub attributes: Vec<crate::ast::Attribute>,
     // For generic enums: stores the original type parameter names
     pub type_parameters: Vec<InternedString>,
     // For generic enums: stores proto bounds per type parameter (parallel to type_parameters)
     pub type_param_bounds: Vec<Vec<InternedString>>,
     // For generic enums: stores the original parsed variant field types (before substitution)
+    #[serde(skip)]
     pub generic_variant_types: Option<Vec<Vec<crate::ast::Type>>>,
     // For monomorphized enums: stores the base generic enum's TypeId and concrete type arguments
     pub monomorphization: Option<(TypeId, Vec<Type>)>,
@@ -147,17 +154,20 @@ pub struct Enum {
     pub source_module: Option<InternedString>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Struct {
     pub qualified_name: InternedString,
     pub fields: Vec<(InternedString, Type)>,
+    #[serde(skip)]
     pub field_defaults: Vec<Option<crate::ast::Expression>>,
+    #[serde(skip)]
     pub attributes: Vec<crate::ast::Attribute>,
     // For generic structs: stores the original type parameter names
     pub type_parameters: Vec<InternedString>,
     // For generic structs: stores proto bounds per type parameter (parallel to type_parameters)
     pub type_param_bounds: Vec<Vec<InternedString>>,
     // For generic structs: stores the original parsed field types (before substitution)
+    #[serde(skip)]
     pub generic_field_types: Option<Vec<crate::ast::Type>>,
     // For monomorphized structs: stores the base generic struct's TypeId and concrete type arguments
     pub monomorphization: Option<(TypeId, Vec<Type>)>,
@@ -169,14 +179,15 @@ pub struct Struct {
     pub source_module: Option<InternedString>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Proto {
     pub qualified_name: InternedString,
     pub methods: Vec<(InternedString, Vec<Type>, Option<Type>)>, // (name, params, return_type)
+    #[serde(skip)]
     pub attributes: Vec<crate::ast::Attribute>,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PrimitiveType {
     Int,
     Float,
@@ -186,7 +197,7 @@ pub enum PrimitiveType {
     Unit,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum Type {
     Primitive(PrimitiveType),
     Reference(Box<Type>),
@@ -390,7 +401,7 @@ impl ToString for Type {
 }
 
 /// Type definitions (structs, enums, protocols) - does NOT include functions
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum TypeDefinition {
     Enum(Enum),
     Struct(Struct),
