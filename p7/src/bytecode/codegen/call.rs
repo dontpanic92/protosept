@@ -274,6 +274,15 @@ impl Generator {
                 return Ok(result);
             }
 
+        // Case 3b: Cross-module static method or enum variant like `module.Type.method(...)` or `module.Enum.Variant(...)`
+        if let Expression::FieldAccess { object: inner_obj, field: type_field } = object.as_ref()
+            && let Expression::Identifier(module_ident) = inner_obj.as_ref()
+            && let Some(result) = self.try_generate_cross_module_static_call(
+                module_ident, type_field, field, callee_expr.clone(), arguments.clone(),
+            )? {
+                return Ok(result);
+            }
+
         // Case 4: Instance method call like `obj.method(...)`
         self.generate_instance_method_call(object, field, arguments, call_line, call_col)
     }
@@ -1208,5 +1217,95 @@ impl Generator {
         }
 
         Ok(function_def.return_type.clone())
+    }
+
+    /// Tries to generate a cross-module static method call or enum variant construction.
+    /// Handles patterns like `module.Type.method(...)` or `module.Enum.Variant(...)`.
+    fn try_generate_cross_module_static_call(
+        &mut self,
+        module_ident: &Identifier,
+        type_field: &Identifier,
+        method_field: &Identifier,
+        callee_expr: Expression,
+        arguments: CallArgs,
+    ) -> SaResult<Option<Type>> {
+        // Check if module_ident refers to a module
+        let Some(sym_id) = self.symbol_table.find_symbol_in_scope(&module_ident.name) else {
+            return Ok(None);
+        };
+        let Some(sym) = self.symbol_table.get_symbol(sym_id) else {
+            return Ok(None);
+        };
+        if !matches!(sym.kind, SymbolKind::Module(_)) {
+            return Ok(None);
+        }
+
+        // Resolve the qualified type name (e.g., "module.Type")
+        let qualified_name = format!("{}.{}", module_ident.name, type_field.name);
+        let Ok(ty) = self.resolve_qualified_type_name(
+            &qualified_name,
+            module_ident.line,
+            module_ident.col,
+        ) else {
+            return Ok(None);
+        };
+
+        match ty {
+            Type::Enum(type_id) => {
+                if self.is_enum_variant(type_id, &method_field.name) {
+                    let result =
+                        self.generate_enum_variant_from_call(callee_expr, arguments, type_id)?;
+                    return Ok(Some(result));
+                }
+                let result =
+                    self.generate_external_static_method_call(type_id, method_field, arguments)?;
+                Ok(Some(result))
+            }
+            Type::Struct(type_id) => {
+                let result =
+                    self.generate_external_static_method_call(type_id, method_field, arguments)?;
+                Ok(Some(result))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Generates a static (non-instance) method call on a cross-module type.
+    fn generate_external_static_method_call(
+        &mut self,
+        type_id: u32,
+        field: &Identifier,
+        arguments: CallArgs,
+    ) -> SaResult<Type> {
+        let (source_module_path, type_name, function_def, mapped_return_type) =
+            self.resolve_external_method(type_id, field)?;
+
+        let ordered_exprs = self.process_arguments(
+            &format!("{}.{}", type_name, field.name),
+            field.line,
+            field.col,
+            arguments,
+            &function_def.param_names,
+            &function_def.param_defaults,
+        )?;
+
+        // Map parameter types from source module
+        let imported_module = self.imported_modules.get(&source_module_path).unwrap().clone();
+        let mut type_map = std::collections::HashMap::new();
+        let mapped_params: Vec<Type> = function_def
+            .params
+            .iter()
+            .map(|p| self.map_type_from_module(&imported_module, p, &mut type_map))
+            .collect::<SaResult<Vec<_>>>()?;
+
+        self.push_typed_argument_list(ordered_exprs, &mapped_params, field.line, field.col)?;
+
+        // Emit CallExternal for cross-module static method call
+        let module_path_idx = self.add_string_constant(&source_module_path);
+        let method_qualified_name = format!("{}.{}", type_name, field.name);
+        let symbol_name_idx = self.add_string_constant(&method_qualified_name);
+        self.builder.call_external(module_path_idx, symbol_name_idx);
+
+        Ok(mapped_return_type)
     }
 }

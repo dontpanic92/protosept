@@ -28,9 +28,14 @@ impl Generator {
                     // Try direct lookup first, then qualified name for cross-module types
                     let resolved_type = self.require_type_from_identifier(enum_name)
                         .or_else(|_| {
-                            // Try "module.TypeName" qualified resolution
-                            let qualified = format!("{}.{}", enum_name.name, variant_name.name);
-                            self.resolve_qualified_type_name(&qualified, enum_name.line, enum_name.col)
+                            if enum_name.name.contains('.') {
+                                // Already a qualified name (e.g., "types.Direction" from module.Enum.Variant pattern)
+                                self.resolve_qualified_type_name(&enum_name.name, enum_name.line, enum_name.col)
+                            } else {
+                                // Try "module.TypeName" qualified resolution
+                                let qualified = format!("{}.{}", enum_name.name, variant_name.name);
+                                self.resolve_qualified_type_name(&qualified, enum_name.line, enum_name.col)
+                            }
                         })?;
 
                     match resolved_type {

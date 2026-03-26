@@ -1,0 +1,38 @@
+// Tests for cross-module static method calls
+import test.test;
+import cross_module_test.types;
+
+// Test 1: Call static method on cross-module struct
+@test(expected_type = "int", expected_value = "0")
+fn test_cross_module_struct_static() -> int {
+    let p = types.Pos.origin();
+    return p.row;
+}
+
+// Test 2: Call static method with args on cross-module struct
+@test(expected_type = "int", expected_value = "10")
+fn test_cross_module_struct_static_with_args() -> int {
+    let p = types.Pos.from_value(5);
+    return p.sum();
+}
+
+// Test 3: Call static method on cross-module enum
+@test(expected_type = "bool", expected_value = "true")
+fn test_cross_module_enum_static() -> bool {
+    let d = types.Direction.default();
+    return d.is_vertical();
+}
+
+// Test 4: Construct cross-module enum payload variant via module.Enum.Variant(...)
+@test(expected_type = "int", expected_value = "5")
+fn test_cross_module_enum_variant_payload() -> int {
+    let s = types.Shape.Circle(5);
+    return s.get_value();
+}
+
+// Test 5: Call static method on cross-module enum that returns payload variant
+@test(expected_type = "int", expected_value = "1")
+fn test_cross_module_enum_static_payload() -> int {
+    let s = types.Shape.unit_circle();
+    return s.get_value();
+}

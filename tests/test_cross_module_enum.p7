@@ -1,0 +1,119 @@
+// Tests for cross-module enum matching and comparison
+import test.test;
+import cross_module_test.types;
+
+// --- Unit variant matching ---
+
+@test(expected_type = "int", expected_value = "1")
+fn test_match_unit_variant() -> int {
+    let d = types.Direction.Up;
+    match d {
+        types.Direction.Up => 1,
+        types.Direction.Down => 2,
+        types.Direction.Left => 3,
+        types.Direction.Right => 4,
+    }
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_match_unit_variant_left() -> int {
+    let d = types.Direction.Left;
+    match d {
+        types.Direction.Up => 1,
+        types.Direction.Down => 2,
+        types.Direction.Left => 3,
+        types.Direction.Right => 4,
+    }
+}
+
+@test(expected_type = "int", expected_value = "99")
+fn test_match_wildcard() -> int {
+    let d = types.Direction.Right;
+    match d {
+        types.Direction.Up => 1,
+        _ => 99,
+    }
+}
+
+// --- Payload variant matching ---
+
+@test(expected_type = "int", expected_value = "42")
+fn test_match_payload_circle() -> int {
+    let s = types.Shape.Circle(42);
+    match s {
+        types.Shape.Circle(r) => r,
+        types.Shape.Square(x) => x,
+    }
+}
+
+@test(expected_type = "int", expected_value = "7")
+fn test_match_payload_square() -> int {
+    let s = types.Shape.Square(7);
+    match s {
+        types.Shape.Circle(r) => r,
+        types.Shape.Square(x) => x,
+    }
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_match_payload_wildcard() -> int {
+    let s = types.Shape.Square(7);
+    match s {
+        types.Shape.Circle(r) => r,
+        _ => 0,
+    }
+}
+
+// --- Shadowing in match arms ---
+
+@test(expected_type = "int", expected_value = "42")
+fn test_match_payload_shadow_scrutinee() -> int {
+    let s = types.Shape.Circle(42);
+    match s {
+        types.Shape.Circle(s) => s,
+        types.Shape.Square(s) => s,
+    }
+}
+
+// --- Equality / inequality ---
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_enum_equality() -> bool {
+    let d = types.Direction.Up;
+    return d == types.Direction.Up;
+}
+
+@test(expected_type = "bool", expected_value = "false")
+fn test_enum_equality_false() -> bool {
+    let d = types.Direction.Up;
+    return d == types.Direction.Down;
+}
+
+@test(expected_type = "bool", expected_value = "true")
+fn test_enum_inequality() -> bool {
+    let d = types.Direction.Up;
+    return d != types.Direction.Down;
+}
+
+@test(expected_type = "bool", expected_value = "false")
+fn test_enum_inequality_false() -> bool {
+    let d = types.Direction.Up;
+    return d != types.Direction.Up;
+}
+
+// --- Enum from function return ---
+
+fn make_direction() -> types.Direction {
+    return types.Direction.Down;
+}
+
+@test(expected_type = "int", expected_value = "2")
+fn test_match_from_returned_enum() -> int {
+    let d = make_direction();
+    match d {
+        types.Direction.Up => 1,
+        types.Direction.Down => 2,
+        types.Direction.Left => 3,
+        types.Direction.Right => 4,
+    }
+}

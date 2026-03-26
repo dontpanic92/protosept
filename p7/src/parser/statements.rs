@@ -32,6 +32,29 @@ impl Parser {
                                 variant_name,
                                 sub_patterns,
                             };
+                        } else if let Pattern::FieldAccess {
+                            object: inner_obj,
+                            field: inner_field,
+                        } = object.as_ref()
+                            && let Pattern::Identifier(module_name) = inner_obj.as_ref()
+                        {
+                            // module.EnumName.Variant(...) pattern
+                            let qualified_name = Identifier {
+                                name: InternedString::from(
+                                    format!("{}.{}", module_name.name, inner_field.name),
+                                ),
+                                line: module_name.line,
+                                col: module_name.col,
+                            };
+                            let variant_name = field.clone();
+                            self.consume_match(TokenType::OpenParen)?;
+                            let sub_patterns = self.parse_sub_patterns()?;
+                            self.consume_match(TokenType::CloseParen)?;
+                            pattern = Pattern::EnumVariant {
+                                enum_name: qualified_name,
+                                variant_name,
+                                sub_patterns,
+                            };
                         } else {
                             break;
                         }

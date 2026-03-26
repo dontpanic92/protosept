@@ -7,6 +7,14 @@ pub struct Pos(pub row: int, pub col: int) {
         self.row = self.row * factor;
         self.col = self.col * factor;
     }
+
+    pub fn origin() -> Pos {
+        return Pos(0, 0);
+    }
+
+    pub fn from_value(v: int) -> Pos {
+        return Pos(v, v);
+    }
 }
 
 pub enum Direction(Up, Down, Left, Right) {
@@ -15,6 +23,26 @@ pub enum Direction(Up, Down, Left, Right) {
             Direction.Up => true,
             Direction.Down => true,
             _ => false,
+        }
+    }
+
+    pub fn default() -> Direction {
+        return Direction.Up;
+    }
+}
+
+pub enum Shape(
+    Circle: int,
+    Square: int,
+) {
+    pub fn unit_circle() -> Shape {
+        return Shape.Circle(1);
+    }
+
+    pub fn get_value(ref self) -> int {
+        match self {
+            Shape.Circle(r) => r,
+            Shape.Square(s) => s,
         }
     }
 }

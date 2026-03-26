@@ -762,7 +762,7 @@ impl LocalSymbolScope {
 
     pub fn find_variable(&self, name: &str) -> Option<u32> {
         for scope in self.scopes.iter().rev() {
-            for var in scope.var_ids.iter() {
+            for var in scope.var_ids.iter().rev() {
                 if self.locals[*var as usize].name == name {
                     return Some(*var);
                 }
