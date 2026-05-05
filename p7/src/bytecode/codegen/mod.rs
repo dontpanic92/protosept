@@ -75,6 +75,9 @@ pub struct Generator {
     pub(super) enclosing_type_param_bounds: Vec<Vec<InternedString>>,
     // Module-level bindings (thread-local globals)
     pub(super) module_variables: Vec<ModuleVariable>,
+    // Track type_tag uniqueness across @foreign protos in this module.
+    // Maps type_tag -> (line, col) of the proto declaration that first claimed it.
+    pub(super) seen_foreign_type_tags: std::collections::HashMap<InternedString, (usize, usize)>,
 }
 
 impl Generator {
@@ -119,6 +122,7 @@ impl Generator {
             enclosing_type_params: Vec::new(),
             enclosing_type_param_bounds: Vec::new(),
             module_variables: Vec::new(),
+            seen_foreign_type_tags: std::collections::HashMap::new(),
         }
     }
 
@@ -578,6 +582,7 @@ impl Generator {
             enclosing_type_params: Vec::new(),
             enclosing_type_param_bounds: Vec::new(),
             module_variables: Vec::new(),
+            seen_foreign_type_tags: std::collections::HashMap::new(),
         };
         // Override root module metadata with this module_path
         if let Some(root) = generator.symbol_table.symbols.get_mut(0) {

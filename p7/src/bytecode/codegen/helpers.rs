@@ -9,6 +9,19 @@ use crate::{
 
 use super::{Generator, SaResult};
 
+/// Parsed contents of a `@foreign(...)` attribute on a proto declaration.
+///
+/// Required keys are `dispatcher` and `type_tag`; `finalizer` is optional.
+/// All keys are `Option` so the parser can be permissive — full validation
+/// (required-key presence, `type_tag` uniqueness, allowed value types) is
+/// performed by `Generator::validate_foreign_attrs`.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ForeignAttrs {
+    pub dispatcher: Option<InternedString>,
+    pub finalizer: Option<InternedString>,
+    pub type_tag: Option<InternedString>,
+}
+
 impl Generator {
     /// Look up a symbol in scope, returning an error if not found
     pub(super) fn require_symbol_in_scope(
@@ -618,6 +631,39 @@ impl Generator {
             }
         }
         None
+    }
+
+    /// Parsed contents of a `@foreign(...)` attribute. Required keys are
+    /// `dispatcher` and `type_tag`; `finalizer` is optional.
+    pub(super) fn extract_foreign_attrs(
+        attributes: &[crate::ast::Attribute],
+    ) -> Option<ForeignAttrs> {
+        let mut found = false;
+        let mut out = ForeignAttrs::default();
+        for attr in attributes {
+            if attr.name.name != "foreign" {
+                continue;
+            }
+            found = true;
+            for (name_opt, expr) in &attr.arguments {
+                let key = match name_opt {
+                    Some(id) => id.name.clone(),
+                    None => continue, // @foreign uses named keys only
+                };
+                let value = match expr {
+                    Expression::StringLiteral(s) => s.clone(),
+                    _ => continue, // non-string values rejected in semantic
+                };
+                if key == "dispatcher" {
+                    out.dispatcher = Some(value);
+                } else if key == "finalizer" {
+                    out.finalizer = Some(value);
+                } else if key == "type_tag" {
+                    out.type_tag = Some(value);
+                }
+            }
+        }
+        if found { Some(out) } else { None }
     }
 
     /// Resolve a protocol identifier to its TypeId

@@ -6,6 +6,8 @@ struct builtin();
 
 struct intrinsic(pub name: string);
 
+struct foreign(pub dispatcher: string, pub finalizer: ?string, pub type_tag: string);
+
 proto Display {
     fn display(ref self) -> string;
 }

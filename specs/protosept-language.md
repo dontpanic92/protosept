@@ -3373,6 +3373,107 @@ b.mutate();  // ok: can call again
 ### 18.9 Nullability
 `?box<P>` is a nullable proto handle; `box<P>` is non-null.
 
+### 18.10 Foreign protos (host-implemented dynamic dispatch)
+
+A *foreign proto* is an ordinary object proto annotated with the
+`@foreign(...)` attribute. Foreign protos let scripts hold and dispatch
+on values whose underlying state lives in the host (e.g. a
+`crosscom::ComRc<I>`, an audio source, a file handle) without any
+new bytecode opcode or special dispatch primitive.
+
+#### 18.10.1 Declaration
+
+```p7
+@foreign(
+    dispatcher = "com.invoke",        // host fn that handles method calls
+    finalizer  = "com.release",       // optional host fn for box<F> drop
+    type_tag   = "radiance.IDirector" // host-defined identity of the proto
+)
+pub proto IDirector {
+    fn activate(self: ref<IDirector>) -> int;
+    fn update(self: ref<IDirector>, dt: float) -> ?int;
+}
+```
+
+Required keys: `dispatcher` (string), `type_tag` (string). Optional:
+`finalizer` (string).
+
+`type_tag` is the runtime identity of the proto. Two distinct foreign
+protos in the same compilation unit MUST have distinct `type_tag`
+values; the compiler rejects duplicates.
+
+Foreign-proto methods are body-less (terminate with `;`). All methods
+on a foreign proto are dispatched by the host. Method bodies on a
+foreign proto are an ERROR. Generic methods on foreign protos are an
+ERROR (initial v1 restriction).
+
+#### 18.10.2 Carrier representation (informative)
+
+For every `@foreign proto F` the compiler synthesises a hidden carrier
+struct `__ForeignCarrier_F`. The carrier:
+
+- has no fields,
+- conforms to `F`,
+- is not addressable from user source code,
+- exposes one host-method symbol per proto method.
+
+A `box<F>` whose payload is a foreign cell carries the carrier's
+`concrete_type_id`, so dynamic dispatch through the existing
+`CallProtoMethod` machinery routes to the carrier's vtable entries and
+from there to the proto's host dispatcher.
+
+#### 18.10.3 Dispatcher protocol (normative)
+
+For a method `fn m(self: ref<F>, a1, ..., aN) -> R` on `@foreign proto F`,
+a call `recv.m(a1, ..., aN)` produces the following stack at dispatcher
+entry (top → bottom):
+
+```
+type_tag    : string     // value declared in @foreign(type_tag="...")
+method_name : string     // "m"
+aN
+...
+a1
+recv        : box<F>     // ProtoBoxRef carrying the foreign cell
+```
+
+The dispatcher pops these values, performs the host-side operation, and
+pushes a single value of type `R` (or pushes `Null` / `Some(v)` for a
+`?T` return). The runtime forwards execution to the dispatcher via the
+existing `InvokeHost` mechanism — no new opcode is introduced.
+
+A single dispatcher MAY serve many foreign protos. The explicit
+`type_tag` on the stack lets one dispatcher disambiguate without
+inspecting the receiver's contents.
+
+#### 18.10.4 Identity, copy, drop
+
+A foreign cell holds an opaque host-supplied `i64` handle plus the
+proto's `type_tag` and an *ownership* flag:
+
+- An owned cell (`box<F>`) fires the proto's `finalizer`, if any,
+  exactly once when the box is collected.
+- A borrowed cell (`ref<F>`) does not fire the finalizer.
+
+Foreign cells participate in the existing GC. The host's finalizer is
+responsible for whatever native lifetime semantics apply (e.g.
+`ComRc::release`).
+
+#### 18.10.5 Construction
+
+A script CANNOT construct a foreign value directly. Foreign values
+enter the runtime only via host functions whose return type is `box<F>`
+or `ref<F>` for some foreign `F`; such host functions use
+`Context::push_foreign(type_tag, handle)` to allocate and stamp the
+carrier.
+
+#### 18.10.6 Reentrancy and cycles
+
+Dispatchers MAY re-enter the interpreter (e.g. by invoking script
+callbacks). Reference cycles spanning a foreign cell and a script-side
+proto box are NOT detected by the GC; documented as a known limit of
+the foreign-proto mechanism.
+
 ---
 
 ## 19. Attributes (compile-time metadata)

@@ -661,7 +661,7 @@ impl Generator {
 
         // Now process the method signatures
         let mut methods_with_types = Vec::new();
-        for m in methods {
+        for m in &methods {
             let mut params = Vec::new();
             for p in &m.parameters {
                 params.push(self.get_semantic_type(&p.arg_type)?);
@@ -676,17 +676,150 @@ impl Generator {
         // Update the proto with the actual method signatures
         let ty = Proto {
             qualified_name: qualified_name.clone(),
-            methods: methods_with_types,
+            methods: methods_with_types.clone(),
             attributes: attributes.clone(),
         };
         self.symbol_table.types[type_id as usize] = TypeDefinition::Proto(ty);
 
         self.symbol_table.pop_symbol();
 
+        // If this proto carries `@foreign(...)`, synthesise a hidden carrier
+        // struct so that vtable dispatch can route to host-provided methods.
+        if let Some(foreign) = Self::extract_foreign_attrs(&attributes) {
+            self.synthesize_foreign_carrier(
+                &name,
+                &qualified_name,
+                type_id,
+                foreign,
+                &methods_with_types,
+            )?;
+        }
+
         // TODO: Store is_pub for module visibility checking
         let _ = is_pub;
 
         Ok(Type::Primitive(PrimitiveType::Unit))
+    }
+
+    /// Synthesise the hidden `__ForeignCarrier_<F>` struct for an `@foreign`
+    /// proto `F`. The carrier:
+    ///   - has no fields,
+    ///   - conforms to `F`,
+    ///   - exposes one child symbol per proto method, with kind
+    ///     `SymbolKind::HostMethod`.
+    ///
+    /// The runtime's `build_vtable` walks `Struct.conforming_to` and reads
+    /// child symbols by method name, so the carrier's vtable entries are
+    /// populated automatically without any new dispatch code at registration
+    /// time.
+    fn synthesize_foreign_carrier(
+        &mut self,
+        proto_ident: &Identifier,
+        proto_qualified_name: &InternedString,
+        proto_type_id: crate::semantic::TypeId,
+        foreign: super::helpers::ForeignAttrs,
+        methods: &[(InternedString, Vec<Type>, Option<Type>)],
+    ) -> SaResult<()> {
+        // Validate required keys.
+        let dispatcher = foreign.dispatcher.ok_or_else(|| {
+            SemanticError::Other(format!(
+                "@foreign proto '{}' is missing required key 'dispatcher' at line {} column {}",
+                proto_ident.name, proto_ident.line, proto_ident.col,
+            ))
+        })?;
+        let type_tag = foreign.type_tag.ok_or_else(|| {
+            SemanticError::Other(format!(
+                "@foreign proto '{}' is missing required key 'type_tag' at line {} column {}",
+                proto_ident.name, proto_ident.line, proto_ident.col,
+            ))
+        })?;
+
+        // Enforce type_tag uniqueness across the module.
+        if let Some((prev_line, prev_col)) =
+            self.seen_foreign_type_tags.get(&type_tag).copied()
+        {
+            return Err(SemanticError::Other(format!(
+                "@foreign type_tag '{}' on proto '{}' at line {} column {} is already claimed by a previous proto at line {} column {}",
+                type_tag, proto_ident.name, proto_ident.line, proto_ident.col, prev_line, prev_col,
+            )));
+        }
+        self.seen_foreign_type_tags
+            .insert(type_tag.clone(), (proto_ident.line, proto_ident.col));
+
+        // Allocate the carrier struct's qualified name and TypeId. The
+        // double-underscore prefix is a soft convention: user code is
+        // unlikely to type that identifier.
+        let carrier_local_name =
+            InternedString::from(format!("__ForeignCarrier_{}", proto_ident.name));
+        let carrier_qualified_name = InternedString::from(format!(
+            "{}__ForeignCarrier",
+            // The proto's qualified_name is "<scope>.<protoname>"; replace
+            // the trailing proto name with the carrier convention to keep
+            // qualified-name uniqueness without depending on lexical scope.
+            proto_qualified_name
+                .as_str()
+                .strip_suffix(proto_ident.name.as_str())
+                .unwrap_or(proto_qualified_name.as_str()),
+        ));
+
+        let carrier_struct = Struct {
+            qualified_name: carrier_qualified_name.clone(),
+            fields: Vec::new(),
+            field_defaults: Vec::new(),
+            attributes: Vec::new(),
+            type_parameters: Vec::new(),
+            type_param_bounds: Vec::new(),
+            generic_field_types: None,
+            monomorphization: None,
+            conforming_to: vec![proto_type_id],
+            methods: Vec::new(),
+            source_module: None,
+        };
+        let carrier_type_id = self
+            .symbol_table
+            .add_type(TypeDefinition::Struct(carrier_struct));
+
+        // Push the carrier symbol so that subsequent insert_symbol calls
+        // attach as its children.
+        let carrier_symbol = Symbol::new(
+            carrier_local_name.clone(),
+            carrier_qualified_name.clone(),
+            SymbolKind::Type(carrier_type_id),
+        );
+        self.symbol_table.push_symbol(carrier_symbol);
+
+        // For each proto method, insert a HostMethod child symbol on the
+        // carrier. `build_vtable` will pick these up by name.
+        for (method_name, params, return_type) in methods {
+            let return_kind = match return_type {
+                None => crate::semantic::ReturnKind::Void,
+                Some(Type::Nullable(_)) => crate::semantic::ReturnKind::Optional,
+                Some(_) => crate::semantic::ReturnKind::Value,
+            };
+            let qualified_method_name = InternedString::from(format!(
+                "{}.{}",
+                carrier_qualified_name, method_name,
+            ));
+            let host_method_symbol = Symbol::new(
+                method_name.clone(),
+                qualified_method_name,
+                SymbolKind::HostMethod {
+                    dispatcher_name: dispatcher.clone(),
+                    method_name: method_name.clone(),
+                    type_tag: type_tag.clone(),
+                    param_count: params.len() as u32,
+                    return_kind,
+                },
+            );
+            self.symbol_table.insert_symbol(host_method_symbol);
+        }
+
+        self.symbol_table.pop_symbol();
+
+        // Suppress unused warning until Phase 3 wires the finalizer.
+        let _ = foreign.finalizer;
+
+        Ok(())
     }
 
     fn generate_return(&mut self, expression: Expression) -> SaResult<Type> {

@@ -8,6 +8,21 @@ use crate::errors::RuntimeError;
 use super::Context;
 use super::data::{ContextResult, Data, StackFrame, Struct};
 
+/// Outcome of a `CallProtoMethod` vtable lookup. Two-stage dispatch lets us
+/// release the immutable borrow on `modules` before we push a new stack
+/// frame or invoke a host function.
+enum DispatchKind {
+    /// Ordinary protosept method body at `address`, expecting `args_len`
+    /// stack values.
+    Function { address: u32, args_len: usize },
+    /// `@foreign` proto method routed through a host dispatcher.
+    Host {
+        dispatcher_name: String,
+        method_name: String,
+        type_tag: String,
+    },
+}
+
 impl Context {
     pub fn push_function(&mut self, name: &str, params: Vec<Data>) {
         if self.modules.is_empty() {
@@ -853,35 +868,70 @@ impl Context {
                         })?;
 
                     // Now call the method using the standard Call instruction logic
-                    let (address, args_len) = {
+                    let dispatch_kind: DispatchKind = {
                         let symbol = self.modules[module_idx]
                             .symbols
                             .get(*method_symbol_id as usize)
                             .ok_or(RuntimeError::FunctionNotFound)?;
 
-                        let (func_id, address) = match &symbol.kind {
+                        match &symbol.kind {
                             crate::semantic::SymbolKind::Function { func_id, address } => {
-                                (*func_id, *address)
+                                let function_type = self.modules[module_idx]
+                                    .functions
+                                    .get(*func_id as usize)
+                                    .ok_or(RuntimeError::FunctionNotFound)?;
+                                DispatchKind::Function {
+                                    address: *address,
+                                    args_len: function_type.params.len(),
+                                }
                             }
+                            crate::semantic::SymbolKind::HostMethod {
+                                dispatcher_name,
+                                method_name,
+                                type_tag,
+                                ..
+                            } => DispatchKind::Host {
+                                dispatcher_name: dispatcher_name.to_string(),
+                                method_name: method_name.to_string(),
+                                type_tag: type_tag.to_string(),
+                            },
                             _ => return Err(RuntimeError::FunctionNotFound),
-                        };
-
-                        let function_type = self.modules[module_idx]
-                            .functions
-                            .get(func_id as usize)
-                            .ok_or(RuntimeError::FunctionNotFound)?;
-
-                        let args_len = function_type.params.len();
-                        (address, args_len)
+                        }
                     };
 
-                    let mut new_frame = StackFrame::new();
-                    new_frame.module_idx = module_idx; // Stay in the same module
-                    let stack = &mut self.stack_frame_mut()?.stack;
-                    new_frame.params = stack.split_off(stack.len() - args_len);
-                    new_frame.pc = address as usize;
-
-                    self.stack.push(new_frame);
+                    match dispatch_kind {
+                        DispatchKind::Function { address, args_len } => {
+                            let mut new_frame = StackFrame::new();
+                            new_frame.module_idx = module_idx;
+                            let stack = &mut self.stack_frame_mut()?.stack;
+                            new_frame.params = stack.split_off(stack.len() - args_len);
+                            new_frame.pc = address as usize;
+                            self.stack.push(new_frame);
+                        }
+                        DispatchKind::Host {
+                            dispatcher_name,
+                            method_name,
+                            type_tag,
+                        } => {
+                            // Convention: push method_name then type_tag on
+                            // top of the args, then invoke the dispatcher
+                            // host fn just like InvokeHost would.
+                            self.stack_frame_mut()?
+                                .stack
+                                .push(Data::String(method_name));
+                            self.stack_frame_mut()?
+                                .stack
+                                .push(Data::String(type_tag));
+                            let host_fn =
+                                self.host_functions.get(&dispatcher_name).ok_or_else(|| {
+                                    RuntimeError::Other(format!(
+                                        "Foreign-proto dispatcher host fn not found: {}",
+                                        dispatcher_name
+                                    ))
+                                })?;
+                            host_fn(self)?;
+                        }
+                    }
                 }
                 Instruction::InvokeHost(string_index) => {
                     // Look up the host function name from string constants

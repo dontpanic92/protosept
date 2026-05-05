@@ -22,12 +22,36 @@ pub type SymbolId = u32;
 /// Unique identifier for modules in the symbol table
 pub type ModuleId = u32;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ReturnKind {
+    /// Method returns a single non-nullable value (or a struct/proto/box).
+    Value,
+    /// Method returns `?T` (nullable).
+    Optional,
+    /// Method returns `unit` / has no `-> ...` clause.
+    Void,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SymbolKind {
     Constant(Constant),
     Function { func_id: FunctionId, address: u32 },
     Type(TypeId), // Unified for Struct, Enum, Proto
     Module(ModuleId),
+    /// A method dispatched by a host function (registered via
+    /// `Context::register_foreign_type`). `CallProtoMethod` resolves to one
+    /// of these via the synthetic carrier struct's vtable entry.
+    ///
+    /// At dispatch time the runtime pushes `method_name` then `type_tag`
+    /// onto the stack and invokes `dispatcher` via the existing
+    /// `InvokeHost` opcode.
+    HostMethod {
+        dispatcher_name: InternedString,
+        method_name: InternedString,
+        type_tag: InternedString,
+        param_count: u32, // includes self
+        return_kind: ReturnKind,
+    },
 }
 
 impl SymbolKind {

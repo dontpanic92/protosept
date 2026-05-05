@@ -8,6 +8,8 @@ impl Context {
     pub fn load_module(&mut self, module: Module) {
         // Push the main module first to ensure it's at index 0
         self.build_vtable(&module);
+        let module_idx_for_foreign = self.modules.len();
+        self.discover_foreign_carriers(module_idx_for_foreign, &module);
 
         // Extract imported modules and init address before pushing the main module
         let imported_modules = module.imported_modules.clone();
@@ -36,6 +38,8 @@ impl Context {
     /// Registers each module in imported_modules if not already present.
     fn load_module_internal(&mut self, module: Module) {
         self.build_vtable(&module);
+        let module_idx_for_foreign = self.modules.len();
+        self.discover_foreign_carriers(module_idx_for_foreign, &module);
 
         // Extract imported modules and init address before pushing this module
         let imported_modules = module.imported_modules.clone();
@@ -59,6 +63,39 @@ impl Context {
         // Run module-level init code if present
         if let Some(addr) = init_address {
             self.run_module_init(module_idx, addr as usize);
+        }
+    }
+
+    /// Walk a freshly-built module's symbols looking for `HostMethod`
+    /// children of synthetic `__ForeignCarrier_*` structs. For each
+    /// distinct `type_tag` discovered, record the carrier's `TypeId` so
+    /// `Context::push_foreign` can stamp it onto new foreign boxes.
+    fn discover_foreign_carriers(&mut self, module_idx: usize, module: &Module) {
+        use crate::semantic::SymbolKind;
+        for sym in &module.symbols {
+            if let SymbolKind::Type(carrier_type_id) = sym.kind {
+                // The HostMethod children are unique to carrier structs.
+                for &child_id in sym.children.values() {
+                    if let Some(child) = module.symbols.get(child_id as usize)
+                        && let SymbolKind::HostMethod { type_tag, .. } = &child.kind
+                    {
+                        let entry = self
+                            .foreign_types
+                            .entry(type_tag.to_string())
+                            .or_insert_with(|| super::ForeignTypeReg {
+                                finalizer: None,
+                                carrier_type_ids: Vec::new(),
+                            });
+                        let pair = (module_idx, carrier_type_id);
+                        if !entry.carrier_type_ids.contains(&pair) {
+                            entry.carrier_type_ids.push(pair);
+                        }
+                        // One HostMethod child is enough to identify the
+                        // carrier; subsequent children share the same tag.
+                        break;
+                    }
+                }
+            }
         }
     }
 

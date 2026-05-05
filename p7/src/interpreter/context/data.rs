@@ -43,6 +43,15 @@ pub enum Data {
     Tuple(Vec<Data>),
     /// Map value - ordered collection of key-value pairs
     Map(Vec<(Data, Data)>),
+    /// A handle to a host-owned object backing an `@foreign` proto value.
+    /// `type_tag` identifies the proto (matches `@foreign(type_tag="...")`),
+    /// `handle` is an opaque host-defined token, and `owned` distinguishes
+    /// owning `box<F>` (finalizer fires on drop) from borrowing `ref<F>`.
+    Foreign {
+        type_tag: String,
+        handle: i64,
+        owned: bool,
+    },
 }
 
 impl From<i64> for Data {
@@ -117,6 +126,9 @@ macro_rules! arithmetic_op {
             (Data::Map(_), _) | (_, Data::Map(_)) => {
                 return Err(RuntimeError::Other("Arithmetic on map".to_string()));
             }
+            (Data::Foreign { .. }, _) | (_, Data::Foreign { .. }) => {
+                return Err(RuntimeError::Other("Arithmetic on foreign value".to_string()));
+            }
         }
     };
 }
@@ -185,6 +197,9 @@ macro_rules! comparison_op {
             }
             (Data::Map(_), _) | (_, Data::Map(_)) => {
                 return Err(RuntimeError::Other("Comparison on map".to_string()));
+            }
+            (Data::Foreign { .. }, _) | (_, Data::Foreign { .. }) => {
+                return Err(RuntimeError::Other("Comparison on foreign value".to_string()));
             }
         }
     };

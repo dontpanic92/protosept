@@ -95,12 +95,16 @@ impl Context {
         }
     }
 
-    /// Sweep phase: remove unmarked boxes and update all references
+    /// Sweep phase: remove unmarked boxes and update all references.
+    /// Owned `Data::Foreign` cells trigger their proto's registered
+    /// finalizer host fn (called once with the handle as `Data::Int`).
     fn sweep(&mut self, marked: &HashSet<u32>) {
         // Build a mapping from old indices to new indices
         let mut index_map: Vec<Option<u32>> = vec![None; self.box_heap.len()];
         let mut new_heap = Vec::new();
         let mut new_idx = 0u32;
+        // Collect (finalizer_name, handle) pairs to invoke after compaction.
+        let mut pending_finalizers: Vec<(String, i64)> = Vec::new();
 
         for (old_idx, box_data) in self.box_heap.iter().enumerate() {
             if marked.contains(&(old_idx as u32)) {
@@ -108,8 +112,17 @@ impl Context {
                 index_map[old_idx] = Some(new_idx);
                 new_heap.push(box_data.clone());
                 new_idx += 1;
+            } else {
+                // This box is garbage and will be removed.
+                // If it carries an owned foreign handle, schedule the
+                // finalizer call for after compaction.
+                if let Data::Foreign { type_tag, handle, owned: true } = box_data
+                    && let Some(reg) = self.foreign_types.get(type_tag.as_str())
+                    && let Some(name) = &reg.finalizer
+                {
+                    pending_finalizers.push((name.clone(), *handle));
+                }
             }
-            // Otherwise, this box is garbage and will be removed
         }
 
         // Replace the old heap with the compacted heap
@@ -117,6 +130,18 @@ impl Context {
 
         // Update all BoxRef references to point to new indices
         self.update_box_refs(&index_map);
+
+        // Fire finalizers in collection order. Each finalizer is an
+        // ordinary host fn registered via `register_host_function`; it
+        // pops one Data::Int (the handle) and pushes nothing.
+        for (name, handle) in pending_finalizers {
+            if let Some(host_fn) = self.host_functions.get(&name).copied() {
+                if let Some(frame) = self.stack.last_mut() {
+                    frame.stack.push(Data::Int(handle));
+                    let _ = host_fn(self);
+                }
+            }
+        }
     }
 
     /// Update all BoxRef references after compaction
