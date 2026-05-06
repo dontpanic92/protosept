@@ -18,6 +18,8 @@ fn host_make_counter(ctx: &mut Context) -> Result<(), p7::errors::RuntimeError> 
 
 fn host_counter_invoke(ctx: &mut Context) -> Result<(), p7::errors::RuntimeError> {
     let frame = ctx.stack_frame_mut()?;
+    // New protocol (top → bottom):
+    //   type_tag, method_name, vtable_slot, return_ty, args, receiver
     let type_tag = match frame.stack.pop() {
         Some(Data::String(s)) => s,
         other => panic!("expected type_tag string, got {:?}", other),
@@ -25,6 +27,14 @@ fn host_counter_invoke(ctx: &mut Context) -> Result<(), p7::errors::RuntimeError
     let method = match frame.stack.pop() {
         Some(Data::String(s)) => s,
         other => panic!("expected method string, got {:?}", other),
+    };
+    let _vtable_slot = match frame.stack.pop() {
+        Some(Data::Int(s)) => s,
+        other => panic!("expected vtable_slot int, got {:?}", other),
+    };
+    let _return_ty = match frame.stack.pop() {
+        Some(Data::Array(_)) => (),
+        other => panic!("expected return_ty array, got {:?}", other),
     };
     assert_eq!(type_tag, "counter.Counter");
 
@@ -95,7 +105,11 @@ fn foreign_proto_dispatch_and_finalizer() {
     ctx.resume().expect("run");
 
     let result = ctx.stack[0].stack.pop().expect("result");
-    assert_eq!(result, Data::Int(2), "two increments should yield read == 2");
+    assert_eq!(
+        result,
+        Data::Int(2),
+        "two increments should yield read == 2"
+    );
 
     ctx.collect_garbage();
 

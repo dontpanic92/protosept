@@ -141,38 +141,74 @@ pub(crate) fn display_unit(ctx: &mut Context) -> ContextResult<()> {
 }
 
 pub(crate) fn builtin_min(ctx: &mut Context) -> ContextResult<()> {
-    let b = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let a = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let b = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let a = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
     match (a, b) {
         (Data::Int(a), Data::Int(b)) => {
             ctx.stack_frame_mut()?.stack.push(Data::Int(a.min(b)));
             Ok(())
         }
-        _ => Err(RuntimeError::Other("min: arguments must be int".to_string())),
+        _ => Err(RuntimeError::Other(
+            "min: arguments must be int".to_string(),
+        )),
     }
 }
 
 pub(crate) fn builtin_max(ctx: &mut Context) -> ContextResult<()> {
-    let b = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let a = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let b = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let a = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
     match (a, b) {
         (Data::Int(a), Data::Int(b)) => {
             ctx.stack_frame_mut()?.stack.push(Data::Int(a.max(b)));
             Ok(())
         }
-        _ => Err(RuntimeError::Other("max: arguments must be int".to_string())),
+        _ => Err(RuntimeError::Other(
+            "max: arguments must be int".to_string(),
+        )),
     }
 }
 
 pub(crate) fn builtin_clamp(ctx: &mut Context) -> ContextResult<()> {
-    let hi = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let lo = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let value = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let hi = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let lo = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let value = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
     match (value, lo, hi) {
         (Data::Int(v), Data::Int(lo), Data::Int(hi)) => {
-            ctx.stack_frame_mut()?.stack.push(Data::Int(v.clamp(lo, hi)));
+            ctx.stack_frame_mut()?
+                .stack
+                .push(Data::Int(v.clamp(lo, hi)));
             Ok(())
         }
-        _ => Err(RuntimeError::Other("clamp: arguments must be int".to_string())),
+        _ => Err(RuntimeError::Other(
+            "clamp: arguments must be int".to_string(),
+        )),
     }
 }

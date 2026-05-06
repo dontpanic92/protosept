@@ -11,15 +11,18 @@ use super::{Generator, SaResult};
 
 /// Parsed contents of a `@foreign(...)` attribute on a proto declaration.
 ///
-/// Required keys are `dispatcher` and `type_tag`; `finalizer` is optional.
-/// All keys are `Option` so the parser can be permissive — full validation
-/// (required-key presence, `type_tag` uniqueness, allowed value types) is
-/// performed by `Generator::validate_foreign_attrs`.
+/// Required keys are `dispatcher` and `type_tag`; `finalizer` and `uuid`
+/// are optional. All keys are `Option` so the parser can be permissive —
+/// full validation (required-key presence, `type_tag` uniqueness, allowed
+/// value types) is performed by `Generator::validate_foreign_attrs`.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ForeignAttrs {
     pub dispatcher: Option<InternedString>,
     pub finalizer: Option<InternedString>,
     pub type_tag: Option<InternedString>,
+    /// Optional COM-style UUID (16 bytes) string identifying the
+    /// underlying interface. Stored verbatim; the runtime parses it.
+    pub uuid: Option<InternedString>,
 }
 
 impl Generator {
@@ -311,9 +314,10 @@ impl Generator {
 
         // If the receiver is a box but the method expects a non-box self, deref first.
         if let (Type::BoxType(_), Some(expected_self)) = (object_ty, params.first())
-            && !matches!(expected_self, Type::BoxType(_)) {
-                self.builder.box_deref();
-            }
+            && !matches!(expected_self, Type::BoxType(_))
+        {
+            self.builder.box_deref();
+        }
 
         // Use shared argument processing logic
         let ordered_exprs = self.process_arguments(
@@ -376,8 +380,7 @@ impl Generator {
     ) -> SaResult<Type> {
         // If the receiver is a box, deref for non-mutating methods
         let is_box = matches!(object_ty, Type::BoxType(_));
-        let needs_deref = is_box
-            && !matches!(field.name.as_str(), "set" | "remove");
+        let needs_deref = is_box && !matches!(field.name.as_str(), "set" | "remove");
         if needs_deref {
             self.builder.box_deref();
         }
@@ -608,25 +611,26 @@ impl Generator {
                     field: field.clone(),
                 })
             }
-            Pattern::EnumVariant { .. } | Pattern::StructPattern { .. } | Pattern::TuplePattern { .. } => {
-                Err(SemanticError::Other(
-                    "Destructuring patterns cannot be converted to expressions".to_string(),
-                ))
-            }
+            Pattern::EnumVariant { .. }
+            | Pattern::StructPattern { .. }
+            | Pattern::TuplePattern { .. } => Err(SemanticError::Other(
+                "Destructuring patterns cannot be converted to expressions".to_string(),
+            )),
         }
     }
 
-    pub(super) fn extract_intrinsic_name(attributes: &[crate::ast::Attribute]) -> Option<InternedString> {
+    pub(super) fn extract_intrinsic_name(
+        attributes: &[crate::ast::Attribute],
+    ) -> Option<InternedString> {
         for attr in attributes {
             if attr.name.name == "intrinsic" {
                 // Look for the intrinsic name in the arguments
                 for (name_opt, expr) in &attr.arguments {
                     // Check if this is a positional argument (first arg) or named "name"
                     let is_target = name_opt.as_ref().is_none_or(|n| n.name == "name");
-                    if is_target
-                        && let Expression::StringLiteral(s) = expr {
-                            return Some(s.clone());
-                        }
+                    if is_target && let Expression::StringLiteral(s) = expr {
+                        return Some(s.clone());
+                    }
                 }
             }
         }
@@ -660,6 +664,8 @@ impl Generator {
                     out.finalizer = Some(value);
                 } else if key == "type_tag" {
                     out.type_tag = Some(value);
+                } else if key == "uuid" {
+                    out.uuid = Some(value);
                 }
             }
         }

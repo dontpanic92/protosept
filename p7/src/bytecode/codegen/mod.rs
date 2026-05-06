@@ -6,7 +6,7 @@ use crate::{
     intern::InternedString,
     semantic::{
         Function, FunctionId, LocalSymbolScope, PrimitiveType, Symbol, SymbolKind, SymbolTable,
-        Type, TypeDefinition, Variable,
+        Type, TypeDefinition, TypeId, Variable,
     },
 };
 
@@ -43,6 +43,13 @@ pub type SaResult<T> = Result<T, SemanticError>;
 pub(super) const SYNTHETIC_LINE: usize = 0;
 pub(super) const SYNTHETIC_COL: usize = 0;
 
+fn block_diverges(body: &[Statement]) -> bool {
+    matches!(
+        body.last(),
+        Some(Statement::Return { .. }) | Some(Statement::Throw(_))
+    )
+}
+
 pub struct ExternSymbolId {
     pub module_path: InternedString,
     pub symbol_id: u32,
@@ -52,8 +59,14 @@ pub struct Generator {
     pub(super) builder: ByteCodeBuilder,
     pub(super) symbol_table: SymbolTable,
     pub(super) local_scope: Option<LocalSymbolScope>,
-    pub(super) pending_monomorphizations:
-        Vec<(u32, FunctionId, Vec<Statement>, Vec<InternedString>, Vec<Type>)>,
+    pub(super) enclosing_return_types: Vec<Type>,
+    pub(super) pending_monomorphizations: Vec<(
+        u32,
+        FunctionId,
+        Vec<Statement>,
+        Vec<InternedString>,
+        Vec<Type>,
+    )>,
     pub(super) module_provider: Box<dyn crate::ModuleProvider>,
     pub(super) imported_modules: std::collections::HashMap<InternedString, Module>,
     pub(super) compiling_modules: std::collections::HashSet<InternedString>,
@@ -100,7 +113,10 @@ impl Generator {
         var_name: &str,
     ) -> Option<&'a ModuleVariable> {
         let module = self.imported_modules.get(module_path)?;
-        module.module_variables.iter().find(|v| v.name == var_name && v.is_pub)
+        module
+            .module_variables
+            .iter()
+            .find(|v| v.name == var_name && v.is_pub)
     }
 
     pub fn new(module_provider: Box<dyn crate::ModuleProvider>) -> Self {
@@ -121,6 +137,7 @@ impl Generator {
             is_compiling_builtin: false,
             enclosing_type_params: Vec::new(),
             enclosing_type_param_bounds: Vec::new(),
+            enclosing_return_types: Vec::new(),
             module_variables: Vec::new(),
             seen_foreign_type_tags: std::collections::HashMap::new(),
         }
@@ -159,9 +176,11 @@ impl Generator {
             }
         }
 
-        // Pass 1: Register all declarations (signatures only, no bodies)
-        // Process imports first so types from other modules are available
+        // Pass 1a: Register declaration names/signatures only, no type bodies or function bodies.
+        // Type names are reserved before resolving fields/variants/method signatures so recursive
+        // and mutually-recursive declarations can refer to each other.
         let mut function_decls = Vec::new();
+        let mut pending_type_decls: Vec<(TypeId, Statement)> = Vec::new();
         for statement in declarations {
             match statement {
                 Statement::Import { module_path, alias } => {
@@ -176,8 +195,106 @@ impl Generator {
                     fields,
                     methods,
                 } => {
-                    self.generate_struct_decl(
-                        is_pub, name, attributes, conformance, type_parameters, fields, methods,
+                    let type_id = self.register_struct_decl(
+                        is_pub,
+                        name.clone(),
+                        attributes.clone(),
+                        conformance.clone(),
+                        type_parameters.clone(),
+                    )?;
+                    pending_type_decls.push((
+                        type_id,
+                        Statement::StructDeclaration {
+                            is_pub,
+                            name,
+                            attributes,
+                            conformance,
+                            type_parameters,
+                            fields,
+                            methods,
+                        },
+                    ));
+                }
+                Statement::EnumDeclaration {
+                    is_pub,
+                    name,
+                    attributes,
+                    conformance,
+                    type_parameters,
+                    values,
+                    methods,
+                } => {
+                    let type_id = self.register_enum_decl(
+                        is_pub,
+                        name.clone(),
+                        attributes.clone(),
+                        conformance.clone(),
+                        type_parameters.clone(),
+                    )?;
+                    pending_type_decls.push((
+                        type_id,
+                        Statement::EnumDeclaration {
+                            is_pub,
+                            name,
+                            attributes,
+                            conformance,
+                            type_parameters,
+                            values,
+                            methods,
+                        },
+                    ));
+                }
+                Statement::ProtoDeclaration {
+                    is_pub,
+                    name,
+                    attributes,
+                    methods,
+                } => {
+                    let type_id =
+                        self.register_proto_decl(is_pub, name.clone(), attributes.clone())?;
+                    pending_type_decls.push((
+                        type_id,
+                        Statement::ProtoDeclaration {
+                            is_pub,
+                            name,
+                            attributes,
+                            methods,
+                        },
+                    ));
+                }
+                Statement::FunctionDeclaration(decl) => {
+                    function_decls.push(decl);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        // Register top-level function signatures after all top-level type names are known.
+        for decl in &function_decls {
+            self.register_function_signature(decl)?;
+        }
+
+        // Pass 1b: Resolve type fields/variants/proto methods and generate associated methods.
+        for (type_id, statement) in pending_type_decls {
+            match statement {
+                Statement::StructDeclaration {
+                    is_pub,
+                    name,
+                    attributes,
+                    conformance,
+                    type_parameters,
+                    fields,
+                    methods,
+                } => {
+                    self.resolve_struct_decl(
+                        type_id,
+                        is_pub,
+                        name,
+                        attributes,
+                        conformance,
+                        type_parameters,
+                        fields,
+                        methods,
                     )?;
                 }
                 Statement::EnumDeclaration {
@@ -189,8 +306,15 @@ impl Generator {
                     values,
                     methods,
                 } => {
-                    self.generate_enum_decl(
-                        is_pub, name, attributes, conformance, type_parameters, values, methods,
+                    self.resolve_enum_decl(
+                        type_id,
+                        is_pub,
+                        name,
+                        attributes,
+                        conformance,
+                        type_parameters,
+                        values,
+                        methods,
                     )?;
                 }
                 Statement::ProtoDeclaration {
@@ -199,18 +323,12 @@ impl Generator {
                     attributes,
                     methods,
                 } => {
-                    self.generate_proto_decl(is_pub, name, attributes, methods)?;
-                }
-                Statement::FunctionDeclaration(decl) => {
-                    // Register signature only (no body generation)
-                    self.register_function_signature(&decl)?;
-                    function_decls.push(decl);
+                    self.resolve_proto_decl(type_id, is_pub, name, attributes, methods)?;
                 }
                 _ => unreachable!(),
             }
         }
-
-        // Pass 1b: Register module-level binding signatures (type, mutability, visibility)
+        // Pass 1c: Register module-level binding signatures (type, mutability, visibility)
         for statement in &module_level_lets {
             if let Statement::Let {
                 is_pub,
@@ -264,7 +382,11 @@ impl Generator {
             // Take all pending monomorphizations
             let pending = std::mem::take(&mut self.pending_monomorphizations);
 
-            for (symbol_id, _type_id, body, param_names, params) in pending {
+            for (symbol_id, func_id, body, param_names, params) in pending {
+                let monomorph_return_type =
+                    self.symbol_table.get_function(func_id).return_type.clone();
+                let diverges = block_diverges(&body);
+
                 // Generate the monomorphized function's bytecode
                 let address = self.builder.next_address();
 
@@ -274,9 +396,9 @@ impl Generator {
                         address: ref mut func_addr,
                         ..
                     } = sym.kind
-                    {
-                        *func_addr = address;
-                    }
+                {
+                    *func_addr = address;
+                }
 
                 // Set up local scope and generate body
                 let variables: Vec<Variable> = param_names
@@ -293,10 +415,37 @@ impl Generator {
                 self.clear_moved_variables(); // Clear moved variables when entering new function
                 self.local_scope = Some(LocalSymbolScope::new(variables));
 
-                let _ = self.generate_block(body, vec![])?;
-                self.builder.ret();
-
+                self.enclosing_return_types
+                    .push(monomorph_return_type.clone());
+                let block_result = self.generate_block(body, vec![]);
+                self.enclosing_return_types.pop();
+                let block_type = match block_result {
+                    Ok(block_type) => block_type,
+                    Err(err) => {
+                        self.local_scope = saved_local_scope;
+                        return Err(err);
+                    }
+                };
                 self.local_scope = saved_local_scope;
+
+                if !diverges && block_type != monomorph_return_type {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: format!(
+                            "declared return type {}",
+                            self.type_to_string(&monomorph_return_type)
+                        ),
+                        rhs: format!(
+                            "implicit return value of type {}",
+                            self.type_to_string(&block_type)
+                        ),
+                        pos: Some(SourcePos {
+                            line: SYNTHETIC_LINE,
+                            col: SYNTHETIC_COL,
+                            module: Some(self._current_module_path.to_string()),
+                        }),
+                    });
+                }
+                self.builder.ret();
             }
         }
 
@@ -347,7 +496,11 @@ impl Generator {
         }
 
         // Check for duplicate module-level binding names
-        if self.module_variables.iter().any(|v| v.name == identifier.name) {
+        if self
+            .module_variables
+            .iter()
+            .any(|v| v.name == identifier.name)
+        {
             return Err(SemanticError::Other(format!(
                 "Duplicate module-level binding '{}'",
                 identifier.name
@@ -392,8 +545,7 @@ impl Generator {
         self.local_scope = Some(LocalSymbolScope::new(Vec::new()));
 
         // Generate the initializer expression
-        let result =
-            self.generate_expression_with_expected_type(expression, Some(&expected_type));
+        let result = self.generate_expression_with_expected_type(expression, Some(&expected_type));
 
         // Restore original scope state
         self.local_scope = saved_local_scope;
@@ -423,7 +575,10 @@ impl Generator {
             Type::BoxType(inner) => self.type_contains_ref(inner),
             Type::Nullable(inner) => self.type_contains_ref(inner),
             Type::Tuple(elements) => elements.iter().any(|t| self.type_contains_ref(t)),
-            Type::Function { params, return_type } => {
+            Type::Function {
+                params,
+                return_type,
+            } => {
                 params.iter().any(|t| self.type_contains_ref(t))
                     || self.type_contains_ref(return_type)
             }
@@ -521,7 +676,8 @@ impl Generator {
                 module_path
             )));
         }
-        self.compiling_modules.insert(InternedString::from(module_path));
+        self.compiling_modules
+            .insert(InternedString::from(module_path));
 
         // Parse the module source
         let mut lexer = crate::lexer::Lexer::new(source);
@@ -550,8 +706,10 @@ impl Generator {
         };
 
         // Create a new generator for the imported module with a cloned provider
-        let mut module_gen =
-            Generator::new_for_module(self.module_provider.clone_boxed(), InternedString::from(module_path));
+        let mut module_gen = Generator::new_for_module(
+            self.module_provider.clone_boxed(),
+            InternedString::from(module_path),
+        );
         let result = module_gen.generate(statements);
         self.compiling_modules.remove(module_path);
         result
@@ -581,6 +739,7 @@ impl Generator {
             is_compiling_builtin: is_builtin,
             enclosing_type_params: Vec::new(),
             enclosing_type_param_bounds: Vec::new(),
+            enclosing_return_types: Vec::new(),
             module_variables: Vec::new(),
             seen_foreign_type_tags: std::collections::HashMap::new(),
         };
@@ -680,10 +839,10 @@ impl Generator {
                 .iter()
                 .map(|arg| {
                     self.get_semantic_type(&arg.arg_type).map(|ty| Variable {
-                            name: arg.name.name.clone(),
-                            ty,
-                            is_mutable: false,
-                        })
+                        name: arg.name.name.clone(),
+                        ty,
+                        is_mutable: false,
+                    })
                 })
                 .collect::<SaResult<Vec<Variable>>>()?;
             (params, None)
@@ -774,15 +933,13 @@ impl Generator {
         let symbol_id = self
             .symbol_table
             .find_symbol(&declaration.name.name)
-            .ok_or_else(|| {
-                SemanticError::FunctionNotFound {
-                    name: declaration.name.name.to_string(),
-                    pos: Some(SourcePos {
-                        line: declaration.name.line,
-                        col: declaration.name.col,
-                        module: Some(self._current_module_path.to_string()),
-                    }),
-                }
+            .ok_or_else(|| SemanticError::FunctionNotFound {
+                name: declaration.name.name.to_string(),
+                pos: Some(SourcePos {
+                    line: declaration.name.line,
+                    col: declaration.name.col,
+                    module: Some(self._current_module_path.to_string()),
+                }),
             })?;
 
         // Patch the address to where we are now in the bytecode
@@ -792,9 +949,9 @@ impl Generator {
                 address: ref mut func_addr,
                 ..
             } = sym.kind
-            {
-                *func_addr = address;
-            }
+        {
+            *func_addr = address;
+        }
 
         // Resolve params for body generation
         let params = declaration
@@ -802,10 +959,10 @@ impl Generator {
             .iter()
             .map(|arg| {
                 self.get_semantic_type(&arg.arg_type).map(|ty| Variable {
-                        name: arg.name.name.clone(),
-                        ty,
-                        is_mutable: false,
-                    })
+                    name: arg.name.name.clone(),
+                    ty,
+                    is_mutable: false,
+                })
             })
             .collect::<SaResult<Vec<Variable>>>()?;
 
@@ -827,9 +984,7 @@ impl Generator {
         if self.symbol_table.symbol_chain.len() >= 2 {
             let parent_symbol_id =
                 self.symbol_table.symbol_chain[self.symbol_table.symbol_chain.len() - 2];
-            if let Some(parent_symbol) =
-                self.symbol_table.symbols.get(parent_symbol_id as usize)
-            {
+            if let Some(parent_symbol) = self.symbol_table.symbols.get(parent_symbol_id as usize) {
                 self.current_self_type = match &parent_symbol.kind {
                     SymbolKind::Type(type_id) => {
                         match &self.symbol_table.types[*type_id as usize] {
@@ -843,18 +998,39 @@ impl Generator {
             }
         }
 
-        let _ty = if let Some(ref intrinsic_fn_name) = intrinsic_name {
+        let body_diverges = block_diverges(&declaration.body);
+        let block_result = if let Some(ref intrinsic_fn_name) = intrinsic_name {
             let host_fn_name_idx = self.add_string_constant(intrinsic_fn_name);
             self.builder.call_host_function(host_fn_name_idx);
-            return_type.clone()
+            Ok(return_type.clone())
         } else {
-            self.generate_block(declaration.body, vec![])?
+            self.enclosing_return_types.push(return_type.clone());
+            let result = self.generate_block(declaration.body, vec![]);
+            self.enclosing_return_types.pop();
+            result
         };
 
         self.current_self_type = prev_self_type;
-        self.builder.ret();
         self.local_scope = None;
         self.symbol_table.pop_symbol();
+
+        let block_type = block_result?;
+        if intrinsic_name.is_none() && !body_diverges && block_type != return_type {
+            return Err(SemanticError::TypeMismatch {
+                lhs: format!("declared return type {}", self.type_to_string(&return_type)),
+                rhs: format!(
+                    "implicit return value of type {}",
+                    self.type_to_string(&block_type)
+                ),
+                pos: Some(SourcePos {
+                    line: declaration.name.line,
+                    col: declaration.name.col,
+                    module: Some(self._current_module_path.to_string()),
+                }),
+            });
+        }
+
+        self.builder.ret();
 
         Ok(())
     }
@@ -865,6 +1041,8 @@ impl Generator {
     ) -> SaResult<()> {
         // TODO: Store declaration.is_pub for module visibility checking
         let _ = declaration.is_pub;
+        let function_line = declaration.name.line;
+        let function_col = declaration.name.col;
 
         let qualified_name = self
             .symbol_table
@@ -924,10 +1102,10 @@ impl Generator {
                 .iter()
                 .map(|arg| {
                     self.get_semantic_type(&arg.arg_type).map(|ty| Variable {
-                            name: arg.name.name.clone(),
-                            ty,
-                            is_mutable: false, // Parameters are immutable
-                        })
+                        name: arg.name.name.clone(),
+                        ty,
+                        is_mutable: false, // Parameters are immutable
+                    })
                 })
                 .collect::<SaResult<Vec<Variable>>>()?;
             (params, None)
@@ -1027,31 +1205,113 @@ impl Generator {
             }
 
             // For intrinsic functions, generate a call_host_function instead of the body
-            let ty = if let Some(ref intrinsic_fn_name) = intrinsic_name {
+            let body_diverges = block_diverges(&declaration.body);
+            let block_result = if let Some(ref intrinsic_fn_name) = intrinsic_name {
                 // Emit call_host_function with the intrinsic name
                 let host_fn_name_idx = self.add_string_constant(intrinsic_fn_name);
                 self.builder.call_host_function(host_fn_name_idx);
-                return_type.clone()
+                Ok(return_type.clone())
             } else {
-                self.generate_block(declaration.body, vec![])?
+                self.enclosing_return_types.push(return_type.clone());
+                let result = self.generate_block(declaration.body, vec![]);
+                self.enclosing_return_types.pop();
+                result
             };
 
             // Restore previous self_type
             self.current_self_type = prev_self_type;
+            self.local_scope = None;
+
+            let body_check_result = block_result.and_then(|block_type| {
+                if intrinsic_name.is_none() && !body_diverges && block_type != return_type {
+                    Err(SemanticError::TypeMismatch {
+                        lhs: format!("declared return type {}", self.type_to_string(&return_type)),
+                        rhs: format!(
+                            "implicit return value of type {}",
+                            self.type_to_string(&block_type)
+                        ),
+                        pos: Some(SourcePos {
+                            line: function_line,
+                            col: function_col,
+                            module: Some(self._current_module_path.to_string()),
+                        }),
+                    })
+                } else {
+                    Ok(())
+                }
+            });
+            if let Err(err) = body_check_result {
+                self.symbol_table.pop_symbol();
+                return Err(err);
+            }
 
             // Always emit Ret so unit-returning functions don't fall-through into subsequent code.
             // The VM `Ret` handler is responsible for popping the frame even if there's no value.
-            if ty != Type::Primitive(PrimitiveType::Unit) {
-                self.builder.ret();
-            } else {
-                self.builder.ret();
-            }
-
-            self.local_scope = None;
+            self.builder.ret();
         }
 
         self.symbol_table.pop_symbol();
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::errors::{Proto7Error, SemanticError};
+
+    fn assert_compile_ok(source: &str) {
+        crate::compile(source.to_string()).unwrap();
+    }
+
+    fn assert_type_mismatch(source: &str) {
+        let err = crate::compile(source.to_string()).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Proto7Error::SemanticError(SemanticError::TypeMismatch { .. })
+            ),
+            "expected TypeMismatch, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn strict_return_allows_matching_implicit_return() {
+        assert_compile_ok(r#"fn foo() -> int { 42 }"#);
+    }
+
+    #[test]
+    fn strict_return_allows_matching_explicit_return() {
+        assert_compile_ok(r#"fn foo() -> int { return 42; }"#);
+    }
+
+    #[test]
+    fn strict_return_allows_bare_return_in_unit_function() {
+        assert_compile_ok(r#"fn foo() { return; }"#);
+    }
+
+    #[test]
+    fn strict_return_allows_empty_unit_function() {
+        assert_compile_ok(r#"fn foo() { }"#);
+    }
+
+    #[test]
+    fn strict_return_rejects_value_return_in_omitted_return_type_function() {
+        assert_type_mismatch(r#"fn foo() { return 42; }"#);
+    }
+
+    #[test]
+    fn strict_return_rejects_explicit_return_type_mismatch() {
+        assert_type_mismatch(r#"fn foo() -> int { return "bar"; }"#);
+    }
+
+    #[test]
+    fn strict_return_rejects_implicit_return_type_mismatch() {
+        assert_type_mismatch(r#"fn foo() -> int { "bar" }"#);
+    }
+
+    #[test]
+    fn strict_return_rejects_bare_return_in_non_unit_function() {
+        assert_type_mismatch(r#"fn foo() -> int { return; }"#);
     }
 }

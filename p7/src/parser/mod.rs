@@ -29,11 +29,11 @@ macro_rules! match_token {
     };
 }
 
-mod tokens;
-mod expressions;
-mod types;
 mod declarations;
+mod expressions;
 mod statements;
+mod tokens;
+mod types;
 
 impl Parser {
     pub fn parse(&mut self) -> ParseResult<Vec<Statement>> {

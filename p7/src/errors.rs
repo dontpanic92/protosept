@@ -1,6 +1,6 @@
 use std::fmt;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SourcePos {
     pub line: usize,
     pub col: usize,
@@ -10,14 +10,22 @@ pub struct SourcePos {
 impl SourcePos {
     /// Create an Option<SourcePos> from line and column numbers
     pub fn at(line: usize, col: usize) -> Option<Self> {
-        Some(SourcePos { line, col, module: None })
+        Some(SourcePos {
+            line,
+            col,
+            module: None,
+        })
     }
 }
 
 impl fmt::Display for SourcePos {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.module {
-            Some(m) if m != "$root" => write!(f, "line {} column {} in module '{}'", self.line, self.col, m),
+            Some(m) if m != "$root" => write!(
+                f,
+                "line {} column {} in module '{}'",
+                self.line, self.col, m
+            ),
             _ => write!(f, "line {} column {}", self.line, self.col),
         }
     }
@@ -171,9 +179,16 @@ impl fmt::Display for SemanticError {
             SemanticError::TypeMismatch { lhs, rhs, pos } => {
                 format_error_with_pos!(&format!("Type mismatch: {} != {}", lhs, rhs), pos)
             }
-            SemanticError::MissingArgument { param_name, func_name, pos } => {
+            SemanticError::MissingArgument {
+                param_name,
+                func_name,
+                pos,
+            } => {
                 format_error_with_pos!(
-                    &format!("Missing required argument '{}' in call to '{}'", param_name, func_name),
+                    &format!(
+                        "Missing required argument '{}' in call to '{}'",
+                        param_name, func_name
+                    ),
                     pos
                 )
             }
@@ -220,7 +235,9 @@ impl fmt::Display for RuntimeError {
             RuntimeError::NoStackFrame => write!(f, "No stack frame available"),
             RuntimeError::EntryPointNotFound => write!(f, "Entry point not found"),
             RuntimeError::StackUnderflow => write!(f, "Stack underflow"),
-            RuntimeError::UnexpectedStructRef(detail) => write!(f, "Unexpected struct reference: {}", detail),
+            RuntimeError::UnexpectedStructRef(detail) => {
+                write!(f, "Unexpected struct reference: {}", detail)
+            }
             RuntimeError::FunctionNotFound => write!(f, "Function not found"),
             RuntimeError::VariableNotFound(detail) => write!(f, "Variable not found: {}", detail),
             RuntimeError::Other(msg) => write!(f, "Runtime error: {}", msg),

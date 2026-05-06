@@ -1,8 +1,6 @@
 use std::ops::Deref;
 
-use crate::ast::{
-    Expression, FunctionCall, Identifier, InterpolatedStringPart, Parameter,
-};
+use crate::ast::{Expression, FunctionCall, Identifier, InterpolatedStringPart, Parameter};
 use crate::errors::{ParseError, SourcePos};
 use crate::intern::InternedString;
 use crate::lexer::{InterpolatedStringPart as LexInterpolatedStringPart, Lexer, Token, TokenType};
@@ -40,18 +38,19 @@ impl Parser {
         loop {
             // Check for generic type arguments after an identifier: Container<int>
             if let Expression::Identifier(ref ident) = expression
-                && self.peek_match(TokenType::LessThan) {
-                    // Try to parse as generic instantiation
-                    if let Ok(type_args) = self.try_parse_type_arguments() {
-                        expression = Expression::GenericInstantiation {
-                            base: ident.clone(),
-                            type_args,
-                        };
-                        continue;
-                    }
-                    // If failed, it's a comparison operator, break out
-                    break;
+                && self.peek_match(TokenType::LessThan)
+            {
+                // Try to parse as generic instantiation
+                if let Ok(type_args) = self.try_parse_type_arguments() {
+                    expression = Expression::GenericInstantiation {
+                        base: ident.clone(),
+                        type_args,
+                    };
+                    continue;
                 }
+                // If failed, it's a comparison operator, break out
+                break;
+            }
 
             if self.peek_match(TokenType::OpenParen) {
                 expression = self.parse_function_call(expression)?;
@@ -404,7 +403,11 @@ impl Parser {
 
     /// Parse struct update arguments: Type(...base, field = val)
     /// Called after '(' and DotDotDot have been peeked.
-    fn parse_struct_update_args(&mut self, struct_name: Expression, pos: (usize, usize)) -> ParseResult<Expression> {
+    fn parse_struct_update_args(
+        &mut self,
+        struct_name: Expression,
+        pos: (usize, usize),
+    ) -> ParseResult<Expression> {
         self.consume_match(TokenType::DotDotDot)?;
 
         let base = self.parse_expression()?;
@@ -433,14 +436,15 @@ impl Parser {
 
     fn parse_unary_expression(&mut self) -> ParseResult<Expression> {
         if let Some(token) = self.peek()
-            && UNARY_OPERATIONS.contains(&token.token_type) {
-                let operator = self.consume().unwrap().clone();
-                let right = self.parse_unary_expression()?;
-                return Ok(Expression::Unary {
-                    operator,
-                    right: Box::new(right),
-                });
-            }
+            && UNARY_OPERATIONS.contains(&token.token_type)
+        {
+            let operator = self.consume().unwrap().clone();
+            let right = self.parse_unary_expression()?;
+            return Ok(Expression::Unary {
+                operator,
+                right: Box::new(right),
+            });
+        }
 
         self.parse_primary_expression()
     }
@@ -522,11 +526,23 @@ impl Parser {
 
         // If next is a keyword that starts a statement, it's a block
         match &after_brace.token_type {
-            TokenType::Let | TokenType::Fn | TokenType::Struct | TokenType::Enum
-            | TokenType::Proto | TokenType::Import | TokenType::If | TokenType::While
-            | TokenType::Loop | TokenType::Match | TokenType::Try | TokenType::Return
-            | TokenType::Throw | TokenType::Break | TokenType::Continue
-            | TokenType::Pub | TokenType::Mut => return false,
+            TokenType::Let
+            | TokenType::Fn
+            | TokenType::Struct
+            | TokenType::Enum
+            | TokenType::Proto
+            | TokenType::Import
+            | TokenType::If
+            | TokenType::While
+            | TokenType::Loop
+            | TokenType::Match
+            | TokenType::Try
+            | TokenType::Return
+            | TokenType::Throw
+            | TokenType::Break
+            | TokenType::Continue
+            | TokenType::Pub
+            | TokenType::Mut => return false,
             _ => {}
         }
 
@@ -574,7 +590,7 @@ impl Parser {
         if !self.peek_match(TokenType::OpenParen) {
             return false;
         }
-        // Look ahead past the '(' 
+        // Look ahead past the '('
         let mut depth = 1;
         let mut offset = 1; // start after '('
         loop {

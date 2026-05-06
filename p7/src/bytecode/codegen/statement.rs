@@ -8,7 +8,9 @@ use crate::errors::SourcePos;
 use crate::intern::InternedString;
 use crate::{
     ast::{Expression, Statement},
-    semantic::{Enum, PrimitiveType, Proto, Struct, Symbol, SymbolKind, Type, TypeDefinition},
+    semantic::{
+        Enum, PrimitiveType, Proto, Struct, Symbol, SymbolKind, Type, TypeDefinition, TypeId,
+    },
 };
 
 use super::{Generator, SaResult};
@@ -71,7 +73,9 @@ impl Generator {
                 attributes,
                 methods,
             } => self.generate_proto_decl(is_pub, name, attributes, methods),
-            Statement::Return(expression) => self.generate_return(*expression),
+            Statement::Return { expression, pos } => {
+                self.generate_return(expression.map(|expr| *expr), pos)
+            }
             Statement::Import { module_path, alias } => self.generate_import(module_path, alias),
         }
     }
@@ -107,7 +111,11 @@ impl Generator {
 
         // Mark variable as moved if needed
         if let Some((id, is_param)) = move_info {
-            if is_param { self.mark_param_moved(id); } else { self.mark_variable_moved(id); }
+            if is_param {
+                self.mark_param_moved(id);
+            } else {
+                self.mark_variable_moved(id);
+            }
         }
 
         // Validate type annotation if provided
@@ -190,22 +198,23 @@ impl Generator {
                 // Extract and bind each field
                 for (field_idx, sub_pat) in field_patterns.iter().enumerate() {
                     if !sub_pat.is_wildcard()
-                        && let Pattern::Identifier(id) = sub_pat {
-                            // Dup for all but nothing extra needed
-                            self.builder.dup();
-                            self.builder.ldfield(field_idx as u32);
-                            let field_ty = struct_def.fields[field_idx].1.clone();
-                            let var_id = self
-                                .local_scope
-                                .as_mut()
-                                .unwrap()
-                                .add_variable(id.name.clone(), field_ty, is_mutable)
-                                .map_err(|_| SemanticError::VariableOutsideFunction {
-                                    name: id.name.to_string(),
-                                    pos: id.pos(),
-                                })?;
-                            self.builder.stvar(var_id);
-                        }
+                        && let Pattern::Identifier(id) = sub_pat
+                    {
+                        // Dup for all but nothing extra needed
+                        self.builder.dup();
+                        self.builder.ldfield(field_idx as u32);
+                        let field_ty = struct_def.fields[field_idx].1.clone();
+                        let var_id = self
+                            .local_scope
+                            .as_mut()
+                            .unwrap()
+                            .add_variable(id.name.clone(), field_ty, is_mutable)
+                            .map_err(|_| SemanticError::VariableOutsideFunction {
+                                name: id.name.to_string(),
+                                pos: id.pos(),
+                            })?;
+                        self.builder.stvar(var_id);
+                    }
                 }
 
                 // Pop the struct value from the stack
@@ -220,23 +229,30 @@ impl Generator {
                 sub_patterns,
             } => {
                 // Try direct lookup, then qualified name for cross-module types
-                let resolved_type = self.require_type_from_identifier(enum_name)
-                    .or_else(|_| {
-                        let qualified = format!("{}.{}", enum_name.name, variant_name.name);
-                        self.resolve_qualified_type_name(&qualified, enum_name.line, enum_name.col)
-                    })?;
+                let resolved_type = self.require_type_from_identifier(enum_name).or_else(|_| {
+                    let qualified = format!("{}.{}", enum_name.name, variant_name.name);
+                    self.resolve_qualified_type_name(&qualified, enum_name.line, enum_name.col)
+                })?;
 
                 match resolved_type {
                     Type::Struct(struct_type_id) => {
                         // Cross-module struct destructuring: let types.Pos(r, c) = expr
                         let struct_def = match self.symbol_table.get_type(struct_type_id) {
                             TypeDefinition::Struct(s) => s.clone(),
-                            _ => return Err(SemanticError::Other("Expected struct type definition".to_string())),
+                            _ => {
+                                return Err(SemanticError::Other(
+                                    "Expected struct type definition".to_string(),
+                                ));
+                            }
                         };
 
                         if sub_patterns.len() != struct_def.fields.len() {
                             return Err(SemanticError::TypeMismatch {
-                                lhs: format!("{} fields in struct '{}'", struct_def.fields.len(), struct_def.qualified_name),
+                                lhs: format!(
+                                    "{} fields in struct '{}'",
+                                    struct_def.fields.len(),
+                                    struct_def.qualified_name
+                                ),
                                 rhs: format!("{} patterns provided", sub_patterns.len()),
                                 pos: enum_name.pos(),
                             });
@@ -246,97 +262,103 @@ impl Generator {
 
                         for (field_idx, sub_pat) in sub_patterns.iter().enumerate() {
                             if !sub_pat.is_wildcard()
-                                && let Pattern::Identifier(id) = sub_pat {
-                                    self.builder.dup();
-                                    self.builder.ldfield(field_idx as u32);
-                                    let field_ty = struct_def.fields[field_idx].1.clone();
-                                    let var_id = self
-                                        .local_scope.as_mut().unwrap()
-                                        .add_variable(id.name.clone(), field_ty, is_mutable)
-                                        .map_err(|_| SemanticError::VariableOutsideFunction {
-                                            name: id.name.to_string(), pos: id.pos(),
-                                        })?;
-                                    self.builder.stvar(var_id);
-                                }
+                                && let Pattern::Identifier(id) = sub_pat
+                            {
+                                self.builder.dup();
+                                self.builder.ldfield(field_idx as u32);
+                                let field_ty = struct_def.fields[field_idx].1.clone();
+                                let var_id = self
+                                    .local_scope
+                                    .as_mut()
+                                    .unwrap()
+                                    .add_variable(id.name.clone(), field_ty, is_mutable)
+                                    .map_err(|_| SemanticError::VariableOutsideFunction {
+                                        name: id.name.to_string(),
+                                        pos: id.pos(),
+                                    })?;
+                                self.builder.stvar(var_id);
+                            }
                         }
 
                         self.builder.pop();
                         Ok(Type::Primitive(PrimitiveType::Unit))
                     }
                     Type::Enum(enum_type_id) => {
-                let enum_def = match self.symbol_table.get_type(enum_type_id) {
-                    TypeDefinition::Enum(e) => e.clone(),
-                    _ => {
-                        return Err(SemanticError::Other(
-                            "Expected enum type definition".to_string(),
-                        ));
-                    }
-                };
+                        let enum_def = match self.symbol_table.get_type(enum_type_id) {
+                            TypeDefinition::Enum(e) => e.clone(),
+                            _ => {
+                                return Err(SemanticError::Other(
+                                    "Expected enum type definition".to_string(),
+                                ));
+                            }
+                        };
 
-                let variant_opt = enum_def
-                    .variants
-                    .iter()
-                    .enumerate()
-                    .find(|(_, (name, _))| name == &variant_name.name);
+                        let variant_opt = enum_def
+                            .variants
+                            .iter()
+                            .enumerate()
+                            .find(|(_, (name, _))| name == &variant_name.name);
 
-                let (_variant_index, field_types) =
-                    if let Some((idx, (_, types))) = variant_opt {
-                        (idx, types.clone())
-                    } else {
-                        return Err(SemanticError::TypeMismatch {
-                            lhs: format!("Enum '{}'", enum_def.qualified_name),
-                            rhs: format!("Unknown variant '{}'", variant_name.name),
-                            pos: variant_name.pos(),
-                        });
-                    };
+                        let (_variant_index, field_types) =
+                            if let Some((idx, (_, types))) = variant_opt {
+                                (idx, types.clone())
+                            } else {
+                                return Err(SemanticError::TypeMismatch {
+                                    lhs: format!("Enum '{}'", enum_def.qualified_name),
+                                    rhs: format!("Unknown variant '{}'", variant_name.name),
+                                    pos: variant_name.pos(),
+                                });
+                            };
 
-                if sub_patterns.len() != field_types.len() {
-                    return Err(SemanticError::TypeMismatch {
-                        lhs: format!(
-                            "{} fields in variant '{}'",
-                            field_types.len(),
-                            variant_name.name
-                        ),
-                        rhs: format!("{} patterns provided", sub_patterns.len()),
-                        pos: variant_name.pos(),
-                    });
-                }
-
-                // Generate RHS expression
-                self.generate_expression(expression)?;
-
-                // Extract and bind each payload field
-                for (field_idx, sub_pat) in sub_patterns.iter().enumerate() {
-                    if !sub_pat.is_wildcard()
-                        && let Pattern::Identifier(id) = sub_pat {
-                            self.builder.dup();
-                            self.builder.ldfield((field_idx + 1) as u32);
-                            let field_ty = field_types[field_idx].clone();
-                            let var_id = self
-                                .local_scope
-                                .as_mut()
-                                .unwrap()
-                                .add_variable(id.name.clone(), field_ty, is_mutable)
-                                .map_err(|_| SemanticError::VariableOutsideFunction {
-                                    name: id.name.to_string(),
-                                    pos: id.pos(),
-                                })?;
-                            self.builder.stvar(var_id);
+                        if sub_patterns.len() != field_types.len() {
+                            return Err(SemanticError::TypeMismatch {
+                                lhs: format!(
+                                    "{} fields in variant '{}'",
+                                    field_types.len(),
+                                    variant_name.name
+                                ),
+                                rhs: format!("{} patterns provided", sub_patterns.len()),
+                                pos: variant_name.pos(),
+                            });
                         }
-                }
 
-                // Pop the enum value from the stack
-                self.builder.pop();
+                        // Generate RHS expression
+                        self.generate_expression(expression)?;
 
-                Ok(Type::Primitive(PrimitiveType::Unit))
+                        // Extract and bind each payload field
+                        for (field_idx, sub_pat) in sub_patterns.iter().enumerate() {
+                            if !sub_pat.is_wildcard()
+                                && let Pattern::Identifier(id) = sub_pat
+                            {
+                                self.builder.dup();
+                                self.builder.ldfield((field_idx + 1) as u32);
+                                let field_ty = field_types[field_idx].clone();
+                                let var_id = self
+                                    .local_scope
+                                    .as_mut()
+                                    .unwrap()
+                                    .add_variable(id.name.clone(), field_ty, is_mutable)
+                                    .map_err(|_| SemanticError::VariableOutsideFunction {
+                                        name: id.name.to_string(),
+                                        pos: id.pos(),
+                                    })?;
+                                self.builder.stvar(var_id);
+                            }
+                        }
+
+                        // Pop the enum value from the stack
+                        self.builder.pop();
+
+                        Ok(Type::Primitive(PrimitiveType::Unit))
                     }
-                    _ => {
-                        Err(SemanticError::TypeMismatch {
-                            lhs: "Enum or Struct type".to_string(),
-                            rhs: format!("'{}.{}' is neither an enum nor a struct", enum_name.name, variant_name.name),
-                            pos: enum_name.pos(),
-                        })
-                    }
+                    _ => Err(SemanticError::TypeMismatch {
+                        lhs: "Enum or Struct type".to_string(),
+                        rhs: format!(
+                            "'{}.{}' is neither an enum nor a struct",
+                            enum_name.name, variant_name.name
+                        ),
+                        pos: enum_name.pos(),
+                    }),
                 }
             }
 
@@ -366,22 +388,23 @@ impl Generator {
 
                 for (idx, sub_pat) in sub_patterns.iter().enumerate() {
                     if !sub_pat.is_wildcard()
-                        && let Pattern::Identifier(id) = sub_pat {
-                            self.builder.dup();
-                            self.builder.ldi(idx as i64);
-                            self.builder.call_host_function(tuple_index_id);
-                            let elem_ty = element_types[idx].clone();
-                            let var_id = self
-                                .local_scope
-                                .as_mut()
-                                .unwrap()
-                                .add_variable(id.name.clone(), elem_ty, is_mutable)
-                                .map_err(|_| SemanticError::VariableOutsideFunction {
-                                    name: id.name.to_string(),
-                                    pos: id.pos(),
-                                })?;
-                            self.builder.stvar(var_id);
-                        }
+                        && let Pattern::Identifier(id) = sub_pat
+                    {
+                        self.builder.dup();
+                        self.builder.ldi(idx as i64);
+                        self.builder.call_host_function(tuple_index_id);
+                        let elem_ty = element_types[idx].clone();
+                        let var_id = self
+                            .local_scope
+                            .as_mut()
+                            .unwrap()
+                            .add_variable(id.name.clone(), elem_ty, is_mutable)
+                            .map_err(|_| SemanticError::VariableOutsideFunction {
+                                name: id.name.to_string(),
+                                pos: id.pos(),
+                            })?;
+                        self.builder.stvar(var_id);
+                    }
                 }
 
                 // Pop the tuple value from the stack
@@ -417,21 +440,114 @@ impl Generator {
         values: Vec<EnumVariant>,
         methods: Vec<StructMethod>,
     ) -> SaResult<Type> {
-        let qualified_name = self
+        let type_id = self.register_enum_decl(
+            is_pub,
+            name.clone(),
+            attributes.clone(),
+            conformance.clone(),
+            type_parameters.clone(),
+        )?;
+        self.resolve_enum_decl(
+            type_id,
+            is_pub,
+            name,
+            attributes,
+            conformance,
+            type_parameters,
+            values,
+            methods,
+        )?;
+        Ok(Type::Primitive(PrimitiveType::Unit))
+    }
+
+    pub(super) fn register_enum_decl(
+        &mut self,
+        is_pub: bool,
+        name: Identifier,
+        attributes: Vec<Attribute>,
+        _conformance: Vec<Identifier>,
+        type_parameters: Vec<TypeParameter>,
+    ) -> SaResult<TypeId> {
+        let qualified_name = self.symbol_table.get_new_symbol_qualified_name(&name.name);
+
+        let type_param_names: Vec<InternedString> = type_parameters
+            .iter()
+            .map(|tp| tp.name.name.clone())
+            .collect();
+
+        let type_param_bounds_list: Vec<Vec<InternedString>> = type_parameters
+            .iter()
+            .map(|tp| tp.bounds.iter().map(|b| b.name.clone()).collect())
+            .collect();
+
+        let ty = Enum {
+            qualified_name: qualified_name.clone(),
+            variants: Vec::new(),
+            attributes: attributes.clone(),
+            type_parameters: type_param_names,
+            type_param_bounds: type_param_bounds_list,
+            generic_variant_types: if type_parameters.is_empty() {
+                None
+            } else {
+                Some(Vec::new())
+            },
+            monomorphization: None,
+            conforming_to: Vec::new(),
+            methods: Vec::new(),
+            source_module: None,
+        };
+        let type_id = self.symbol_table.add_type(TypeDefinition::Enum(ty));
+
+        let symbol = Symbol::new(
+            name.name.clone(),
+            qualified_name.clone(),
+            SymbolKind::Type(type_id),
+        );
+        self.symbol_table.push_symbol(symbol);
+        self.symbol_table.pop_symbol();
+
+        let _ = is_pub;
+        Ok(type_id)
+    }
+
+    pub(super) fn resolve_enum_decl(
+        &mut self,
+        type_id: TypeId,
+        is_pub: bool,
+        name: Identifier,
+        attributes: Vec<Attribute>,
+        conformance: Vec<Identifier>,
+        type_parameters: Vec<TypeParameter>,
+        values: Vec<EnumVariant>,
+        methods: Vec<StructMethod>,
+    ) -> SaResult<Type> {
+        let symbol_id = self
             .symbol_table
-            .get_new_symbol_qualified_name(&name.name);
+            .find_symbol_for_type(type_id)
+            .ok_or_else(|| {
+                SemanticError::Other(format!("Type symbol not found for enum '{}'", name.name))
+            })?;
+        self.symbol_table.push_existing_symbol(symbol_id);
+
+        let qualified_name = match self.symbol_table.get_type(type_id) {
+            TypeDefinition::Enum(e) => e.qualified_name.clone(),
+            _ => {
+                self.symbol_table.pop_symbol();
+                return Err(SemanticError::Other(format!(
+                    "Type id {} is not an enum",
+                    type_id
+                )));
+            }
+        };
         let is_generic = !type_parameters.is_empty();
 
         let (variants, generic_variant_types) = if is_generic {
-            // For generic enums, store the original AST types
             let generic_types: Vec<Vec<crate::ast::Type>> =
                 values.iter().map(|v| v.fields.clone()).collect();
-            // Don't resolve types yet - will be done during monomorphization
             let variants: Vec<(InternedString, Vec<Type>)> =
                 values.iter().map(|v| (v.name.clone(), vec![])).collect();
             (variants, Some(generic_types))
         } else {
-            // For non-generic enums, resolve field types now
             let mut resolved_variants = Vec::new();
             for variant in values {
                 let mut field_types = Vec::new();
@@ -444,10 +560,8 @@ impl Generator {
             (resolved_variants, None)
         };
 
-        // Resolve protocol conformances
         let conforming_to = self.resolve_conformances(&conformance)?;
 
-        // Extract type parameter names and bounds for enclosing context
         let type_param_names: Vec<InternedString> = type_parameters
             .iter()
             .map(|tp| tp.name.name.clone())
@@ -470,42 +584,30 @@ impl Generator {
             methods: Vec::new(),
             source_module: None,
         };
-        let type_id = self.symbol_table.add_type(TypeDefinition::Enum(ty));
+        self.symbol_table
+            .update_type(type_id, TypeDefinition::Enum(ty));
 
-        let symbol = Symbol::new(
-            name.name.clone(),
-            qualified_name.clone(),
-            SymbolKind::Type(type_id),
-        );
-
-        self.symbol_table.push_symbol(symbol);
-
-        // Set enclosing type params for methods to reference enum's type parameters
         let prev_enclosing_type_params =
             std::mem::replace(&mut self.enclosing_type_params, type_param_names);
-        let prev_enclosing_type_param_bounds =
-            std::mem::replace(&mut self.enclosing_type_param_bounds, type_param_bounds_list);
+        let prev_enclosing_type_param_bounds = std::mem::replace(
+            &mut self.enclosing_type_param_bounds,
+            type_param_bounds_list,
+        );
 
-        // Two-pass method compilation for forward reference support:
-        // Pass 1: Register all method signatures
         let mut method_decls = Vec::new();
         for method in methods {
             self.register_function_signature(&method.function)?;
             method_decls.push(method.function);
         }
-        // Pass 2: Generate all method bodies
         for decl in method_decls {
             self.generate_function_body(decl)?;
         }
 
-        // Restore previous enclosing type params
         self.enclosing_type_params = prev_enclosing_type_params;
         self.enclosing_type_param_bounds = prev_enclosing_type_param_bounds;
 
-        // Check conformance after processing methods
         self.check_struct_conformance(type_id, &conforming_to, name.line, name.col)?;
 
-        // TODO: Store is_pub for module visibility checking
         let _ = is_pub;
 
         self.symbol_table.pop_symbol();
@@ -522,11 +624,107 @@ impl Generator {
         fields: Vec<StructField>,
         methods: Vec<StructMethod>,
     ) -> SaResult<Type> {
-        let qualified_name = self
-            .symbol_table
-            .get_new_symbol_qualified_name(&name.name);
+        let type_id = self.register_struct_decl(
+            is_pub,
+            name.clone(),
+            attributes.clone(),
+            conformance.clone(),
+            type_parameters.clone(),
+        )?;
+        self.resolve_struct_decl(
+            type_id,
+            is_pub,
+            name,
+            attributes,
+            conformance,
+            type_parameters,
+            fields,
+            methods,
+        )?;
+        Ok(Type::Primitive(PrimitiveType::Unit))
+    }
 
-        // Extract type parameter names and bounds
+    pub(super) fn register_struct_decl(
+        &mut self,
+        is_pub: bool,
+        name: Identifier,
+        attributes: Vec<Attribute>,
+        _conformance: Vec<Identifier>,
+        type_parameters: Vec<TypeParameter>,
+    ) -> SaResult<TypeId> {
+        let qualified_name = self.symbol_table.get_new_symbol_qualified_name(&name.name);
+
+        let type_param_names: Vec<InternedString> = type_parameters
+            .iter()
+            .map(|tp| tp.name.name.clone())
+            .collect();
+
+        let type_param_bounds_list: Vec<Vec<InternedString>> = type_parameters
+            .iter()
+            .map(|tp| tp.bounds.iter().map(|b| b.name.clone()).collect())
+            .collect();
+
+        let ty = Struct {
+            qualified_name: qualified_name.clone(),
+            fields: Vec::new(),
+            field_defaults: Vec::new(),
+            attributes: attributes.clone(),
+            type_parameters: type_param_names,
+            type_param_bounds: type_param_bounds_list,
+            generic_field_types: if type_parameters.is_empty() {
+                None
+            } else {
+                Some(Vec::new())
+            },
+            monomorphization: None,
+            conforming_to: Vec::new(),
+            methods: Vec::new(),
+            source_module: None,
+        };
+        let type_id = self.symbol_table.add_type(TypeDefinition::Struct(ty));
+
+        let symbol = Symbol::new(
+            name.name.clone(),
+            qualified_name.clone(),
+            SymbolKind::Type(type_id),
+        );
+        self.symbol_table.push_symbol(symbol);
+        self.symbol_table.pop_symbol();
+
+        let _ = is_pub;
+        Ok(type_id)
+    }
+
+    pub(super) fn resolve_struct_decl(
+        &mut self,
+        type_id: TypeId,
+        is_pub: bool,
+        name: Identifier,
+        attributes: Vec<Attribute>,
+        conformance: Vec<Identifier>,
+        type_parameters: Vec<TypeParameter>,
+        fields: Vec<StructField>,
+        methods: Vec<StructMethod>,
+    ) -> SaResult<Type> {
+        let symbol_id = self
+            .symbol_table
+            .find_symbol_for_type(type_id)
+            .ok_or_else(|| {
+                SemanticError::Other(format!("Type symbol not found for struct '{}'", name.name))
+            })?;
+        self.symbol_table.push_existing_symbol(symbol_id);
+
+        let qualified_name = match self.symbol_table.get_type(type_id) {
+            TypeDefinition::Struct(s) => s.qualified_name.clone(),
+            _ => {
+                self.symbol_table.pop_symbol();
+                return Err(SemanticError::Other(format!(
+                    "Type id {} is not a struct",
+                    type_id
+                )));
+            }
+        };
+
         let type_param_names: Vec<InternedString> = type_parameters
             .iter()
             .map(|tp| tp.name.name.clone())
@@ -539,13 +737,10 @@ impl Generator {
 
         let is_generic = !type_param_names.is_empty();
 
-        // For generic structs, store parsed field types; for non-generic, resolve them
         let (fields_with_types, generic_field_types) = if is_generic {
-            // For generic structs, store placeholder types and keep parsed types
             let parsed_field_types: Vec<crate::ast::Type> =
                 fields.iter().map(|f| f.field_type.clone()).collect();
 
-            // Use Unit as placeholder - these will be properly typed during monomorphization
             let placeholder_fields: Vec<(InternedString, Type)> = fields
                 .iter()
                 .enumerate()
@@ -561,7 +756,6 @@ impl Generator {
 
             (placeholder_fields, Some(parsed_field_types))
         } else {
-            // For non-generic structs, resolve types normally
             let mut resolved_fields = Vec::new();
             for (idx, f) in fields.iter().enumerate() {
                 let field_type = self.get_semantic_type(&f.field_type)?;
@@ -576,8 +770,6 @@ impl Generator {
         };
 
         let field_defaults = fields.iter().map(|f| f.default_value.clone()).collect();
-
-        // Resolve protocol conformances
         let conforming_to = self.resolve_conformances(&conformance)?;
 
         let ty = Struct {
@@ -588,46 +780,35 @@ impl Generator {
             type_parameters: type_param_names.clone(),
             type_param_bounds: type_param_bounds_list.clone(),
             generic_field_types,
-            monomorphization: None, // This is the generic definition, not a monomorphization
+            monomorphization: None,
             conforming_to: conforming_to.clone(),
             methods: Vec::new(),
             source_module: None,
         };
-        let type_id = self.symbol_table.add_type(TypeDefinition::Struct(ty));
+        self.symbol_table
+            .update_type(type_id, TypeDefinition::Struct(ty));
 
-        let symbol = Symbol::new(
-            name.name.clone(),
-            qualified_name.clone(),
-            SymbolKind::Type(type_id),
-        );
-        self.symbol_table.push_symbol(symbol);
-
-        // Set enclosing type params for methods to reference struct's type parameters
         let prev_enclosing_type_params =
             std::mem::replace(&mut self.enclosing_type_params, type_param_names);
-        let prev_enclosing_type_param_bounds =
-            std::mem::replace(&mut self.enclosing_type_param_bounds, type_param_bounds_list);
+        let prev_enclosing_type_param_bounds = std::mem::replace(
+            &mut self.enclosing_type_param_bounds,
+            type_param_bounds_list,
+        );
 
-        // Two-pass method compilation for forward reference support:
-        // Pass 1: Register all method signatures
         let mut method_decls = Vec::new();
         for method in methods {
             self.register_function_signature(&method.function)?;
             method_decls.push(method.function);
         }
-        // Pass 2: Generate all method bodies
         for decl in method_decls {
             self.generate_function_body(decl)?;
         }
 
-        // Restore previous enclosing type params
         self.enclosing_type_params = prev_enclosing_type_params;
         self.enclosing_type_param_bounds = prev_enclosing_type_param_bounds;
 
-        // Check conformance after processing methods
         self.check_struct_conformance(type_id, &conforming_to, name.line, name.col)?;
 
-        // TODO: Store is_pub for module visibility checking
         let _ = is_pub;
 
         self.symbol_table.pop_symbol();
@@ -641,14 +822,24 @@ impl Generator {
         attributes: Vec<Attribute>,
         methods: Vec<ProtoMethod>,
     ) -> SaResult<Type> {
-        let qualified_name = self
-            .symbol_table
-            .get_new_symbol_qualified_name(&name.name);
-        // so that method parameters can reference it
+        let type_id = self.register_proto_decl(is_pub, name.clone(), attributes.clone())?;
+        self.resolve_proto_decl(type_id, is_pub, name, attributes, methods)?;
+        Ok(Type::Primitive(PrimitiveType::Unit))
+    }
+
+    pub(super) fn register_proto_decl(
+        &mut self,
+        is_pub: bool,
+        name: Identifier,
+        attributes: Vec<Attribute>,
+    ) -> SaResult<TypeId> {
+        let qualified_name = self.symbol_table.get_new_symbol_qualified_name(&name.name);
         let ty = Proto {
             qualified_name: qualified_name.clone(),
             methods: vec![],
             attributes: attributes.clone(),
+            foreign_type_tag: None,
+            foreign_uuid: None,
         };
         let type_id = self.symbol_table.add_type(TypeDefinition::Proto(ty));
 
@@ -658,8 +849,39 @@ impl Generator {
             SymbolKind::Type(type_id),
         );
         self.symbol_table.push_symbol(symbol);
+        self.symbol_table.pop_symbol();
 
-        // Now process the method signatures
+        let _ = is_pub;
+        Ok(type_id)
+    }
+
+    pub(super) fn resolve_proto_decl(
+        &mut self,
+        type_id: TypeId,
+        is_pub: bool,
+        name: Identifier,
+        attributes: Vec<Attribute>,
+        methods: Vec<ProtoMethod>,
+    ) -> SaResult<Type> {
+        let symbol_id = self
+            .symbol_table
+            .find_symbol_for_type(type_id)
+            .ok_or_else(|| {
+                SemanticError::Other(format!("Type symbol not found for proto '{}'", name.name))
+            })?;
+        self.symbol_table.push_existing_symbol(symbol_id);
+
+        let qualified_name = match self.symbol_table.get_type(type_id) {
+            TypeDefinition::Proto(p) => p.qualified_name.clone(),
+            _ => {
+                self.symbol_table.pop_symbol();
+                return Err(SemanticError::Other(format!(
+                    "Type id {} is not a proto",
+                    type_id
+                )));
+            }
+        };
+
         let mut methods_with_types = Vec::new();
         for m in &methods {
             let mut params = Vec::new();
@@ -673,19 +895,20 @@ impl Generator {
             methods_with_types.push((m.name.name.clone(), params, return_type));
         }
 
-        // Update the proto with the actual method signatures
+        let foreign_attrs = Self::extract_foreign_attrs(&attributes);
         let ty = Proto {
             qualified_name: qualified_name.clone(),
             methods: methods_with_types.clone(),
             attributes: attributes.clone(),
+            foreign_type_tag: foreign_attrs.as_ref().and_then(|f| f.type_tag.clone()),
+            foreign_uuid: foreign_attrs.as_ref().and_then(|f| f.uuid.clone()),
         };
-        self.symbol_table.types[type_id as usize] = TypeDefinition::Proto(ty);
+        self.symbol_table
+            .update_type(type_id, TypeDefinition::Proto(ty));
 
         self.symbol_table.pop_symbol();
 
-        // If this proto carries `@foreign(...)`, synthesise a hidden carrier
-        // struct so that vtable dispatch can route to host-provided methods.
-        if let Some(foreign) = Self::extract_foreign_attrs(&attributes) {
+        if let Some(foreign) = foreign_attrs {
             self.synthesize_foreign_carrier(
                 &name,
                 &qualified_name,
@@ -695,7 +918,6 @@ impl Generator {
             )?;
         }
 
-        // TODO: Store is_pub for module visibility checking
         let _ = is_pub;
 
         Ok(Type::Primitive(PrimitiveType::Unit))
@@ -735,9 +957,7 @@ impl Generator {
         })?;
 
         // Enforce type_tag uniqueness across the module.
-        if let Some((prev_line, prev_col)) =
-            self.seen_foreign_type_tags.get(&type_tag).copied()
-        {
+        if let Some((prev_line, prev_col)) = self.seen_foreign_type_tags.get(&type_tag).copied() {
             return Err(SemanticError::Other(format!(
                 "@foreign type_tag '{}' on proto '{}' at line {} column {} is already claimed by a previous proto at line {} column {}",
                 type_tag, proto_ident.name, proto_ident.line, proto_ident.col, prev_line, prev_col,
@@ -790,16 +1010,14 @@ impl Generator {
 
         // For each proto method, insert a HostMethod child symbol on the
         // carrier. `build_vtable` will pick these up by name.
-        for (method_name, params, return_type) in methods {
+        for (idx, (method_name, params, return_type)) in methods.iter().enumerate() {
             let return_kind = match return_type {
                 None => crate::semantic::ReturnKind::Void,
                 Some(Type::Nullable(_)) => crate::semantic::ReturnKind::Optional,
                 Some(_) => crate::semantic::ReturnKind::Value,
             };
-            let qualified_method_name = InternedString::from(format!(
-                "{}.{}",
-                carrier_qualified_name, method_name,
-            ));
+            let qualified_method_name =
+                InternedString::from(format!("{}.{}", carrier_qualified_name, method_name,));
             let host_method_symbol = Symbol::new(
                 method_name.clone(),
                 qualified_method_name,
@@ -809,6 +1027,8 @@ impl Generator {
                     type_tag: type_tag.clone(),
                     param_count: params.len() as u32,
                     return_kind,
+                    vtable_slot: idx as u32,
+                    return_ty: map_host_return_ty(return_type, &self.symbol_table),
                 },
             );
             self.symbol_table.insert_symbol(host_method_symbol);
@@ -822,60 +1042,105 @@ impl Generator {
         Ok(())
     }
 
-    fn generate_return(&mut self, expression: Expression) -> SaResult<Type> {
-        // Check if this expression involves a move (before consuming it)
-        let move_info: Option<(u32, bool)> = if let Expression::Identifier(ref ident) = expression {
-            if let Some(var_id) = self
-                .local_scope
-                .as_ref()
-                .unwrap()
-                .find_variable(&ident.name)
-            {
-                let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
-                if !ty.is_copy_treated(&self.symbol_table) {
-                    Some((var_id, false))
-                } else {
-                    None
+    fn generate_return(
+        &mut self,
+        expression: Option<Expression>,
+        pos: SourcePos,
+    ) -> SaResult<Type> {
+        let expected =
+            self.enclosing_return_types.last().cloned().ok_or_else(|| {
+                SemanticError::Other("`return` outside of a function".to_string())
+            })?;
+
+        match expression {
+            None => {
+                if expected != Type::Primitive(PrimitiveType::Unit) {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: format!("declared return type {}", self.type_to_string(&expected)),
+                        rhs: "no return value (`return;`)".to_string(),
+                        pos: Some(pos),
+                    });
                 }
-            } else if let Some(param_id) =
-                self.local_scope.as_ref().unwrap().find_param(&ident.name)
-            {
-                let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
-                if !ty.is_copy_treated(&self.symbol_table) {
-                    Some((param_id, true))
-                } else {
-                    None
-                }
-            } else {
-                None
+                self.builder.ldi(0);
             }
-        } else {
-            None
-        };
+            Some(expression) => {
+                // Check if this expression involves a move (before consuming it)
+                let move_info: Option<(u32, bool)> =
+                    if let Expression::Identifier(ref ident) = expression {
+                        if let Some(var_id) = self
+                            .local_scope
+                            .as_ref()
+                            .unwrap()
+                            .find_variable(&ident.name)
+                        {
+                            let ty = self.local_scope.as_ref().unwrap().get_variable_type(var_id);
+                            if !ty.is_copy_treated(&self.symbol_table) {
+                                Some((var_id, false))
+                            } else {
+                                None
+                            }
+                        } else if let Some(param_id) =
+                            self.local_scope.as_ref().unwrap().find_param(&ident.name)
+                        {
+                            let ty = self.local_scope.as_ref().unwrap().get_param_type(param_id);
+                            if !ty.is_copy_treated(&self.symbol_table) {
+                                Some((param_id, true))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
 
-        let ty = self.generate_expression(expression)?;
+                let ty = self.generate_expression(expression)?;
 
-        // Mark variable as moved if needed
-        if let Some((id, is_param)) = move_info {
-            if is_param { self.mark_param_moved(id); } else { self.mark_variable_moved(id); }
+                // Mark variable as moved if needed
+                if let Some((id, is_param)) = move_info {
+                    if is_param {
+                        self.mark_param_moved(id);
+                    } else {
+                        self.mark_variable_moved(id);
+                    }
+                }
+
+                if matches!(ty, Type::Reference(_)) {
+                    return Err(SemanticError::Other(
+                        "Cannot return a non-escapable ref value".to_string(),
+                    ));
+                }
+
+                if expected != ty {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: format!("declared return type {}", self.type_to_string(&expected)),
+                        rhs: format!("returned value of type {}", self.type_to_string(&ty)),
+                        pos: Some(pos),
+                    });
+                }
+            }
         }
 
-        if matches!(ty, Type::Reference(_)) {
-            return Err(SemanticError::Other(
-                "Cannot return a non-escapable ref value".to_string(),
-            ));
-        }
         self.builder.ret();
         Ok(Type::Primitive(PrimitiveType::Unit))
     }
 
-    pub(super) fn generate_import(&mut self, module_path: InternedString, alias: Option<InternedString>) -> SaResult<Type> {
+    pub(super) fn generate_import(
+        &mut self,
+        module_path: InternedString,
+        alias: Option<InternedString>,
+    ) -> SaResult<Type> {
         // Import semantics: try module first, then symbol from parent module
         let segments: Vec<&str> = module_path.split('.').filter(|s| !s.is_empty()).collect();
         if segments.is_empty() {
             return Err(SemanticError::ImportError {
                 module_path: module_path.to_string(),
-                pos: SourcePos { line: 0, col: 0, module: Some(self._current_module_path.to_string()) },
+                pos: SourcePos {
+                    line: 0,
+                    col: 0,
+                    module: Some(self._current_module_path.to_string()),
+                },
             });
         }
 
@@ -906,7 +1171,11 @@ impl Generator {
         if segments.len() < 2 {
             return Err(SemanticError::ImportError {
                 module_path: module_path.to_string(),
-                pos: SourcePos { line: 0, col: 0, module: Some(self._current_module_path.to_string()) },
+                pos: SourcePos {
+                    line: 0,
+                    col: 0,
+                    module: Some(self._current_module_path.to_string()),
+                },
             });
         }
 
@@ -918,7 +1187,11 @@ impl Generator {
             .load_module(&parent_path)
             .ok_or_else(|| SemanticError::ImportError {
                 module_path: parent_path.clone(),
-                pos: SourcePos { line: 0, col: 0, module: Some(self._current_module_path.to_string()) },
+                pos: SourcePos {
+                    line: 0,
+                    col: 0,
+                    module: Some(self._current_module_path.to_string()),
+                },
             })?;
 
         if !self.imported_modules.contains_key(parent_path.as_str()) {
@@ -936,42 +1209,44 @@ impl Generator {
             })?;
         // Symbols exported from parent: children of root
         let root = imported_parent
-            .symbols.first()
+            .symbols
+            .first()
             .ok_or_else(|| SemanticError::Other(format!("Invalid module root: {}", parent_path)))?;
         if let Some(sym_id) = root.children.get(symbol_name.as_str())
-            && let Some(sym) = imported_parent.symbols.get(*sym_id as usize) {
-                let resolved_kind = match sym.kind {
-                    SymbolKind::Type(imported_type_id) => {
-                        if let Some(existing_symbol) = self
-                            .symbol_table
-                            .find_symbol_by_qualified_name(&sym.qualified_name)
-                        {
-                            if let SymbolKind::Type(existing_type_id) = existing_symbol.kind {
-                                SymbolKind::Type(existing_type_id)
-                            } else {
-                                sym.kind.clone()
-                            }
+            && let Some(sym) = imported_parent.symbols.get(*sym_id as usize)
+        {
+            let resolved_kind = match sym.kind {
+                SymbolKind::Type(imported_type_id) => {
+                    if let Some(existing_symbol) = self
+                        .symbol_table
+                        .find_symbol_by_qualified_name(&sym.qualified_name)
+                    {
+                        if let SymbolKind::Type(existing_type_id) = existing_symbol.kind {
+                            SymbolKind::Type(existing_type_id)
                         } else {
-                            let mut type_map = std::collections::HashMap::new();
-                            let new_type_id = self.import_type_from_module(
-                                &imported_parent,
-                                imported_type_id,
-                                &mut type_map,
-                            )?;
-                            SymbolKind::Type(new_type_id)
+                            sym.kind.clone()
                         }
+                    } else {
+                        let mut type_map = std::collections::HashMap::new();
+                        let new_type_id = self.import_type_from_module(
+                            &imported_parent,
+                            imported_type_id,
+                            &mut type_map,
+                        )?;
+                        SymbolKind::Type(new_type_id)
                     }
-                    _ => sym.kind.clone(),
-                };
+                }
+                _ => sym.kind.clone(),
+            };
 
-                let new_symbol = Symbol::new(
-                    binding_name.clone(),
-                    sym.qualified_name.clone(),
-                    resolved_kind,
-                );
-                self.symbol_table.insert_symbol(new_symbol);
-                return Ok(Type::Primitive(PrimitiveType::Unit));
-            }
+            let new_symbol = Symbol::new(
+                binding_name.clone(),
+                sym.qualified_name.clone(),
+                resolved_kind,
+            );
+            self.symbol_table.insert_symbol(new_symbol);
+            return Ok(Type::Primitive(PrimitiveType::Unit));
+        }
 
         Err(SemanticError::Other(format!(
             "Symbol '{}' not found in module '{}'",
@@ -1001,7 +1276,8 @@ impl Generator {
 
         // Derive source module path from the module's root symbol
         let source_module_path = module
-            .symbols.first()
+            .symbols
+            .first()
             .map(|root| root.qualified_name.clone());
 
         let type_def = module.types.get(type_id as usize).ok_or_else(|| {
@@ -1020,10 +1296,11 @@ impl Generator {
         if let Some(existing_symbol) = self
             .symbol_table
             .find_symbol_by_qualified_name(qualified_name)
-            && let SymbolKind::Type(existing_type_id) = existing_symbol.kind {
-                type_map.insert(type_id, existing_type_id);
-                return Ok(existing_type_id);
-            }
+            && let SymbolKind::Type(existing_type_id) = existing_symbol.kind
+        {
+            type_map.insert(type_id, existing_type_id);
+            return Ok(existing_type_id);
+        }
 
         let mapped_def = match type_def {
             TypeDefinition::Struct(s) => {
@@ -1109,6 +1386,8 @@ impl Generator {
                     qualified_name: p.qualified_name.clone(),
                     methods,
                     attributes: p.attributes.clone(),
+                    foreign_type_tag: p.foreign_type_tag.clone(),
+                    foreign_uuid: p.foreign_uuid.clone(),
                 })
             }
         };
@@ -1164,16 +1443,19 @@ impl Generator {
                 let new_id = self.import_type_from_module(module, *id, type_map)?;
                 Type::Proto(new_id)
             }
-            Type::Function { params, return_type } => Type::Function {
-                params: params.iter()
+            Type::Function {
+                params,
+                return_type,
+            } => Type::Function {
+                params: params
+                    .iter()
                     .map(|p| self.map_type_from_module(module, p, type_map))
                     .collect::<SaResult<Vec<_>>>()?,
-                return_type: Box::new(
-                    self.map_type_from_module(module, return_type, type_map)?,
-                ),
+                return_type: Box::new(self.map_type_from_module(module, return_type, type_map)?),
             },
             Type::Tuple(elements) => Type::Tuple(
-                elements.iter()
+                elements
+                    .iter()
                     .map(|t| self.map_type_from_module(module, t, type_map))
                     .collect::<SaResult<Vec<_>>>()?,
             ),
@@ -1184,5 +1466,41 @@ impl Generator {
         };
 
         Ok(mapped)
+    }
+}
+
+fn map_host_return_ty(
+    return_type: &Option<Type>,
+    symbol_table: &crate::semantic::SymbolTable,
+) -> crate::semantic::HostReturnTy {
+    use crate::semantic::HostReturnTy as H;
+
+    fn map_ty(ty: &Type, symbol_table: &crate::semantic::SymbolTable) -> H {
+        match ty {
+            Type::Primitive(PrimitiveType::Unit) => H::Void,
+            Type::Primitive(PrimitiveType::Int) => H::Int,
+            Type::Primitive(PrimitiveType::Float) => H::Float,
+            Type::Primitive(PrimitiveType::String) => H::String,
+            Type::Nullable(inner) => H::Optional(Box::new(map_ty(inner, symbol_table))),
+            Type::Array(inner) => H::Array(Box::new(map_ty(inner, symbol_table))),
+            Type::Proto(type_id) => {
+                if let Some(TypeDefinition::Proto(proto)) =
+                    symbol_table.types.get(*type_id as usize)
+                    && let Some(type_tag) = &proto.foreign_type_tag
+                {
+                    H::Foreign {
+                        type_tag: type_tag.clone(),
+                    }
+                } else {
+                    H::Void
+                }
+            }
+            _ => H::Void,
+        }
+    }
+
+    match return_type {
+        Some(ty) => map_ty(ty, symbol_table),
+        None => H::Void,
     }
 }

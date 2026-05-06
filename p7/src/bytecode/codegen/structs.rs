@@ -59,7 +59,8 @@ impl Generator {
     ) -> SaResult<Type> {
         // Resolve struct type from the name expression
         let type_name = struct_name_expr.get_name();
-        let struct_type = self.resolve_qualified_type_name(&type_name, pos.0, pos.1)
+        let struct_type = self
+            .resolve_qualified_type_name(&type_name, pos.0, pos.1)
             .or_else(|_| self.require_type_in_scope(&type_name, pos.0, pos.1))?;
 
         let type_id = match struct_type {
@@ -75,15 +76,21 @@ impl Generator {
 
         let struct_def = match self.symbol_table.get_type(type_id) {
             TypeDefinition::Struct(s) => s.clone(),
-            _ => return Err(SemanticError::Other("Expected struct type definition".to_string())),
+            _ => {
+                return Err(SemanticError::Other(
+                    "Expected struct type definition".to_string(),
+                ));
+            }
         };
 
         // Build a map of field name → update expression
-        let mut update_map: std::collections::HashMap<InternedString, Expression> = std::collections::HashMap::new();
+        let mut update_map: std::collections::HashMap<InternedString, Expression> =
+            std::collections::HashMap::new();
         for (field_name, expr) in updates {
             if update_map.contains_key(&field_name.name) {
                 return Err(SemanticError::Other(format!(
-                    "Duplicate field '{}' in struct update", field_name.name
+                    "Duplicate field '{}' in struct update",
+                    field_name.name
                 )));
             }
             // Validate field exists
@@ -99,7 +106,10 @@ impl Generator {
 
         // Generate base expression and store in a temporary variable
         let base_ty = self.generate_expression(base)?;
-        let base_var = self.local_scope.as_mut().unwrap()
+        let base_var = self
+            .local_scope
+            .as_mut()
+            .unwrap()
             .add_variable(InternedString::from("$struct_update_base"), base_ty, false)
             .map_err(|_| SemanticError::Other("Cannot create struct update temp".to_string()))?;
         self.builder.stvar(base_var);

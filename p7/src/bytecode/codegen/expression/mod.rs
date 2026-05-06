@@ -14,7 +14,11 @@ mod operations;
 impl Generator {
     /// Creates a SourcePos from line and column numbers, including the current module path
     fn make_pos(&self, line: usize, col: usize) -> Option<SourcePos> {
-        Some(SourcePos { line, col, module: Some(self._current_module_path.to_string()) })
+        Some(SourcePos {
+            line,
+            col,
+            module: Some(self._current_module_path.to_string()),
+        })
     }
 
     /// Creates a type mismatch error
@@ -184,12 +188,13 @@ impl Generator {
             Expression::TupleLiteral { elements, pos } => {
                 self.generate_tuple_literal(elements, pos)
             }
-            Expression::StructUpdate { struct_name, base, updates, pos } => {
-                self.generate_struct_update(*struct_name, *base, updates, pos)
-            }
-            Expression::MapLiteral { pairs, pos } => {
-                self.generate_map_literal(pairs, pos)
-            }
+            Expression::StructUpdate {
+                struct_name,
+                base,
+                updates,
+                pos,
+            } => self.generate_struct_update(*struct_name, *base, updates, pos),
+            Expression::MapLiteral { pairs, pos } => self.generate_map_literal(pairs, pos),
         }
     }
 

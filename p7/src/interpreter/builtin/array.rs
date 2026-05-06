@@ -364,9 +364,21 @@ pub(crate) fn array_set(ctx: &mut Context) -> ContextResult<()> {
 }
 
 pub(crate) fn array_insert(ctx: &mut Context) -> ContextResult<()> {
-    let elem = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let index = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let box_ref = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let elem = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let index = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let box_ref = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
 
     match (box_ref, index) {
         (Data::BoxRef(box_idx), Data::Int(idx)) => {
@@ -380,16 +392,28 @@ pub(crate) fn array_insert(ctx: &mut Context) -> ContextResult<()> {
                     elements.insert(clamped, elem);
                     Ok(())
                 }
-                _ => Err(RuntimeError::Other("array.insert: boxed value must be an array".to_string())),
+                _ => Err(RuntimeError::Other(
+                    "array.insert: boxed value must be an array".to_string(),
+                )),
             }
         }
-        _ => Err(RuntimeError::Other("array.insert: invalid arguments".to_string())),
+        _ => Err(RuntimeError::Other(
+            "array.insert: invalid arguments".to_string(),
+        )),
     }
 }
 
 pub(crate) fn array_remove(ctx: &mut Context) -> ContextResult<()> {
-    let index = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let box_ref = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let index = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let box_ref = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
 
     match (box_ref, index) {
         (Data::BoxRef(box_idx), Data::Int(idx)) => {
@@ -403,13 +427,19 @@ pub(crate) fn array_remove(ctx: &mut Context) -> ContextResult<()> {
                         return Ok(());
                     }
                     let removed = elements.remove(idx as usize);
-                    ctx.stack_frame_mut()?.stack.push(Data::Some(Box::new(removed)));
+                    ctx.stack_frame_mut()?
+                        .stack
+                        .push(Data::Some(Box::new(removed)));
                     Ok(())
                 }
-                _ => Err(RuntimeError::Other("array.remove: boxed value must be an array".to_string())),
+                _ => Err(RuntimeError::Other(
+                    "array.remove: boxed value must be an array".to_string(),
+                )),
             }
         }
-        _ => Err(RuntimeError::Other("array.remove: invalid arguments".to_string())),
+        _ => Err(RuntimeError::Other(
+            "array.remove: invalid arguments".to_string(),
+        )),
     }
 }
 
@@ -445,29 +475,50 @@ pub(crate) fn array_index_of(ctx: &mut Context) -> ContextResult<()> {
 }
 
 pub(crate) fn array_join(ctx: &mut Context) -> ContextResult<()> {
-    let sep = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let array = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let sep = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let array = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
 
     match (array, sep) {
         (Data::Array(elements), Data::String(separator)) => {
-            let strs: Vec<String> = elements.into_iter().map(|e| {
-                match e {
+            let strs: Vec<String> = elements
+                .into_iter()
+                .map(|e| match e {
                     Data::String(s) => s,
                     _ => String::new(),
-                }
-            }).collect();
-            ctx.stack_frame_mut()?.stack.push(Data::String(strs.join(&separator)));
+                })
+                .collect();
+            ctx.stack_frame_mut()?
+                .stack
+                .push(Data::String(strs.join(&separator)));
             Ok(())
         }
-        _ => Err(RuntimeError::Other("array.join: expected (array<string>, string)".to_string())),
+        _ => Err(RuntimeError::Other(
+            "array.join: expected (array<string>, string)".to_string(),
+        )),
     }
 }
 
 // --- Higher-order array functions ---
 
 pub(crate) fn array_map(ctx: &mut Context) -> ContextResult<()> {
-    let closure = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let array = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let closure = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let array = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
 
     match array {
         Data::Array(elements) => {
@@ -479,13 +530,23 @@ pub(crate) fn array_map(ctx: &mut Context) -> ContextResult<()> {
             ctx.stack_frame_mut()?.stack.push(Data::Array(results));
             Ok(())
         }
-        _ => Err(RuntimeError::Other("array.map: first argument must be an array".to_string())),
+        _ => Err(RuntimeError::Other(
+            "array.map: first argument must be an array".to_string(),
+        )),
     }
 }
 
 pub(crate) fn array_filter(ctx: &mut Context) -> ContextResult<()> {
-    let closure = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let array = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let closure = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let array = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
 
     match array {
         Data::Array(elements) => {
@@ -499,14 +560,28 @@ pub(crate) fn array_filter(ctx: &mut Context) -> ContextResult<()> {
             ctx.stack_frame_mut()?.stack.push(Data::Array(results));
             Ok(())
         }
-        _ => Err(RuntimeError::Other("array.filter: first argument must be an array".to_string())),
+        _ => Err(RuntimeError::Other(
+            "array.filter: first argument must be an array".to_string(),
+        )),
     }
 }
 
 pub(crate) fn array_reduce(ctx: &mut Context) -> ContextResult<()> {
-    let closure = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let init = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let array = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let closure = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let init = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let array = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
 
     match array {
         Data::Array(elements) => {
@@ -517,13 +592,23 @@ pub(crate) fn array_reduce(ctx: &mut Context) -> ContextResult<()> {
             ctx.stack_frame_mut()?.stack.push(acc);
             Ok(())
         }
-        _ => Err(RuntimeError::Other("array.reduce: first argument must be an array".to_string())),
+        _ => Err(RuntimeError::Other(
+            "array.reduce: first argument must be an array".to_string(),
+        )),
     }
 }
 
 pub(crate) fn array_for_each(ctx: &mut Context) -> ContextResult<()> {
-    let closure = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let array = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let closure = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let array = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
 
     match array {
         Data::Array(elements) => {
@@ -532,33 +617,55 @@ pub(crate) fn array_for_each(ctx: &mut Context) -> ContextResult<()> {
             }
             Ok(())
         }
-        _ => Err(RuntimeError::Other("array.for_each: first argument must be an array".to_string())),
+        _ => Err(RuntimeError::Other(
+            "array.for_each: first argument must be an array".to_string(),
+        )),
     }
 }
 
 pub(crate) fn array_find(ctx: &mut Context) -> ContextResult<()> {
-    let closure = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let array = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let closure = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let array = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
 
     match array {
         Data::Array(elements) => {
             for elem in elements {
                 let result = ctx.call_closure(&closure, vec![elem.clone()])?;
                 if result == Data::Int(1) {
-                    ctx.stack_frame_mut()?.stack.push(Data::Some(Box::new(elem)));
+                    ctx.stack_frame_mut()?
+                        .stack
+                        .push(Data::Some(Box::new(elem)));
                     return Ok(());
                 }
             }
             ctx.stack_frame_mut()?.stack.push(Data::Null);
             Ok(())
         }
-        _ => Err(RuntimeError::Other("array.find: first argument must be an array".to_string())),
+        _ => Err(RuntimeError::Other(
+            "array.find: first argument must be an array".to_string(),
+        )),
     }
 }
 
 pub(crate) fn array_any(ctx: &mut Context) -> ContextResult<()> {
-    let closure = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let array = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let closure = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let array = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
 
     match array {
         Data::Array(elements) => {
@@ -572,13 +679,23 @@ pub(crate) fn array_any(ctx: &mut Context) -> ContextResult<()> {
             ctx.stack_frame_mut()?.stack.push(Data::Int(0));
             Ok(())
         }
-        _ => Err(RuntimeError::Other("array.any: first argument must be an array".to_string())),
+        _ => Err(RuntimeError::Other(
+            "array.any: first argument must be an array".to_string(),
+        )),
     }
 }
 
 pub(crate) fn array_all(ctx: &mut Context) -> ContextResult<()> {
-    let closure = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let array = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let closure = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let array = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
 
     match array {
         Data::Array(elements) => {
@@ -592,6 +709,8 @@ pub(crate) fn array_all(ctx: &mut Context) -> ContextResult<()> {
             ctx.stack_frame_mut()?.stack.push(Data::Int(1));
             Ok(())
         }
-        _ => Err(RuntimeError::Other("array.all: first argument must be an array".to_string())),
+        _ => Err(RuntimeError::Other(
+            "array.all: first argument must be an array".to_string(),
+        )),
     }
 }

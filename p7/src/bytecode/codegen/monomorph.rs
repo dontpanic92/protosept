@@ -97,7 +97,8 @@ impl Generator {
             .map(|t| t.to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        let monomorphized_name = InternedString::from(format!("{}<{}>", base_struct.qualified_name, type_args_str));
+        let monomorphized_name =
+            InternedString::from(format!("{}<{}>", base_struct.qualified_name, type_args_str));
 
         // Create the monomorphized struct
         let monomorphized_struct = Struct {
@@ -211,7 +212,8 @@ impl Generator {
             .map(|t| t.to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        let monomorphized_name = InternedString::from(format!("{}<{}>", base_enum.qualified_name, type_args_str));
+        let monomorphized_name =
+            InternedString::from(format!("{}<{}>", base_enum.qualified_name, type_args_str));
 
         // Create the monomorphized enum
         let monomorphized_enum = Enum {
@@ -263,9 +265,10 @@ impl Generator {
             // Find the symbol with this function's qualified name
             for (idx, symbol) in self.symbol_table.symbols.iter().enumerate() {
                 if symbol.qualified_name == cached_func.qualified_name
-                    && let SymbolKind::Function { address, func_id } = symbol.kind {
-                        return Ok((address, func_id, idx as u32));
-                    }
+                    && let SymbolKind::Function { address, func_id } = symbol.kind
+                {
+                    return Ok((address, func_id, idx as u32));
+                }
             }
 
             return Err(SemanticError::TypeMismatch {
@@ -286,9 +289,10 @@ impl Generator {
             // Find the address and symbol_id of the base function
             for (idx, symbol) in self.symbol_table.symbols.iter().enumerate() {
                 if symbol.qualified_name == base_func.qualified_name
-                    && let SymbolKind::Function { address, func_id } = symbol.kind {
-                        return Ok((address, func_id, idx as u32));
-                    }
+                    && let SymbolKind::Function { address, func_id } = symbol.kind
+                {
+                    return Ok((address, func_id, idx as u32));
+                }
             }
             return Err(SemanticError::TypeMismatch {
                 lhs: "function symbol".to_string(),
@@ -362,7 +366,8 @@ impl Generator {
             .map(|t| t.to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        let monomorphized_name = InternedString::from(format!("{}<{}>", base_func.qualified_name, type_args_str));
+        let monomorphized_name =
+            InternedString::from(format!("{}<{}>", base_func.qualified_name, type_args_str));
 
         // Create the monomorphized function metadata
         let monomorphized_func = Function {
@@ -514,9 +519,9 @@ impl Generator {
             ParsedType::Reference(inner) => {
                 ParsedType::Reference(Box::new(self.substitute_parsed_type(inner, substitution)))
             }
-            ParsedType::MutableReference(inner) => {
-                ParsedType::MutableReference(Box::new(self.substitute_parsed_type(inner, substitution)))
-            }
+            ParsedType::MutableReference(inner) => ParsedType::MutableReference(Box::new(
+                self.substitute_parsed_type(inner, substitution),
+            )),
             ParsedType::Array(inner) => {
                 ParsedType::Array(Box::new(self.substitute_parsed_type(inner, substitution)))
             }
@@ -541,8 +546,7 @@ impl Generator {
                     .iter()
                     .map(|p| self.substitute_parsed_type(p, substitution))
                     .collect();
-                let substituted_ret =
-                    self.substitute_parsed_type(return_type, substitution);
+                let substituted_ret = self.substitute_parsed_type(return_type, substitution);
                 ParsedType::Function {
                     param_types: substituted_params,
                     return_type: Box::new(substituted_ret),
@@ -601,7 +605,10 @@ impl Generator {
                 match concrete_type_id {
                     Some(tid) => {
                         // Use conformance checking — the type must have all required methods
-                        if self.check_type_satisfies_proto(&[proto_type_id], tid).is_err() {
+                        if self
+                            .check_type_satisfies_proto(&[proto_type_id], tid)
+                            .is_err()
+                        {
                             let type_name = self.type_display_name(concrete_type);
                             return Err(SemanticError::Other(format!(
                                 "Type '{}' does not satisfy proto '{}' required by type parameter '{}' of '{}' at line {} column {}",
@@ -643,22 +650,19 @@ impl Generator {
         for symbol in &self.symbol_table.symbols {
             if symbol.name == name
                 && let SymbolKind::Type(type_id) = symbol.kind
-                    && matches!(
-                        self.symbol_table.get_type(type_id),
-                        TypeDefinition::Proto(_)
-                    ) {
-                        return Some(type_id);
-                    }
+                && matches!(
+                    self.symbol_table.get_type(type_id),
+                    TypeDefinition::Proto(_)
+                )
+            {
+                return Some(type_id);
+            }
         }
         None
     }
 
     /// Lightweight conformance check: does the type at `type_id` implement all methods required by each proto?
-    fn check_type_satisfies_proto(
-        &self,
-        proto_ids: &[TypeId],
-        type_id: TypeId,
-    ) -> Result<(), ()> {
+    fn check_type_satisfies_proto(&self, proto_ids: &[TypeId], type_id: TypeId) -> Result<(), ()> {
         for &proto_id in proto_ids {
             let proto = match self.symbol_table.get_type(proto_id) {
                 TypeDefinition::Proto(p) => p,

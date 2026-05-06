@@ -1,8 +1,8 @@
 use std::ops::Deref;
 
 use crate::ast::{
-    Attribute, Effect, EnumVariant, Expression, FunctionDeclaration, Identifier,
-    Parameter, ProtoMethod, Statement, StructField, StructMethod, Type,
+    Attribute, Effect, EnumVariant, Expression, FunctionDeclaration, Identifier, Parameter,
+    ProtoMethod, Statement, StructField, StructMethod, Type,
 };
 use crate::errors::{ParseError, SourcePos};
 use crate::intern::InternedString;

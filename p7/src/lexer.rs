@@ -177,8 +177,6 @@ const MAX_UNICODE_ESCAPE_DIGITS: usize = 6;
 
 impl Lexer {
     pub fn new(input: String) -> Self {
-        
-
         Lexer {
             input,
             position: 0,
@@ -499,7 +497,9 @@ impl Lexer {
                 }
 
                 if !current.is_empty() {
-                    parts.push(InterpolatedStringPart::Literal(InternedString::from(current)));
+                    parts.push(InterpolatedStringPart::Literal(InternedString::from(
+                        current,
+                    )));
                     current = String::new();
                 }
 
@@ -531,7 +531,9 @@ impl Lexer {
         }
 
         if !current.is_empty() {
-            parts.push(InterpolatedStringPart::Literal(InternedString::from(current)));
+            parts.push(InterpolatedStringPart::Literal(InternedString::from(
+                current,
+            )));
         }
 
         self.read_char(); // Skip closing "

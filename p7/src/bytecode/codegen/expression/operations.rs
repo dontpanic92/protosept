@@ -9,7 +9,11 @@ use crate::{
 use super::super::{Generator, SaResult};
 
 impl Generator {
-    pub(in crate::bytecode::codegen) fn generate_unary(&mut self, operator: Token, right: Expression) -> SaResult<Type> {
+    pub(in crate::bytecode::codegen) fn generate_unary(
+        &mut self,
+        operator: Token,
+        right: Expression,
+    ) -> SaResult<Type> {
         let ty = self.generate_expression(right)?;
         match operator.token_type {
             TokenType::Minus => {
@@ -25,7 +29,11 @@ impl Generator {
         }
     }
 
-    pub(in crate::bytecode::codegen) fn generate_deref(&mut self, ty: Type, operator: &Token) -> SaResult<Type> {
+    pub(in crate::bytecode::codegen) fn generate_deref(
+        &mut self,
+        ty: Type,
+        operator: &Token,
+    ) -> SaResult<Type> {
         // `*r` where `r: ref<T>` yields a `T`. No runtime op yet.
         // `*b` where `b: box<T>` yields a `T` (only for primitive T).
         if let Type::Reference(inner) = ty {
@@ -53,25 +61,30 @@ impl Generator {
         }
     }
 
-    pub(in crate::bytecode::codegen) fn generate_ref(&mut self, expr: Expression) -> SaResult<Type> {
+    pub(in crate::bytecode::codegen) fn generate_ref(
+        &mut self,
+        expr: Expression,
+    ) -> SaResult<Type> {
         // Special case: ref(*b) where b is a box
         if let Expression::Unary { operator, right } = &expr
-            && operator.token_type == TokenType::Multiply {
-                let inner_ty = self.generate_expression((**right).clone())?;
-                if let Type::BoxType(boxed_inner) = inner_ty {
-                    return Ok(Type::Reference(boxed_inner));
-                }
+            && operator.token_type == TokenType::Multiply
+        {
+            let inner_ty = self.generate_expression((**right).clone())?;
+            if let Type::BoxType(boxed_inner) = inner_ty {
+                return Ok(Type::Reference(boxed_inner));
             }
+        }
 
         // Check for ref(module_var) where module_var is a let mut module-level binding (§1.3.4)
         if let Expression::Identifier(ref id) = expr
             && let Some(mod_var) = self.find_module_variable(&id.name)
-                && mod_var.is_mutable {
-                    return Err(SemanticError::Other(format!(
-                        "Cannot take ref of mutable module-level binding '{}' (let mut module-level bindings are not addressable)",
-                        id.name
-                    )));
-                }
+            && mod_var.is_mutable
+        {
+            return Err(SemanticError::Other(format!(
+                "Cannot take ref of mutable module-level binding '{}' (let mut module-level bindings are not addressable)",
+                id.name
+            )));
+        }
 
         let ty = self.generate_expression(expr)?;
 
@@ -82,7 +95,11 @@ impl Generator {
         Ok(Type::Reference(Box::new(ty)))
     }
 
-    pub(in crate::bytecode::codegen) fn generate_force_unwrap(&mut self, operand: Expression, token: Token) -> SaResult<Type> {
+    pub(in crate::bytecode::codegen) fn generate_force_unwrap(
+        &mut self,
+        operand: Expression,
+        token: Token,
+    ) -> SaResult<Type> {
         let ty = self.generate_expression(operand)?;
 
         // Operand must be nullable type
@@ -279,52 +296,59 @@ impl Generator {
         // Check for cross-module variable assignment (module.VAR = value)
         if let Expression::Identifier(ref ident) = object
             && let Some(sym_id) = self.symbol_table.find_symbol_in_scope(&ident.name)
-                && let Some(sym) = self.symbol_table.get_symbol(sym_id)
-                    && let crate::semantic::SymbolKind::Module(module_id) = sym.kind
-                        && let Some(module_info) = self.symbol_table.get_module(module_id) {
-                            let module_path = module_info.path.clone();
-                            if let Some(mod_var) = self.resolve_module_variable(&module_path, &field.name) {
-                                let raw_ty = mod_var.ty.clone();
-                                let is_mutable = mod_var.is_mutable;
+            && let Some(sym) = self.symbol_table.get_symbol(sym_id)
+            && let crate::semantic::SymbolKind::Module(module_id) = sym.kind
+            && let Some(module_info) = self.symbol_table.get_module(module_id)
+        {
+            let module_path = module_info.path.clone();
+            if let Some(mod_var) = self.resolve_module_variable(&module_path, &field.name) {
+                let raw_ty = mod_var.ty.clone();
+                let is_mutable = mod_var.is_mutable;
 
-                                if !is_mutable {
-                                    return Err(SemanticError::Other(format!(
-                                        "Cannot assign to immutable module-level binding '{}.{}' (it is declared as 'pub let', not 'pub let mut')",
-                                        ident.name, field.name
-                                    )));
-                                }
+                if !is_mutable {
+                    return Err(SemanticError::Other(format!(
+                        "Cannot assign to immutable module-level binding '{}.{}' (it is declared as 'pub let', not 'pub let mut')",
+                        ident.name, field.name
+                    )));
+                }
 
-                                // Remap type IDs from the imported module's type table
-                                let imported_module = self.imported_modules.get(&module_path).unwrap().clone();
-                                let mut type_map = std::collections::HashMap::new();
-                                let lhs_ty = self.map_type_from_module(&imported_module, &raw_ty, &mut type_map)?;
+                // Remap type IDs from the imported module's type table
+                let imported_module = self.imported_modules.get(&module_path).unwrap().clone();
+                let mut type_map = std::collections::HashMap::new();
+                let lhs_ty = self.map_type_from_module(&imported_module, &raw_ty, &mut type_map)?;
 
-                                let rhs_ty = self.generate_expression(rhs)?;
-                                if !self.types_compatible(&rhs_ty, &lhs_ty) {
-                                    return Err(SemanticError::TypeMismatch {
-                                        lhs: format!(
-                                            "module-level binding '{}.{}' has type {}",
-                                            ident.name, field.name, lhs_ty.to_string()
-                                        ),
-                                        rhs: format!("assigned value has type {}", rhs_ty.to_string()),
-                                        pos: self.make_pos(field.line, field.col),
-                                    });
-                                }
+                let rhs_ty = self.generate_expression(rhs)?;
+                if !self.types_compatible(&rhs_ty, &lhs_ty) {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: format!(
+                            "module-level binding '{}.{}' has type {}",
+                            ident.name,
+                            field.name,
+                            lhs_ty.to_string()
+                        ),
+                        rhs: format!("assigned value has type {}", rhs_ty.to_string()),
+                        pos: self.make_pos(field.line, field.col),
+                    });
+                }
 
-                                let mod_path_sid = self.add_string_constant(&module_path);
-                                let var_name_sid = self.add_string_constant(&field.name);
-                                self.builder.stextmodvar(mod_path_sid, var_name_sid);
-                                return Ok(Type::Primitive(PrimitiveType::Unit));
-                            }
-                            // Check if the variable exists but is private
-                            if let Some(imported) = self.imported_modules.get(&module_path)
-                                && imported.module_variables.iter().any(|v| v.name == field.name && !v.is_pub) {
-                                    return Err(SemanticError::Other(format!(
-                                        "Module variable '{}' in module '{}' is private (add 'pub' to make it accessible)",
-                                        field.name, module_path
-                                    )));
-                                }
-                        }
+                let mod_path_sid = self.add_string_constant(&module_path);
+                let var_name_sid = self.add_string_constant(&field.name);
+                self.builder.stextmodvar(mod_path_sid, var_name_sid);
+                return Ok(Type::Primitive(PrimitiveType::Unit));
+            }
+            // Check if the variable exists but is private
+            if let Some(imported) = self.imported_modules.get(&module_path)
+                && imported
+                    .module_variables
+                    .iter()
+                    .any(|v| v.name == field.name && !v.is_pub)
+            {
+                return Err(SemanticError::Other(format!(
+                    "Module variable '{}' in module '{}' is private (add 'pub' to make it accessible)",
+                    field.name, module_path
+                )));
+            }
+        }
 
         let object_ty = self.generate_expression(object.clone())?;
         let rhs_ty = self.generate_expression(rhs)?;
@@ -494,13 +518,12 @@ impl Generator {
                     Type::Primitive(PrimitiveType::Float)
                 }
                 // Allow null comparisons: ?T == null or null == ?T
-                (Type::Nullable(_), Type::Nullable(_)) if is_equality => {
-                    lhs_ty.clone()
-                }
+                (Type::Nullable(_), Type::Nullable(_)) if is_equality => lhs_ty.clone(),
                 // Allow string + string for concatenation
-                (Type::Primitive(PrimitiveType::String), Type::Primitive(PrimitiveType::String))
-                    if operator.token_type == TokenType::Plus =>
-                {
+                (
+                    Type::Primitive(PrimitiveType::String),
+                    Type::Primitive(PrimitiveType::String),
+                ) if operator.token_type == TokenType::Plus => {
                     Type::Primitive(PrimitiveType::String)
                 }
                 _ => {
@@ -599,36 +622,45 @@ impl Generator {
         Ok(Type::Primitive(PrimitiveType::Unit))
     }
 
-    pub(in crate::bytecode::codegen) fn generate_field_access(&mut self, object: Expression, field: Identifier) -> SaResult<Type> {
+    pub(in crate::bytecode::codegen) fn generate_field_access(
+        &mut self,
+        object: Expression,
+        field: Identifier,
+    ) -> SaResult<Type> {
         let object_name = object.get_name();
 
         // Check for cross-module variable access (module.VAR) before resolving as type
         if let Expression::Identifier(ref ident) = object
             && let Some(sym_id) = self.symbol_table.find_symbol_in_scope(&ident.name)
-                && let Some(sym) = self.symbol_table.get_symbol(sym_id)
-                    && let crate::semantic::SymbolKind::Module(module_id) = sym.kind
-                        && let Some(module_info) = self.symbol_table.get_module(module_id) {
-                            let module_path = module_info.path.clone();
-                            if let Some(mod_var) = self.resolve_module_variable(&module_path, &field.name) {
-                                let raw_ty = mod_var.ty.clone();
-                                // Remap type IDs from the imported module's type table
-                                let imported_module = self.imported_modules.get(&module_path).unwrap().clone();
-                                let mut type_map = std::collections::HashMap::new();
-                                let ty = self.map_type_from_module(&imported_module, &raw_ty, &mut type_map)?;
-                                let mod_path_sid = self.add_string_constant(&module_path);
-                                let var_name_sid = self.add_string_constant(&field.name);
-                                self.builder.ldextmodvar(mod_path_sid, var_name_sid);
-                                return Ok(ty);
-                            }
-                            // Check if the variable exists but is private
-                            if let Some(imported) = self.imported_modules.get(&module_path)
-                                && imported.module_variables.iter().any(|v| v.name == field.name && !v.is_pub) {
-                                    return Err(SemanticError::Other(format!(
-                                        "Module variable '{}' in module '{}' is private (add 'pub' to make it accessible)",
-                                        field.name, module_path
-                                    )));
-                                }
-                        }
+            && let Some(sym) = self.symbol_table.get_symbol(sym_id)
+            && let crate::semantic::SymbolKind::Module(module_id) = sym.kind
+            && let Some(module_info) = self.symbol_table.get_module(module_id)
+        {
+            let module_path = module_info.path.clone();
+            if let Some(mod_var) = self.resolve_module_variable(&module_path, &field.name) {
+                let raw_ty = mod_var.ty.clone();
+                // Remap type IDs from the imported module's type table
+                let imported_module = self.imported_modules.get(&module_path).unwrap().clone();
+                let mut type_map = std::collections::HashMap::new();
+                let ty = self.map_type_from_module(&imported_module, &raw_ty, &mut type_map)?;
+                let mod_path_sid = self.add_string_constant(&module_path);
+                let var_name_sid = self.add_string_constant(&field.name);
+                self.builder.ldextmodvar(mod_path_sid, var_name_sid);
+                return Ok(ty);
+            }
+            // Check if the variable exists but is private
+            if let Some(imported) = self.imported_modules.get(&module_path)
+                && imported
+                    .module_variables
+                    .iter()
+                    .any(|v| v.name == field.name && !v.is_pub)
+            {
+                return Err(SemanticError::Other(format!(
+                    "Module variable '{}' in module '{}' is private (add 'pub' to make it accessible)",
+                    field.name, module_path
+                )));
+            }
+        }
 
         // Resolve object type and determine if it's a static access
         let (object_ty, is_static_access) = self.resolve_field_access_object(&object)?;
@@ -649,13 +681,14 @@ impl Generator {
             }
             Type::Tuple(ref element_types) => {
                 // Tuple field access: t.0, t.1, etc.
-                let idx: usize = field.name.parse().map_err(|_| {
-                    SemanticError::TypeMismatch {
+                let idx: usize = field
+                    .name
+                    .parse()
+                    .map_err(|_| SemanticError::TypeMismatch {
                         lhs: "tuple element index".to_string(),
                         rhs: format!("'{}' is not a valid tuple index", field.name),
                         pos: self.make_pos(field.line, field.col),
-                    }
-                })?;
+                    })?;
                 if idx >= element_types.len() {
                     return Err(SemanticError::TypeMismatch {
                         lhs: format!("tuple of {} elements", element_types.len()),
@@ -699,22 +732,27 @@ impl Generator {
 
         // Check for type identifier (static access)
         if let Expression::Identifier(ref identifier) = *object
-            && let Some(ty) = self.symbol_table.find_type_in_scope(&identifier.name) {
-                return Ok((ty, true));
-            }
+            && let Some(ty) = self.symbol_table.find_type_in_scope(&identifier.name)
+        {
+            return Ok((ty, true));
+        }
 
         // Check for module-qualified type access (e.g., module.Type in module.Type.Variant)
-        if let Expression::FieldAccess { object: ref inner_obj, field: ref inner_field } = *object
-            && let Expression::Identifier(ref module_ident) = **inner_obj {
-                let qualified_name = format!("{}.{}", module_ident.name, inner_field.name);
-                if let Ok(ty) = self.resolve_qualified_type_name(
-                    &qualified_name,
-                    module_ident.line,
-                    module_ident.col,
-                ) {
-                    return Ok((ty, true));
-                }
+        if let Expression::FieldAccess {
+            object: ref inner_obj,
+            field: ref inner_field,
+        } = *object
+            && let Expression::Identifier(ref module_ident) = **inner_obj
+        {
+            let qualified_name = format!("{}.{}", module_ident.name, inner_field.name);
+            if let Ok(ty) = self.resolve_qualified_type_name(
+                &qualified_name,
+                module_ident.line,
+                module_ident.col,
+            ) {
+                return Ok((ty, true));
             }
+        }
 
         // Regular expression
         Ok((self.generate_expression(object.clone())?, false))

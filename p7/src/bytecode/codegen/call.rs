@@ -138,7 +138,11 @@ impl Generator {
             let move_info = self.compute_move_info(&expr);
             self.generate_expression(expr)?;
             if let Some((id, is_param)) = move_info {
-                if is_param { self.mark_param_moved(id); } else { self.mark_variable_moved(id); }
+                if is_param {
+                    self.mark_param_moved(id);
+                } else {
+                    self.mark_variable_moved(id);
+                }
             }
         }
 
@@ -223,9 +227,10 @@ impl Generator {
                 type_args,
                 callee_expr.clone(),
                 arguments.clone(),
-            )? {
-                return Ok(result);
-            }
+            )?
+        {
+            return Ok(result);
+        }
 
         // Case 2: Module member call like `module.func(...)`
         // When identifier is also a local variable, only skip module lookup if the
@@ -233,9 +238,14 @@ impl Generator {
         if let Expression::Identifier(ident) = object.as_ref() {
             let mut skip_module = false;
             if let Some(scope) = self.local_scope.as_ref() {
-                let var_type = scope.find_variable(&ident.name)
+                let var_type = scope
+                    .find_variable(&ident.name)
                     .map(|id| scope.get_variable_type(id))
-                    .or_else(|| scope.find_param(&ident.name).map(|id| scope.get_param_type(id)));
+                    .or_else(|| {
+                        scope
+                            .find_param(&ident.name)
+                            .map(|id| scope.get_param_type(id))
+                    });
                 if let Some(ty) = var_type {
                     // Check if the field name is a valid method on this type
                     let deref_ty = match ty {
@@ -245,9 +255,11 @@ impl Generator {
                     };
                     if let Type::Array(_) = deref_ty {
                         // Array builtin methods
-                        let array_methods = ["len", "get", "slice", "push", "pop", "clear",
-                            "set", "insert", "remove", "index_of", "join",
-                            "map", "filter", "reduce", "for_each", "find", "any", "all"];
+                        let array_methods = [
+                            "len", "get", "slice", "push", "pop", "clear", "set", "insert",
+                            "remove", "index_of", "join", "map", "filter", "reduce", "for_each",
+                            "find", "any", "all",
+                        ];
                         if array_methods.contains(&field.name.as_str()) {
                             skip_module = true;
                         }
@@ -259,29 +271,42 @@ impl Generator {
                 }
             }
             if !skip_module
-                && let Some(result) =
-                    self.try_generate_module_call(ident, field, arguments.clone(), call_line, call_col)?
-                {
-                    return Ok(result);
-                }
+                && let Some(result) = self.try_generate_module_call(
+                    ident,
+                    field,
+                    arguments.clone(),
+                    call_line,
+                    call_col,
+                )?
+            {
+                return Ok(result);
+            }
         }
 
         // Case 3: Static method or enum variant like `Type.method(...)` or `Enum.Variant(...)`
         if let Expression::Identifier(ident) = object.as_ref()
             && let Some(result) =
                 self.try_generate_static_call(ident, field, callee_expr.clone(), arguments.clone())?
-            {
-                return Ok(result);
-            }
+        {
+            return Ok(result);
+        }
 
         // Case 3b: Cross-module static method or enum variant like `module.Type.method(...)` or `module.Enum.Variant(...)`
-        if let Expression::FieldAccess { object: inner_obj, field: type_field } = object.as_ref()
+        if let Expression::FieldAccess {
+            object: inner_obj,
+            field: type_field,
+        } = object.as_ref()
             && let Expression::Identifier(module_ident) = inner_obj.as_ref()
             && let Some(result) = self.try_generate_cross_module_static_call(
-                module_ident, type_field, field, callee_expr.clone(), arguments.clone(),
-            )? {
-                return Ok(result);
-            }
+                module_ident,
+                type_field,
+                field,
+                callee_expr.clone(),
+                arguments.clone(),
+            )?
+        {
+            return Ok(result);
+        }
 
         // Case 4: Instance method call like `obj.method(...)`
         self.generate_instance_method_call(object, field, arguments, call_line, call_col)
@@ -326,10 +351,13 @@ impl Generator {
             }
 
             // Not a variant — try static method call on the generic enum
-            if let Some(field_ident) =
-                if let Expression::FieldAccess { field, .. } = &callee_expr { Some(field.clone()) } else { None }
-            {
-                let result = self.generate_static_type_method_call(base, &field_ident, arguments)?;
+            if let Some(field_ident) = if let Expression::FieldAccess { field, .. } = &callee_expr {
+                Some(field.clone())
+            } else {
+                None
+            } {
+                let result =
+                    self.generate_static_type_method_call(base, &field_ident, arguments)?;
                 return Ok(Some(result));
             }
 
@@ -430,7 +458,8 @@ impl Generator {
         // struct defined in the imported module) would refer to the wrong entries.
         let imported_module = self.imported_modules.get(&module_path).unwrap().clone();
         let mut type_map = std::collections::HashMap::new();
-        let ret_type = self.map_type_from_module(&imported_module, &function_def.return_type, &mut type_map)?;
+        let ret_type =
+            self.map_type_from_module(&imported_module, &function_def.return_type, &mut type_map)?;
 
         // Process arguments
         let ordered_exprs = self.process_arguments(
@@ -447,7 +476,11 @@ impl Generator {
             let move_info = self.compute_move_info(&expr);
             self.generate_expression(expr)?;
             if let Some((id, is_param)) = move_info {
-                if is_param { self.mark_param_moved(id); } else { self.mark_variable_moved(id); }
+                if is_param {
+                    self.mark_param_moved(id);
+                } else {
+                    self.mark_variable_moved(id);
+                }
             }
         }
 
@@ -587,8 +620,8 @@ impl Generator {
         }
 
         // Handle HashMap method calls
-        if let Some(result) =
-            self.try_generate_hashmap_method_call(&object_ty, field, &arguments, call_line, call_col)?
+        if let Some(result) = self
+            .try_generate_hashmap_method_call(&object_ty, field, &arguments, call_line, call_col)?
         {
             return Ok(result);
         }
@@ -770,10 +803,12 @@ impl Generator {
     ) -> SaResult<Type> {
         // Extract the type_id for source_module lookup (works for both struct and enum)
         let type_id_opt = match object_ty {
-            Type::Reference(inner) | Type::BoxType(inner) | Type::MutableReference(inner) => match inner.as_ref() {
-                Type::Struct(id) | Type::Enum(id) => Some(*id),
-                _ => None,
-            },
+            Type::Reference(inner) | Type::BoxType(inner) | Type::MutableReference(inner) => {
+                match inner.as_ref() {
+                    Type::Struct(id) | Type::Enum(id) => Some(*id),
+                    _ => None,
+                }
+            }
             Type::Struct(id) | Type::Enum(id) => Some(*id),
             _ => None,
         };
@@ -781,9 +816,8 @@ impl Generator {
         let type_symbol_id = type_id_opt.and_then(|id| self.symbol_table.find_symbol_for_type(id));
 
         // Try local method resolution first
-        let local_result = type_symbol_id.and_then(|sym_id| {
-            self.resolve_method(sym_id, field).ok()
-        });
+        let local_result =
+            type_symbol_id.and_then(|sym_id| self.resolve_method(sym_id, field).ok());
 
         if let Some((method_symbol_id, function_def)) = local_result {
             // Local method — emit Call(symbol_id)
@@ -802,7 +836,10 @@ impl Generator {
                 return Ok(function_def.return_type.clone());
             }
 
-            let type_symbol = self.symbol_table.get_symbol(type_symbol_id.unwrap()).unwrap();
+            let type_symbol = self
+                .symbol_table
+                .get_symbol(type_symbol_id.unwrap())
+                .unwrap();
 
             let ordered_exprs = self.process_arguments(
                 &format!("{}.{}", type_symbol.name, field.name),
@@ -825,11 +862,10 @@ impl Generator {
         }
 
         // Fallback: look for the method in the source module (cross-module method call)
-        let type_id = type_id_opt
-            .ok_or_else(|| SemanticError::FunctionNotFound {
-                name: field.name.to_string(),
-                pos: field.pos(),
-            })?;
+        let type_id = type_id_opt.ok_or_else(|| SemanticError::FunctionNotFound {
+            name: field.name.to_string(),
+            pos: field.pos(),
+        })?;
 
         let (source_module_path, type_name, function_def, mapped_return_type) =
             self.resolve_external_method(type_id, field)?;
@@ -857,19 +893,18 @@ impl Generator {
             )?;
 
             // Map parameter types from source module
-            let imported_module = self.imported_modules.get(&source_module_path).unwrap().clone();
+            let imported_module = self
+                .imported_modules
+                .get(&source_module_path)
+                .unwrap()
+                .clone();
             let mut type_map = std::collections::HashMap::new();
             let mapped_params: Vec<Type> = function_def.params[1..]
                 .iter()
                 .map(|p| self.map_type_from_module(&imported_module, p, &mut type_map))
                 .collect::<SaResult<Vec<_>>>()?;
 
-            self.push_typed_argument_list(
-                ordered_exprs,
-                &mapped_params,
-                field.line,
-                field.col,
-            )?;
+            self.push_typed_argument_list(ordered_exprs, &mapped_params, field.line, field.col)?;
         }
 
         // Emit CallExternal for cross-module method call
@@ -889,20 +924,32 @@ impl Generator {
         type_id: u32,
         field: &Identifier,
     ) -> SaResult<(InternedString, String, crate::semantic::Function, Type)> {
-        let type_def = self.symbol_table.types.get(type_id as usize).ok_or_else(|| {
-            SemanticError::FunctionNotFound {
+        let type_def = self
+            .symbol_table
+            .types
+            .get(type_id as usize)
+            .ok_or_else(|| SemanticError::FunctionNotFound {
                 name: field.name.to_string(),
                 pos: field.pos(),
-            }
-        })?;
+            })?;
 
         let (source_module, type_name) = match type_def {
             TypeDefinition::Struct(s) => {
-                let name = s.qualified_name.rsplit('.').next().unwrap_or(&s.qualified_name).to_string();
+                let name = s
+                    .qualified_name
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or(&s.qualified_name)
+                    .to_string();
                 (s.source_module.clone(), name)
             }
             TypeDefinition::Enum(e) => {
-                let name = e.qualified_name.rsplit('.').next().unwrap_or(&e.qualified_name).to_string();
+                let name = e
+                    .qualified_name
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or(&e.qualified_name)
+                    .to_string();
                 (e.source_module.clone(), name)
             }
             _ => (None, String::new()),
@@ -913,18 +960,23 @@ impl Generator {
             pos: field.pos(),
         })?;
 
-        let module = self.imported_modules.get(&module_path).cloned().ok_or_else(|| {
-            SemanticError::FunctionNotFound {
+        let module = self
+            .imported_modules
+            .get(&module_path)
+            .cloned()
+            .ok_or_else(|| SemanticError::FunctionNotFound {
                 name: field.name.to_string(),
                 pos: field.pos(),
-            }
-        })?;
+            })?;
 
         // Find the type symbol in the source module
-        let root = module.symbols.first().ok_or_else(|| SemanticError::FunctionNotFound {
-            name: field.name.to_string(),
-            pos: field.pos(),
-        })?;
+        let root = module
+            .symbols
+            .first()
+            .ok_or_else(|| SemanticError::FunctionNotFound {
+                name: field.name.to_string(),
+                pos: field.pos(),
+            })?;
 
         let type_sym_id = root.children.get(type_name.as_str()).ok_or_else(|| {
             SemanticError::FunctionNotFound {
@@ -941,12 +993,14 @@ impl Generator {
         })?;
 
         // Find the method in the type's children
-        let method_sym_id = type_sym.children.get(&field.name).ok_or_else(|| {
-            SemanticError::FunctionNotFound {
-                name: field.name.to_string(),
-                pos: field.pos(),
-            }
-        })?;
+        let method_sym_id =
+            type_sym
+                .children
+                .get(&field.name)
+                .ok_or_else(|| SemanticError::FunctionNotFound {
+                    name: field.name.to_string(),
+                    pos: field.pos(),
+                })?;
 
         let method_sym = module.symbols.get(*method_sym_id as usize).ok_or_else(|| {
             SemanticError::FunctionNotFound {
@@ -965,16 +1019,19 @@ impl Generator {
             }
         };
 
-        let function_def = module.functions.get(func_id as usize).ok_or_else(|| {
-            SemanticError::FunctionNotFound {
+        let function_def = module
+            .functions
+            .get(func_id as usize)
+            .ok_or_else(|| SemanticError::FunctionNotFound {
                 name: field.name.to_string(),
                 pos: field.pos(),
-            }
-        })?.clone();
+            })?
+            .clone();
 
         // Map the return type from the imported module's type table to the current module's
         let mut type_map = std::collections::HashMap::new();
-        let mapped_return_type = self.map_type_from_module(&module, &function_def.return_type, &mut type_map)?;
+        let mapped_return_type =
+            self.map_type_from_module(&module, &function_def.return_type, &mut type_map)?;
 
         Ok((module_path, type_name, function_def, mapped_return_type))
     }
@@ -1020,7 +1077,11 @@ impl Generator {
         if let Some(scope) = &self.local_scope {
             if let Some(var_id) = scope.find_variable(&call_name) {
                 let var_type = scope.get_variable_type(var_id).clone();
-                if let Type::Function { params: _, return_type } = var_type {
+                if let Type::Function {
+                    params: _,
+                    return_type,
+                } = var_type
+                {
                     // Load the closure value first (it sits below the arguments on the stack)
                     self.builder.ldvar(var_id);
                     // Generate arguments
@@ -1035,7 +1096,11 @@ impl Generator {
             }
             if let Some(param_id) = scope.find_param(&call_name) {
                 let param_type = scope.get_param_type(param_id).clone();
-                if let Type::Function { params: _, return_type } = param_type {
+                if let Type::Function {
+                    params: _,
+                    return_type,
+                } = param_type
+                {
                     self.builder.ldpar(param_id);
                     let arg_count = arguments.len() as u32;
                     for (_, arg_expr) in arguments {
@@ -1059,19 +1124,20 @@ impl Generator {
 
         // Try struct constructor by type name
         if let Some(ty) = self.symbol_table.find_type_in_scope(&call_name)
-            && let Type::Struct(type_id) = ty {
-                return self.generate_struct_from_call(
-                    FunctionCall {
-                        callee: Box::new(Expression::Identifier(Identifier {
-                            name: call_name.clone().into(),
-                            line: call_line,
-                            col: call_col,
-                        })),
-                        arguments,
-                    },
-                    type_id,
-                );
-            }
+            && let Type::Struct(type_id) = ty
+        {
+            return self.generate_struct_from_call(
+                FunctionCall {
+                    callee: Box::new(Expression::Identifier(Identifier {
+                        name: call_name.clone().into(),
+                        line: call_line,
+                        col: call_col,
+                    })),
+                    arguments,
+                },
+                type_id,
+            );
+        }
 
         // Try function call
         self.generate_regular_function_call(call_name, arguments, call_line, call_col)
@@ -1242,11 +1308,9 @@ impl Generator {
 
         // Resolve the qualified type name (e.g., "module.Type")
         let qualified_name = format!("{}.{}", module_ident.name, type_field.name);
-        let Ok(ty) = self.resolve_qualified_type_name(
-            &qualified_name,
-            module_ident.line,
-            module_ident.col,
-        ) else {
+        let Ok(ty) =
+            self.resolve_qualified_type_name(&qualified_name, module_ident.line, module_ident.col)
+        else {
             return Ok(None);
         };
 
@@ -1290,7 +1354,11 @@ impl Generator {
         )?;
 
         // Map parameter types from source module
-        let imported_module = self.imported_modules.get(&source_module_path).unwrap().clone();
+        let imported_module = self
+            .imported_modules
+            .get(&source_module_path)
+            .unwrap()
+            .clone();
         let mut type_map = std::collections::HashMap::new();
         let mapped_params: Vec<Type> = function_def
             .params

@@ -20,7 +20,30 @@ enum DispatchKind {
         dispatcher_name: String,
         method_name: String,
         type_tag: String,
+        vtable_slot: u32,
+        return_ty: crate::semantic::HostReturnTy,
     },
+}
+
+/// Encode a `HostReturnTy` as a `Data::Array`-tagged tree so the host
+/// dispatcher can pop+decode it without a custom serialization format.
+/// Encoding (`first element of array` is the variant tag):
+///   0 = Void, 1 = Int, 2 = Float, 3 = String,
+///   4 = Foreign(type_tag),  5 = Optional(inner),  6 = Array(inner)
+pub fn encode_return_ty(rt: &crate::semantic::HostReturnTy) -> Data {
+    use crate::semantic::HostReturnTy as H;
+    let arr = match rt {
+        H::Void => vec![Data::Int(0)],
+        H::Int => vec![Data::Int(1)],
+        H::Float => vec![Data::Int(2)],
+        H::String => vec![Data::Int(3)],
+        H::Foreign { type_tag } => {
+            vec![Data::Int(4), Data::String(type_tag.to_string())]
+        }
+        H::Optional(inner) => vec![Data::Int(5), encode_return_ty(inner)],
+        H::Array(inner) => vec![Data::Int(6), encode_return_ty(inner)],
+    };
+    Data::Array(arr)
 }
 
 impl Context {
@@ -40,6 +63,17 @@ impl Context {
         stack_frame.pc = addr as usize;
 
         self.stack.push(stack_frame);
+    }
+
+    /// Returns true if the entry-point module (modules[0]) defines a
+    /// function named `name`. Hosts use this to gate optional script
+    /// callbacks (e.g. `activate`) without provoking the
+    /// `push_function` panic on missing names.
+    pub fn has_function(&self, name: &str) -> bool {
+        self.modules
+            .first()
+            .and_then(|m| m.get_function(name))
+            .is_some()
     }
 
     pub fn resume(&mut self) -> ContextResult<()> {
@@ -65,11 +99,14 @@ impl Context {
     /// Used by higher-order host functions (map, filter, etc.) to call p7 closures.
     pub fn call_closure(&mut self, closure: &Data, args: Vec<Data>) -> ContextResult<Data> {
         let (func_addr, captures) = match closure {
-            Data::Closure { func_addr, captures } => (*func_addr, captures.clone()),
+            Data::Closure {
+                func_addr,
+                captures,
+            } => (*func_addr, captures.clone()),
             _ => {
                 return Err(RuntimeError::Other(
                     "call_closure: expected closure value".to_string(),
-                ))
+                ));
             }
         };
 
@@ -106,11 +143,14 @@ impl Context {
     /// Invoke a closure that returns no value (unit).
     pub fn call_closure_void(&mut self, closure: &Data, args: Vec<Data>) -> ContextResult<()> {
         let (func_addr, captures) = match closure {
-            Data::Closure { func_addr, captures } => (*func_addr, captures.clone()),
+            Data::Closure {
+                func_addr,
+                captures,
+            } => (*func_addr, captures.clone()),
             _ => {
                 return Err(RuntimeError::Other(
                     "call_closure_void: expected closure value".to_string(),
-                ))
+                ));
             }
         };
 
@@ -138,13 +178,13 @@ impl Context {
     }
 
     pub(super) fn run_interpreter_loop(&mut self) -> ContextResult<()> {
-
         loop {
             // When running a closure invocation, stop once the closure frame has returned
             if let Some(depth) = self.stop_depth
-                && self.stack.len() <= depth {
-                    break;
-                }
+                && self.stack.len() <= depth
+            {
+                break;
+            }
 
             let module_idx = self.stack_frame()?.module_idx;
             let pc = self.stack_frame()?.pc;
@@ -230,33 +270,69 @@ impl Context {
                     arithmetic_op!(self, %);
                 }
                 Instruction::BitAnd => {
-                    let b = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-                    let a = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                    let b = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    let a = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
                     match (a, b) {
                         (Data::Int(a), Data::Int(b)) => {
                             self.stack_frame_mut()?.stack.push(Data::Int(a & b));
                         }
-                        _ => return Err(RuntimeError::Other("Bitwise AND requires int operands".to_string())),
+                        _ => {
+                            return Err(RuntimeError::Other(
+                                "Bitwise AND requires int operands".to_string(),
+                            ));
+                        }
                     }
                 }
                 Instruction::BitOr => {
-                    let b = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-                    let a = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                    let b = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    let a = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
                     match (a, b) {
                         (Data::Int(a), Data::Int(b)) => {
                             self.stack_frame_mut()?.stack.push(Data::Int(a | b));
                         }
-                        _ => return Err(RuntimeError::Other("Bitwise OR requires int operands".to_string())),
+                        _ => {
+                            return Err(RuntimeError::Other(
+                                "Bitwise OR requires int operands".to_string(),
+                            ));
+                        }
                     }
                 }
                 Instruction::BitXor => {
-                    let b = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-                    let a = self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+                    let b = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    let a = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
                     match (a, b) {
                         (Data::Int(a), Data::Int(b)) => {
                             self.stack_frame_mut()?.stack.push(Data::Int(a ^ b));
                         }
-                        _ => return Err(RuntimeError::Other("Bitwise XOR requires int operands".to_string())),
+                        _ => {
+                            return Err(RuntimeError::Other(
+                                "Bitwise XOR requires int operands".to_string(),
+                            ));
+                        }
                     }
                 }
                 Instruction::LdModVar(var_id) => {
@@ -269,7 +345,9 @@ impl Context {
                         } else {
                             return Err(RuntimeError::VariableNotFound(format!(
                                 "module variable index {} out of bounds (only {} module vars) at pc {}",
-                                var_id, vars.len(), pc
+                                var_id,
+                                vars.len(),
+                                pc
                             )));
                         }
                     } else {
@@ -418,7 +496,8 @@ impl Context {
                             }
                             Data::StructRef(r) => {
                                 return Err(RuntimeError::Other(format!(
-                                    "Cannot negate struct reference (ref {})", r
+                                    "Cannot negate struct reference (ref {})",
+                                    r
                                 )));
                             }
                             _ => {
@@ -451,7 +530,8 @@ impl Context {
                             }
                             Data::StructRef(r) => {
                                 return Err(RuntimeError::Other(format!(
-                                    "Cannot apply logical NOT to struct reference (ref {})", r
+                                    "Cannot apply logical NOT to struct reference (ref {})",
+                                    r
                                 )));
                             }
                             _ => {
@@ -547,14 +627,18 @@ impl Context {
                                 if ref_usize >= self.heap.len() {
                                     return Err(RuntimeError::VariableNotFound(format!(
                                         "struct ref {} out of bounds (heap size {}) at pc {}",
-                                        ref_id, self.heap.len(), pc
+                                        ref_id,
+                                        self.heap.len(),
+                                        pc
                                     )));
                                 }
                                 let struct_fields = &self.heap[ref_usize].fields;
                                 if (field_idx as usize) >= struct_fields.len() {
                                     return Err(RuntimeError::VariableNotFound(format!(
                                         "field index {} out of bounds (struct has {} fields) at pc {}",
-                                        field_idx, struct_fields.len(), pc
+                                        field_idx,
+                                        struct_fields.len(),
+                                        pc
                                     )));
                                 }
                                 let field_value = struct_fields[field_idx as usize].clone();
@@ -568,7 +652,9 @@ impl Context {
                             other => {
                                 return Err(RuntimeError::VariableNotFound(format!(
                                     "cannot load field {} from {:?} value at pc {}",
-                                    field_idx, std::mem::discriminant(&other), pc
+                                    field_idx,
+                                    std::mem::discriminant(&other),
+                                    pc
                                 )));
                             }
                         }
@@ -604,13 +690,17 @@ impl Context {
                             if ref_usize >= self.heap.len() {
                                 return Err(RuntimeError::VariableNotFound(format!(
                                     "struct ref {} out of bounds (heap size {}) in Stfield at pc {}",
-                                    ref_id, self.heap.len(), pc
+                                    ref_id,
+                                    self.heap.len(),
+                                    pc
                                 )));
                             }
                             if (field_idx as usize) >= self.heap[ref_usize].fields.len() {
                                 return Err(RuntimeError::VariableNotFound(format!(
                                     "field index {} out of bounds (struct has {} fields) in Stfield at pc {}",
-                                    field_idx, self.heap[ref_usize].fields.len(), pc
+                                    field_idx,
+                                    self.heap[ref_usize].fields.len(),
+                                    pc
                                 )));
                             }
                             self.heap[ref_usize].fields[field_idx as usize] = field_value;
@@ -618,7 +708,9 @@ impl Context {
                         other => {
                             return Err(RuntimeError::VariableNotFound(format!(
                                 "cannot store field {} on {:?} value in Stfield at pc {}",
-                                field_idx, std::mem::discriminant(&other), pc
+                                field_idx,
+                                std::mem::discriminant(&other),
+                                pc
                             )));
                         }
                     }
@@ -650,9 +742,10 @@ impl Context {
                     let return_value = self.stack_frame_mut()?.stack.pop();
                     self.stack.pop();
                     if let Some(value) = return_value
-                        && let Ok(frame) = self.stack_frame_mut() {
-                            frame.stack.push(value);
-                        }
+                        && let Ok(frame) = self.stack_frame_mut()
+                    {
+                        frame.stack.push(value);
+                    }
                 }
                 Instruction::Pop => {
                     self.stack_frame_mut()?.stack.pop();
@@ -816,17 +909,18 @@ impl Context {
 
                     let method_name = self.get_method_name_from_hash(proto_id, method_hash)?;
 
-                    let param_count =
-                        if let crate::semantic::TypeDefinition::Proto(proto) = proto_type {
-                            proto
-                                .methods
-                                .iter()
-                                .find(|(name, _, _)| Self::hash_method_name(name) == method_hash)
-                                .map(|(_, params, _)| params.len())
-                                .ok_or(RuntimeError::Other("Method not found in proto".to_string()))?
-                        } else {
-                            return Err(RuntimeError::Other("Expected proto type".to_string()));
-                        };
+                    let param_count = if let crate::semantic::TypeDefinition::Proto(proto) =
+                        proto_type
+                    {
+                        proto
+                            .methods
+                            .iter()
+                            .find(|(name, _, _)| Self::hash_method_name(name) == method_hash)
+                            .map(|(_, params, _)| params.len())
+                            .ok_or(RuntimeError::Other("Method not found in proto".to_string()))?
+                    } else {
+                        return Err(RuntimeError::Other("Expected proto type".to_string()));
+                    };
 
                     // The receiver (self) is at position stack.len() - param_count
                     let stack_len = self.stack_frame()?.stack.len();
@@ -889,11 +983,15 @@ impl Context {
                                 dispatcher_name,
                                 method_name,
                                 type_tag,
+                                vtable_slot,
+                                return_ty,
                                 ..
                             } => DispatchKind::Host {
                                 dispatcher_name: dispatcher_name.to_string(),
                                 method_name: method_name.to_string(),
                                 type_tag: type_tag.to_string(),
+                                vtable_slot: *vtable_slot,
+                                return_ty: return_ty.clone(),
                             },
                             _ => return Err(RuntimeError::FunctionNotFound),
                         }
@@ -912,16 +1010,24 @@ impl Context {
                             dispatcher_name,
                             method_name,
                             type_tag,
+                            vtable_slot,
+                            return_ty,
                         } => {
-                            // Convention: push method_name then type_tag on
-                            // top of the args, then invoke the dispatcher
-                            // host fn just like InvokeHost would.
+                            // Convention (top → bottom):
+                            //   type_tag, method_name, vtable_slot, return_ty,
+                            //   args (last decl on top), receiver
+                            // The dispatcher pops its metadata first, then
+                            // walks the args using the runtime shape of each
+                            // `Data` value.
+                            let return_ty_marker = encode_return_ty(&return_ty);
+                            self.stack_frame_mut()?.stack.push(return_ty_marker);
+                            self.stack_frame_mut()?
+                                .stack
+                                .push(Data::Int(vtable_slot as i64));
                             self.stack_frame_mut()?
                                 .stack
                                 .push(Data::String(method_name));
-                            self.stack_frame_mut()?
-                                .stack
-                                .push(Data::String(type_tag));
+                            self.stack_frame_mut()?.stack.push(Data::String(type_tag));
                             let host_fn =
                                 self.host_functions.get(&dispatcher_name).ok_or_else(|| {
                                     RuntimeError::Other(format!(
@@ -1003,9 +1109,10 @@ impl Context {
                                 parts[0], module_path
                             ))
                         })?;
-                        let type_sym = module.symbols.get(*type_sym_id as usize).ok_or_else(|| {
-                            RuntimeError::Other(format!("Invalid symbol id: {}", type_sym_id))
-                        })?;
+                        let type_sym =
+                            module.symbols.get(*type_sym_id as usize).ok_or_else(|| {
+                                RuntimeError::Other(format!("Invalid symbol id: {}", type_sym_id))
+                            })?;
                         let method_sym_id = type_sym.children.get(parts[1]).ok_or_else(|| {
                             RuntimeError::Other(format!(
                                 "Method '{}' not found on type '{}' in module '{}'",
@@ -1016,12 +1123,16 @@ impl Context {
                             RuntimeError::Other(format!("Invalid symbol id: {}", method_sym_id))
                         })?
                     } else {
-                        let symbol_id = root_symbol.children.get(symbol_name.as_str()).ok_or_else(|| {
-                            RuntimeError::Other(format!(
-                                "Symbol '{}' not found in module '{}'",
-                                symbol_name, module_path
-                            ))
-                        })?;
+                        let symbol_id =
+                            root_symbol
+                                .children
+                                .get(symbol_name.as_str())
+                                .ok_or_else(|| {
+                                    RuntimeError::Other(format!(
+                                        "Symbol '{}' not found in module '{}'",
+                                        symbol_name, module_path
+                                    ))
+                                })?;
                         module.symbols.get(*symbol_id as usize).ok_or_else(|| {
                             RuntimeError::Other(format!("Invalid symbol id: {}", symbol_id))
                         })?
@@ -1165,7 +1276,10 @@ impl Context {
                         .ok_or(RuntimeError::StackUnderflow)?;
 
                     match closure {
-                        Data::Closure { func_addr, captures } => {
+                        Data::Closure {
+                            func_addr,
+                            captures,
+                        } => {
                             let current_module_idx =
                                 self.stack.last().map(|f| f.module_idx).unwrap_or(0);
                             // Create new frame. Params = captures + args

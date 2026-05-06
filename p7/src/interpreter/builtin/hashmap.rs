@@ -17,7 +17,7 @@ pub(crate) fn hashmap_new(ctx: &mut Context) -> ContextResult<()> {
         _ => {
             return Err(RuntimeError::Other(
                 "hashmap.new: expected integer count".to_string(),
-            ))
+            ));
         }
     };
 
@@ -59,9 +59,7 @@ pub(crate) fn hashmap_len(ctx: &mut Context) -> ContextResult<()> {
                 .push(Data::Int(pairs.len() as i64));
             Ok(())
         }
-        _ => Err(RuntimeError::Other(
-            "hashmap.len: expected map".to_string(),
-        )),
+        _ => Err(RuntimeError::Other("hashmap.len: expected map".to_string())),
     }
 }
 
@@ -79,19 +77,17 @@ pub(crate) fn hashmap_get(ctx: &mut Context) -> ContextResult<()> {
 
     match map_val {
         Data::Map(pairs) => {
-            let found = pairs.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone());
+            let found = pairs
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.clone());
             match found {
-                Some(v) => ctx
-                    .stack_frame_mut()?
-                    .stack
-                    .push(Data::Some(Box::new(v))),
+                Some(v) => ctx.stack_frame_mut()?.stack.push(Data::Some(Box::new(v))),
                 None => ctx.stack_frame_mut()?.stack.push(Data::Null),
             }
             Ok(())
         }
-        _ => Err(RuntimeError::Other(
-            "hashmap.get: expected map".to_string(),
-        )),
+        _ => Err(RuntimeError::Other("hashmap.get: expected map".to_string())),
     }
 }
 
@@ -161,10 +157,7 @@ pub(crate) fn hashmap_remove(ctx: &mut Context) -> ContextResult<()> {
                         .position(|(k, _)| *k == key)
                         .map(|idx| pairs.remove(idx).1);
                     match removed {
-                        Some(v) => ctx
-                            .stack_frame_mut()?
-                            .stack
-                            .push(Data::Some(Box::new(v))),
+                        Some(v) => ctx.stack_frame_mut()?.stack.push(Data::Some(Box::new(v))),
                         None => ctx.stack_frame_mut()?.stack.push(Data::Null),
                     }
                     Ok(())
@@ -195,9 +188,7 @@ pub(crate) fn hashmap_contains_key(ctx: &mut Context) -> ContextResult<()> {
     match map_val {
         Data::Map(pairs) => {
             let found = pairs.iter().any(|(k, _)| *k == key);
-            ctx.stack_frame_mut()?
-                .stack
-                .push(Data::Int(found as i64));
+            ctx.stack_frame_mut()?.stack.push(Data::Int(found as i64));
             Ok(())
         }
         _ => Err(RuntimeError::Other(
@@ -259,7 +250,10 @@ pub(crate) fn hashmap_index(ctx: &mut Context) -> ContextResult<()> {
 
     match map_val {
         Data::Map(pairs) => {
-            let found = pairs.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone());
+            let found = pairs
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.clone());
             match found {
                 Some(v) => {
                     ctx.stack_frame_mut()?.stack.push(v);

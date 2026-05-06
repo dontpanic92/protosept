@@ -280,8 +280,15 @@ impl Parser {
                     // Check for duplicate bounds (spec §20.5: listing same proto twice is ERROR)
                     if bounds.iter().any(|b| b.name == bound.name) {
                         return Err(ParseError::UnexpectedToken {
-                            found: format!("duplicate bound '{}' on type parameter '{}'", bound.name, name.name),
-                            pos: Some(SourcePos { line: bound.line, col: bound.col, module: None }),
+                            found: format!(
+                                "duplicate bound '{}' on type parameter '{}'",
+                                bound.name, name.name
+                            ),
+                            pos: Some(SourcePos {
+                                line: bound.line,
+                                col: bound.col,
+                                module: None,
+                            }),
                         });
                     }
                     bounds.push(bound);

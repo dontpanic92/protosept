@@ -56,7 +56,10 @@ impl Generator {
         Ok(Type::Primitive(PrimitiveType::String))
     }
 
-    pub(in crate::bytecode::codegen) fn generate_identifier(&mut self, identifier: Identifier) -> SaResult<Type> {
+    pub(in crate::bytecode::codegen) fn generate_identifier(
+        &mut self,
+        identifier: Identifier,
+    ) -> SaResult<Type> {
         // Handle `Self` keyword for type references in methods
         if identifier.name == "Self" {
             if let Some(self_type) = &self.current_self_type {
@@ -111,7 +114,10 @@ impl Generator {
         })
     }
 
-    pub(in crate::bytecode::codegen) fn generate_string_literal(&mut self, value: &str) -> SaResult<Type> {
+    pub(in crate::bytecode::codegen) fn generate_string_literal(
+        &mut self,
+        value: &str,
+    ) -> SaResult<Type> {
         let string_index = if let Some(idx) = self.string_constants.iter().position(|s| s == value)
         {
             idx as u32
@@ -244,7 +250,10 @@ impl Generator {
         let string_id = self.add_string_constant("hashmap.new");
         self.builder.call_host_function(string_id);
 
-        Ok(Type::Map(Box::new(first_key_type), Box::new(first_val_type)))
+        Ok(Type::Map(
+            Box::new(first_key_type),
+            Box::new(first_val_type),
+        ))
     }
 
     pub(in crate::bytecode::codegen) fn generate_array_index(
@@ -436,7 +445,8 @@ impl Generator {
 
         // Patch the jump
         let after_body = self.builder.next_address();
-        self.builder.patch_jump_address(jump_placeholder, after_body);
+        self.builder
+            .patch_jump_address(jump_placeholder, after_body);
 
         // Push captured values onto the stack (in order)
         for (name, _ty, is_param) in &free_vars {
@@ -510,8 +520,10 @@ impl Generator {
                         crate::ast::Statement::Let { expression, .. } => {
                             Self::collect_identifiers_recursive(expression, names);
                         }
-                        crate::ast::Statement::Return(e) => {
-                            Self::collect_identifiers_recursive(e, names);
+                        crate::ast::Statement::Return { expression, .. } => {
+                            if let Some(e) = expression {
+                                Self::collect_identifiers_recursive(e, names);
+                            }
                         }
                         crate::ast::Statement::Throw(e) => {
                             Self::collect_identifiers_recursive(e, names);
@@ -544,7 +556,10 @@ impl Generator {
             Expression::Closure { body, .. } => {
                 Self::collect_identifiers_recursive(body, names);
             }
-            Expression::Try { try_block, else_arms } => {
+            Expression::Try {
+                try_block,
+                else_arms,
+            } => {
                 Self::collect_identifiers_recursive(try_block, names);
                 for arm in else_arms {
                     Self::collect_identifiers_recursive(&arm.expression, names);

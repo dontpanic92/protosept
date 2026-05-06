@@ -54,8 +54,7 @@ impl Context {
         for (module_path, imported) in imported_modules {
             if !self.imported_modules.contains_key(&module_path) {
                 let idx = self.modules.len();
-                self.imported_modules
-                    .insert(module_path.clone(), idx);
+                self.imported_modules.insert(module_path.clone(), idx);
                 self.load_module_internal(*imported);
             }
         }
@@ -70,30 +69,53 @@ impl Context {
     /// children of synthetic `__ForeignCarrier_*` structs. For each
     /// distinct `type_tag` discovered, record the carrier's `TypeId` so
     /// `Context::push_foreign` can stamp it onto new foreign boxes.
+    /// Also auto-registers a default finalizer (`com.release`) for every
+    /// new tag so consumers do not need a separate registration step,
+    /// and stashes the proto's UUID in `foreign_uuids` keyed by tag.
     fn discover_foreign_carriers(&mut self, module_idx: usize, module: &Module) {
-        use crate::semantic::SymbolKind;
+        use crate::semantic::{SymbolKind, TypeDefinition};
         for sym in &module.symbols {
             if let SymbolKind::Type(carrier_type_id) = sym.kind {
                 // The HostMethod children are unique to carrier structs.
+                let mut tag_for_carrier: Option<String> = None;
                 for &child_id in sym.children.values() {
                     if let Some(child) = module.symbols.get(child_id as usize)
                         && let SymbolKind::HostMethod { type_tag, .. } = &child.kind
                     {
-                        let entry = self
-                            .foreign_types
-                            .entry(type_tag.to_string())
-                            .or_insert_with(|| super::ForeignTypeReg {
+                        let tag = type_tag.to_string();
+                        let entry = self.foreign_types.entry(tag.clone()).or_insert_with(|| {
+                            super::ForeignTypeReg {
                                 finalizer: None,
                                 carrier_type_ids: Vec::new(),
-                            });
+                            }
+                        });
                         let pair = (module_idx, carrier_type_id);
                         if !entry.carrier_type_ids.contains(&pair) {
                             entry.carrier_type_ids.push(pair);
                         }
-                        // One HostMethod child is enough to identify the
-                        // carrier; subsequent children share the same tag.
+                        // Default the finalizer to "com.release" if the
+                        // consumer hasn't explicitly registered one.
+                        if entry.finalizer.is_none() {
+                            entry.finalizer = Some("com.release".to_string());
+                        }
+                        tag_for_carrier = Some(tag);
                         break;
                     }
+                }
+
+                // Stash the proto's UUID on the foreign type registry
+                // keyed by tag, when present. The carrier's
+                // conforming_to[0] is the underlying foreign proto.
+                if let Some(tag) = tag_for_carrier
+                    && let Some(TypeDefinition::Struct(s)) =
+                        module.types.get(carrier_type_id as usize)
+                    && let Some(&proto_id) = s.conforming_to.first()
+                    && let Some(TypeDefinition::Proto(p)) = module.types.get(proto_id as usize)
+                    && let Some(uuid_str) = &p.foreign_uuid
+                {
+                    self.foreign_uuids
+                        .entry(tag)
+                        .or_insert_with(|| uuid_str.to_string());
                 }
             }
         }
@@ -162,7 +184,11 @@ impl Context {
     }
 
     /// Get method name from hash for error messages (reverse lookup)
-    pub(super) fn get_method_name_from_hash(&self, proto_id: u32, method_hash: u32) -> ContextResult<String> {
+    pub(super) fn get_method_name_from_hash(
+        &self,
+        proto_id: u32,
+        method_hash: u32,
+    ) -> ContextResult<String> {
         use crate::semantic::TypeDefinition;
 
         if let Some(TypeDefinition::Proto(proto)) = self.modules[0].types.get(proto_id as usize) {

@@ -388,7 +388,10 @@ pub enum Statement {
         attributes: Vec<Attribute>,
         methods: Vec<ProtoMethod>,
     },
-    Return(Box<Expression>),
+    Return {
+        expression: Option<Box<Expression>>,
+        pos: SourcePos,
+    },
     Import {
         module_path: InternedString,
         alias: Option<InternedString>,

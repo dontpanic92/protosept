@@ -130,7 +130,10 @@ pub(crate) fn string_substring(ctx: &mut Context) -> ContextResult<()> {
             let result: String = if clamped_start >= clamped_end {
                 String::new()
             } else {
-                s.chars().skip(clamped_start).take(clamped_end - clamped_start).collect()
+                s.chars()
+                    .skip(clamped_start)
+                    .take(clamped_end - clamped_start)
+                    .collect()
             };
             ctx.stack_frame_mut()?.stack.push(Data::String(result));
             Ok(())
@@ -257,8 +260,16 @@ pub(crate) fn string_starts_with(ctx: &mut Context) -> ContextResult<()> {
 }
 
 pub(crate) fn string_contains(ctx: &mut Context) -> ContextResult<()> {
-    let needle_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let self_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let needle_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let self_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
 
     match (self_val, needle_val) {
         (Data::String(s), Data::String(needle)) => {
@@ -273,8 +284,16 @@ pub(crate) fn string_contains(ctx: &mut Context) -> ContextResult<()> {
 }
 
 pub(crate) fn string_ends_with(ctx: &mut Context) -> ContextResult<()> {
-    let suffix_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let self_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let suffix_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let self_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
 
     match (self_val, suffix_val) {
         (Data::String(s), Data::String(suffix)) => {
@@ -289,8 +308,16 @@ pub(crate) fn string_ends_with(ctx: &mut Context) -> ContextResult<()> {
 }
 
 pub(crate) fn string_repeat(ctx: &mut Context) -> ContextResult<()> {
-    let n_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-    let self_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let n_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let self_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
 
     match (self_val, n_val) {
         (Data::String(s), Data::Int(n)) => {
@@ -309,34 +336,58 @@ pub(crate) fn string_repeat(ctx: &mut Context) -> ContextResult<()> {
 }
 
 pub(crate) fn string_trim(ctx: &mut Context) -> ContextResult<()> {
-    let self_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let self_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
     match self_val {
         Data::String(s) => {
-            ctx.stack_frame_mut()?.stack.push(Data::String(s.trim().to_string()));
+            ctx.stack_frame_mut()?
+                .stack
+                .push(Data::String(s.trim().to_string()));
             Ok(())
         }
-        _ => Err(RuntimeError::Other("string.trim: expected string".to_string())),
+        _ => Err(RuntimeError::Other(
+            "string.trim: expected string".to_string(),
+        )),
     }
 }
 
 pub(crate) fn string_trim_start(ctx: &mut Context) -> ContextResult<()> {
-    let self_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let self_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
     match self_val {
         Data::String(s) => {
-            ctx.stack_frame_mut()?.stack.push(Data::String(s.trim_start().to_string()));
+            ctx.stack_frame_mut()?
+                .stack
+                .push(Data::String(s.trim_start().to_string()));
             Ok(())
         }
-        _ => Err(RuntimeError::Other("string.trim_start: expected string".to_string())),
+        _ => Err(RuntimeError::Other(
+            "string.trim_start: expected string".to_string(),
+        )),
     }
 }
 
 pub(crate) fn string_trim_end(ctx: &mut Context) -> ContextResult<()> {
-    let self_val = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let self_val = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
     match self_val {
         Data::String(s) => {
-            ctx.stack_frame_mut()?.stack.push(Data::String(s.trim_end().to_string()));
+            ctx.stack_frame_mut()?
+                .stack
+                .push(Data::String(s.trim_end().to_string()));
             Ok(())
         }
-        _ => Err(RuntimeError::Other("string.trim_end: expected string".to_string())),
+        _ => Err(RuntimeError::Other(
+            "string.trim_end: expected string".to_string(),
+        )),
     }
 }

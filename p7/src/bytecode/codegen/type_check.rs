@@ -26,9 +26,10 @@ impl Generator {
         // Check if the full qualified name already exists in the symbol table
         // (handles synthetic names from monomorphization like "mod.types.Foo")
         if let Some(existing) = self.symbol_table.find_symbol_by_qualified_name(name)
-            && let SymbolKind::Type(type_id) = existing.kind {
-                return self.type_from_id(type_id);
-            }
+            && let SymbolKind::Type(type_id) = existing.kind
+        {
+            return self.type_from_id(type_id);
+        }
 
         let mut parts = name.split('.').collect::<Vec<_>>();
         if parts.len() < 2 {
@@ -87,19 +88,19 @@ impl Generator {
 
         let (imported_type_id, qualified_name) = {
             let root = module
-                .symbols.first()
+                .symbols
+                .first()
                 .ok_or_else(|| SemanticError::TypeNotFound {
                     name: name.to_string(),
                     pos: SourcePos::at(line, col),
                 })?;
 
-            let child_id =
-                root.children
-                    .get(member_name.as_str())
-                    .ok_or_else(|| SemanticError::TypeNotFound {
-                        name: name.to_string(),
-                        pos: SourcePos::at(line, col),
-                    })?;
+            let child_id = root.children.get(member_name.as_str()).ok_or_else(|| {
+                SemanticError::TypeNotFound {
+                    name: name.to_string(),
+                    pos: SourcePos::at(line, col),
+                }
+            })?;
 
             let member = module.symbols.get(*child_id as usize).ok_or_else(|| {
                 SemanticError::TypeNotFound {
@@ -122,9 +123,10 @@ impl Generator {
         if let Some(existing_symbol) = self
             .symbol_table
             .find_symbol_by_qualified_name(&qualified_name)
-            && let SymbolKind::Type(existing_type_id) = existing_symbol.kind {
-                return self.type_from_id(existing_type_id);
-            }
+            && let SymbolKind::Type(existing_type_id) = existing_symbol.kind
+        {
+            return self.type_from_id(existing_type_id);
+        }
 
         let mut type_map = std::collections::HashMap::new();
         let new_type_id = self.import_type_from_module(&module, imported_type_id, &mut type_map)?;
@@ -161,7 +163,9 @@ impl Generator {
 
         // Allow implicit int -> float promotion (spec §15.1.2)
         // Note: float -> int requires explicit conversion, not allowed implicitly
-        if let (Type::Primitive(PrimitiveType::Int), Type::Primitive(PrimitiveType::Float)) = (actual, expected) {
+        if let (Type::Primitive(PrimitiveType::Int), Type::Primitive(PrimitiveType::Float)) =
+            (actual, expected)
+        {
             return true;
         }
 
@@ -480,18 +484,19 @@ impl Generator {
         // Look through all symbols to find the method
         for symbol in &self.symbol_table.symbols {
             if symbol.qualified_name == qualified_method_name
-                && let SymbolKind::Function { func_id, .. } = symbol.kind {
-                    // Get the function from the functions table
-                    let func = self.symbol_table.get_function(func_id);
-                    // Proto methods have return_type as Option<Type>, but Function has return_type as Type
-                    // Convert Type::Primitive(Unit) to None for consistency
-                    let return_type = if func.return_type == Type::Primitive(PrimitiveType::Unit) {
-                        None
-                    } else {
-                        Some(func.return_type.clone())
-                    };
-                    return Some((func.params.clone(), return_type));
-                }
+                && let SymbolKind::Function { func_id, .. } = symbol.kind
+            {
+                // Get the function from the functions table
+                let func = self.symbol_table.get_function(func_id);
+                // Proto methods have return_type as Option<Type>, but Function has return_type as Type
+                // Convert Type::Primitive(Unit) to None for consistency
+                let return_type = if func.return_type == Type::Primitive(PrimitiveType::Unit) {
+                    None
+                } else {
+                    Some(func.return_type.clone())
+                };
+                return Some((func.params.clone(), return_type));
+            }
         }
 
         None
@@ -552,16 +557,29 @@ impl Generator {
             }
             Type::BoxType(inner) => format!("box<{}>", self.type_to_string(inner)),
             Type::Nullable(inner) => format!("?{}", self.type_to_string(inner)),
-            Type::Function { params, return_type } => {
-                let param_strs: Vec<String> = params.iter().map(|p| self.type_to_string(p)).collect();
-                format!("fn({}) -> {}", param_strs.join(", "), self.type_to_string(return_type))
+            Type::Function {
+                params,
+                return_type,
+            } => {
+                let param_strs: Vec<String> =
+                    params.iter().map(|p| self.type_to_string(p)).collect();
+                format!(
+                    "fn({}) -> {}",
+                    param_strs.join(", "),
+                    self.type_to_string(return_type)
+                )
             }
             Type::Tuple(elements) => {
-                let elem_strs: Vec<String> = elements.iter().map(|t| self.type_to_string(t)).collect();
+                let elem_strs: Vec<String> =
+                    elements.iter().map(|t| self.type_to_string(t)).collect();
                 format!("({})", elem_strs.join(", "))
             }
             Type::Map(k, v) => {
-                format!("HashMap<{}, {}>", self.type_to_string(k), self.type_to_string(v))
+                format!(
+                    "HashMap<{}, {}>",
+                    self.type_to_string(k),
+                    self.type_to_string(v)
+                )
             }
         }
     }

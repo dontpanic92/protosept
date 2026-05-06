@@ -47,7 +47,10 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("array.find".to_string(), array::array_find);
     ctx.register_host_function("array.any".to_string(), array::array_any);
     ctx.register_host_function("array.all".to_string(), array::array_all);
-    ctx.register_host_function("builtin.entry_script_dir".to_string(), display::builtin_entry_script_dir);
+    ctx.register_host_function(
+        "builtin.entry_script_dir".to_string(),
+        display::builtin_entry_script_dir,
+    );
     ctx.register_host_function("builtin.min".to_string(), display::builtin_min);
     ctx.register_host_function("builtin.max".to_string(), display::builtin_max);
     ctx.register_host_function("builtin.clamp".to_string(), display::builtin_clamp);
@@ -58,7 +61,10 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("hashmap.get".to_string(), hashmap::hashmap_get);
     ctx.register_host_function("hashmap.set".to_string(), hashmap::hashmap_set);
     ctx.register_host_function("hashmap.remove".to_string(), hashmap::hashmap_remove);
-    ctx.register_host_function("hashmap.contains_key".to_string(), hashmap::hashmap_contains_key);
+    ctx.register_host_function(
+        "hashmap.contains_key".to_string(),
+        hashmap::hashmap_contains_key,
+    );
     ctx.register_host_function("hashmap.keys".to_string(), hashmap::hashmap_keys);
     ctx.register_host_function("hashmap.values".to_string(), hashmap::hashmap_values);
     ctx.register_host_function("hashmap.index".to_string(), hashmap::hashmap_index);

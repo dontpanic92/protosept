@@ -116,7 +116,11 @@ impl Context {
                 // This box is garbage and will be removed.
                 // If it carries an owned foreign handle, schedule the
                 // finalizer call for after compaction.
-                if let Data::Foreign { type_tag, handle, owned: true } = box_data
+                if let Data::Foreign {
+                    type_tag,
+                    handle,
+                    owned: true,
+                } = box_data
                     && let Some(reg) = self.foreign_types.get(type_tag.as_str())
                     && let Some(name) = &reg.finalizer
                 {

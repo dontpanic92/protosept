@@ -1,6 +1,4 @@
-use crate::ast::{
-    Expression, Identifier, NamedPattern, Pattern, Statement,
-};
+use crate::ast::{Expression, Identifier, NamedPattern, Pattern, Statement};
 use crate::errors::{ParseError, SourcePos};
 use crate::intern::InternedString;
 use crate::lexer::{Token, TokenType};
@@ -40,9 +38,10 @@ impl Parser {
                         {
                             // module.EnumName.Variant(...) pattern
                             let qualified_name = Identifier {
-                                name: InternedString::from(
-                                    format!("{}.{}", module_name.name, inner_field.name),
-                                ),
+                                name: InternedString::from(format!(
+                                    "{}.{}",
+                                    module_name.name, inner_field.name
+                                )),
                                 line: module_name.line,
                                 col: module_name.col,
                             };
@@ -353,7 +352,10 @@ impl Parser {
 
         self.consume_match(TokenType::Semicolon)?;
 
-        Ok(Statement::Import { module_path: InternedString::from(module_path), alias })
+        Ok(Statement::Import {
+            module_path: InternedString::from(module_path),
+            alias,
+        })
     }
 
     pub(crate) fn parse_statement(&mut self) -> ParseResult<Statement> {
@@ -420,15 +422,33 @@ impl Parser {
                         }),
                     });
                 }
+                let pos = self
+                    .peek()
+                    .map(|t| SourcePos {
+                        line: t.line,
+                        col: t.col,
+                        module: None,
+                    })
+                    .unwrap_or(SourcePos {
+                        line: 0,
+                        col: 0,
+                        module: None,
+                    });
                 self.consume();
                 // Support bare `return;` (unit return) by checking for semicolon
                 if self.peek().map(|t| &t.token_type) == Some(&TokenType::Semicolon) {
                     self.consume(); // consume the semicolon
-                    Ok(Statement::Return(Box::new(Expression::IntegerLiteral(0))))
+                    Ok(Statement::Return {
+                        expression: None,
+                        pos,
+                    })
                 } else {
                     let expr = self.parse_expression()?;
                     self.consume_match(TokenType::Semicolon)?;
-                    Ok(Statement::Return(Box::new(expr)))
+                    Ok(Statement::Return {
+                        expression: Some(Box::new(expr)),
+                        pos,
+                    })
                 }
             }
             Some(TokenType::Throw) => {
@@ -516,24 +536,25 @@ impl Parser {
                     let saved_pos = self.position;
                     self.consume(); // consume '.'
                     if let Ok(variant_name) = self.parse_identifier()
-                        && self.peek_match(TokenType::OpenParen) {
-                            let enum_name = identifier;
-                            self.consume_match(TokenType::OpenParen)?;
-                            let sub_patterns = self.parse_sub_patterns()?;
-                            self.consume_match(TokenType::CloseParen)?;
-                            self.consume_match(TokenType::Assignment)?;
-                            let expression = self.parse_expression()?;
-                            self.consume_match(TokenType::Semicolon)?;
-                            return Ok(Statement::LetDestructure {
-                                is_mutable,
-                                pattern: Pattern::EnumVariant {
-                                    enum_name,
-                                    variant_name,
-                                    sub_patterns,
-                                },
-                                expression,
-                            });
-                        }
+                        && self.peek_match(TokenType::OpenParen)
+                    {
+                        let enum_name = identifier;
+                        self.consume_match(TokenType::OpenParen)?;
+                        let sub_patterns = self.parse_sub_patterns()?;
+                        self.consume_match(TokenType::CloseParen)?;
+                        self.consume_match(TokenType::Assignment)?;
+                        let expression = self.parse_expression()?;
+                        self.consume_match(TokenType::Semicolon)?;
+                        return Ok(Statement::LetDestructure {
+                            is_mutable,
+                            pattern: Pattern::EnumVariant {
+                                enum_name,
+                                variant_name,
+                                sub_patterns,
+                            },
+                            expression,
+                        });
+                    }
                     self.position = saved_pos;
                 }
 

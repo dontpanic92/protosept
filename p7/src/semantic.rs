@@ -32,25 +32,55 @@ pub enum ReturnKind {
     Void,
 }
 
+/// Structural descriptor of an `@foreign` proto method's declared return
+/// type. The host dispatcher uses this to decide how to marshal the
+/// return value back from a C-ABI virtual call without consulting the
+/// AST. `Foreign` carries the type_tag of the returned interface so the
+/// dispatcher can `register_foreign_type`/`push_foreign` the result.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum HostReturnTy {
+    Void,
+    Int,
+    Float,
+    String,
+    Foreign { type_tag: InternedString },
+    Optional(Box<HostReturnTy>),
+    Array(Box<HostReturnTy>),
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SymbolKind {
     Constant(Constant),
-    Function { func_id: FunctionId, address: u32 },
+    Function {
+        func_id: FunctionId,
+        address: u32,
+    },
     Type(TypeId), // Unified for Struct, Enum, Proto
     Module(ModuleId),
     /// A method dispatched by a host function (registered via
     /// `Context::register_foreign_type`). `CallProtoMethod` resolves to one
     /// of these via the synthetic carrier struct's vtable entry.
     ///
-    /// At dispatch time the runtime pushes `method_name` then `type_tag`
-    /// onto the stack and invokes `dispatcher` via the existing
-    /// `InvokeHost` opcode.
+    /// At dispatch time the runtime pushes (top → bottom)
+    /// `type_tag, method_name, vtable_slot, return_ty` onto the stack and
+    /// invokes `dispatcher` via the existing `InvokeHost` opcode. The
+    /// host dispatcher reads its own arguments off the runtime stack
+    /// based on the `Data` shapes of the popped values plus the
+    /// `(vtable_slot, return_ty)` pair pushed here.
     HostMethod {
         dispatcher_name: InternedString,
         method_name: InternedString,
         type_tag: InternedString,
         param_count: u32, // includes self
         return_kind: ReturnKind,
+        /// Index of this method within its `@foreign` proto, in
+        /// declaration order. The host dispatcher converts this to a
+        /// COM vtable slot by adding the IUnknown prefix length (3).
+        vtable_slot: u32,
+        /// Structural return-type descriptor used by the host dispatcher
+        /// to marshal the C-ABI return value back into a protosept
+        /// `Data`. Null for non-foreign HostMethod symbols (rare; reserved).
+        return_ty: HostReturnTy,
     },
 }
 
@@ -209,6 +239,16 @@ pub struct Proto {
     pub methods: Vec<(InternedString, Vec<Type>, Option<Type>)>, // (name, params, return_type)
     #[serde(skip)]
     pub attributes: Vec<crate::ast::Attribute>,
+    /// `@foreign(type_tag="...")` value, when this proto carries the
+    /// `@foreign` attribute. Used by foreign-aware codegen to encode
+    /// referenced foreign return types in `HostReturnTy::Foreign`
+    /// without re-walking the AST.
+    #[serde(default)]
+    pub foreign_type_tag: Option<InternedString>,
+    /// `@foreign(uuid="...")` value, when present. Surfaced to the host
+    /// dispatcher via `Context::foreign_uuid(type_tag)`.
+    #[serde(default)]
+    pub foreign_uuid: Option<InternedString>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -297,9 +337,9 @@ impl Type {
                         return true;
                     }
                     // Auto-copy: all variant payloads must be copy-treated
-                    e.variants.iter().all(|(_, fields)| {
-                        fields.iter().all(|f| f.is_copy_treated(symbol_table))
-                    })
+                    e.variants
+                        .iter()
+                        .all(|(_, fields)| fields.iter().all(|f| f.is_copy_treated(symbol_table)))
                 } else {
                     false
                 }
@@ -327,7 +367,10 @@ impl Clone for Type {
             Type::Struct(s) => Type::Struct(*s),
             Type::Proto(p) => Type::Proto(*p),
             Type::Nullable(n) => Type::Nullable(n.clone()),
-            Type::Function { params, return_type } => Type::Function {
+            Type::Function {
+                params,
+                return_type,
+            } => Type::Function {
                 params: params.clone(),
                 return_type: return_type.clone(),
             },
@@ -350,8 +393,14 @@ impl PartialEq for Type {
             (Type::Proto(a), Type::Proto(b)) => *a == *b,
             (Type::Nullable(a), Type::Nullable(b)) => *a == *b,
             (
-                Type::Function { params: pa, return_type: ra },
-                Type::Function { params: pb, return_type: rb },
+                Type::Function {
+                    params: pa,
+                    return_type: ra,
+                },
+                Type::Function {
+                    params: pb,
+                    return_type: rb,
+                },
             ) => pa == pb && ra == rb,
             (Type::Tuple(a), Type::Tuple(b)) => a == b,
             (Type::Map(ka, va), Type::Map(kb, vb)) => ka == kb && va == vb,
@@ -375,7 +424,10 @@ impl std::hash::Hash for Type {
             Type::Struct(s) => s.hash(state),
             Type::Proto(p) => p.hash(state),
             Type::Nullable(n) => n.hash(state),
-            Type::Function { params, return_type } => {
+            Type::Function {
+                params,
+                return_type,
+            } => {
                 params.hash(state);
                 return_type.hash(state);
             }
@@ -409,9 +461,16 @@ impl ToString for Type {
             Type::Struct(s) => format!("struct({})", s),
             Type::Proto(p) => format!("proto({})", p),
             Type::Nullable(n) => format!("?{}", n.to_string()),
-            Type::Function { params, return_type } => {
+            Type::Function {
+                params,
+                return_type,
+            } => {
                 let param_strs: Vec<String> = params.iter().map(|p| p.to_string()).collect();
-                format!("fn({}) -> {}", param_strs.join(", "), return_type.to_string())
+                format!(
+                    "fn({}) -> {}",
+                    param_strs.join(", "),
+                    return_type.to_string()
+                )
             }
             Type::Tuple(elements) => {
                 let elem_strs: Vec<String> = elements.iter().map(|t| t.to_string()).collect();
@@ -553,9 +612,11 @@ impl SymbolTable {
         };
         self.symbols.iter().enumerate().find_map(|(i, s)| {
             if let SymbolKind::Type(tid) = s.kind
-                && tid == type_id && &s.qualified_name == target_qualified_name {
-                    return Some(i as SymbolId);
-                }
+                && tid == type_id
+                && &s.qualified_name == target_qualified_name
+            {
+                return Some(i as SymbolId);
+            }
             None
         })
     }
@@ -576,18 +637,19 @@ impl SymbolTable {
         if name == "Self"
             && let Some(enclose_type) =
                 self.find_nearest_symbol_id_by_kind(SymbolKind::discriminant_of_type())
+        {
+            let type_symbol = self.get_symbol(*enclose_type).unwrap();
+            if let SymbolKind::Type(id) = type_symbol.kind
+                && let Some(type_def) = self.types.get(id as usize)
             {
-                let type_symbol = self.get_symbol(*enclose_type).unwrap();
-                if let SymbolKind::Type(id) = type_symbol.kind
-                    && let Some(type_def) = self.types.get(id as usize) {
-                        // Determine the actual type kind
-                        return match type_def {
-                            TypeDefinition::Struct(_) => Some(Type::Struct(id)),
-                            TypeDefinition::Enum(_) => Some(Type::Enum(id)),
-                            TypeDefinition::Proto(_) => Some(Type::Proto(id)),
-                        };
-                    }
+                // Determine the actual type kind
+                return match type_def {
+                    TypeDefinition::Struct(_) => Some(Type::Struct(id)),
+                    TypeDefinition::Enum(_) => Some(Type::Enum(id)),
+                    TypeDefinition::Proto(_) => Some(Type::Proto(id)),
+                };
             }
+        }
 
         let primitive_type = Self::to_primitive_type(name);
         if primitive_type.is_some() {
@@ -657,7 +719,9 @@ impl SymbolTable {
     }
 
     pub fn get_new_symbol_qualified_name(&self, name: &str) -> InternedString {
-        let qn = self.get_current_symbol().map(|symbol| symbol.qualified_name.to_string())
+        let qn = self
+            .get_current_symbol()
+            .map(|symbol| symbol.qualified_name.to_string())
             .unwrap_or_default()
             + "."
             + name;
@@ -696,6 +760,10 @@ impl SymbolTable {
 
     pub fn get_type_mut(&mut self, type_id: TypeId) -> &mut TypeDefinition {
         &mut self.types[type_id as usize]
+    }
+
+    pub fn update_type(&mut self, type_id: TypeId, ty: TypeDefinition) {
+        self.types[type_id as usize] = ty;
     }
 
     // Backward compatibility methods

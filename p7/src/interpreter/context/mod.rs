@@ -6,6 +6,7 @@ use crate::errors::RuntimeError;
 #[macro_use]
 mod data;
 mod execution;
+pub use execution::encode_return_ty;
 mod gc;
 mod modules;
 
@@ -52,6 +53,11 @@ pub struct Context {
     // Registry of @foreign protos by type_tag, populated via
     // `register_foreign_type` and consulted by `push_foreign` / GC.
     pub(super) foreign_types: HashMap<String, ForeignTypeReg>,
+    // type_tag -> UUID string. Populated alongside foreign_types when a
+    // module is loaded; surfaced via [`Context::foreign_uuid`] so the
+    // host dispatcher can `query_interface` by UUID for a given foreign
+    // proto without re-walking the module.
+    pub(super) foreign_uuids: HashMap<String, String>,
 }
 
 impl Default for Context {
@@ -76,6 +82,7 @@ impl Context {
             stop_depth: None,
             module_vars: Vec::new(),
             foreign_types: HashMap::new(),
+            foreign_uuids: HashMap::new(),
         };
 
         // Register builtin host functions
@@ -121,13 +128,23 @@ impl Context {
     /// previously-registered finalizer but preserves the discovered carrier
     /// type ids.
     pub fn register_foreign_type(&mut self, type_tag: &str, finalizer: Option<&str>) {
-        let entry = self.foreign_types
+        let entry = self
+            .foreign_types
             .entry(type_tag.to_string())
             .or_insert_with(|| ForeignTypeReg {
                 finalizer: None,
                 carrier_type_ids: Vec::new(),
             });
         entry.finalizer = finalizer.map(str::to_string);
+    }
+
+    /// Look up the COM-style UUID associated with a `@foreign(uuid="...")`
+    /// proto, keyed by its `type_tag`. Returns the UUID string verbatim
+    /// (lowercase, hyphenated, 36 chars). The host dispatcher uses this
+    /// to `query_interface` from the type-erased ComObjectTable handle to
+    /// the right interface pointer.
+    pub fn foreign_uuid(&self, type_tag: &str) -> Option<&str> {
+        self.foreign_uuids.get(type_tag).map(String::as_str)
     }
 
     /// Push an owning foreign value onto the current stack frame.
@@ -185,12 +202,10 @@ impl Context {
         self.box_heap.push(payload);
         self.allocation_count += 1;
 
-        self.stack_frame_mut()?
-            .stack
-            .push(Data::ProtoBoxRef {
-                box_idx,
-                concrete_type_id: carrier_type_id,
-            });
+        self.stack_frame_mut()?.stack.push(Data::ProtoBoxRef {
+            box_idx,
+            concrete_type_id: carrier_type_id,
+        });
         Ok(())
     }
 
@@ -209,9 +224,7 @@ impl Context {
                     .stack
                     .pop()
                     .ok_or(RuntimeError::StackUnderflow)?;
-                self.stack_frame_mut()?
-                    .stack
-                    .push(Data::Some(Box::new(v)));
+                self.stack_frame_mut()?.stack.push(Data::Some(Box::new(v)));
                 Ok(())
             }
             None => {
@@ -235,8 +248,14 @@ impl Context {
             .ok_or(RuntimeError::StackUnderflow)?;
 
         let (box_idx, _ctid) = match v {
-            Data::ProtoBoxRef { box_idx, concrete_type_id } => (box_idx, concrete_type_id),
-            Data::ProtoRefRef { ref_idx, concrete_type_id } => (ref_idx, concrete_type_id),
+            Data::ProtoBoxRef {
+                box_idx,
+                concrete_type_id,
+            } => (box_idx, concrete_type_id),
+            Data::ProtoRefRef {
+                ref_idx,
+                concrete_type_id,
+            } => (ref_idx, concrete_type_id),
             Data::BoxRef(idx) => (idx, 0),
             other => {
                 return Err(RuntimeError::Other(format!(
@@ -252,7 +271,9 @@ impl Context {
             .ok_or_else(|| RuntimeError::Other("pop_foreign: invalid box index".to_string()))?;
 
         match payload {
-            Data::Foreign { type_tag, handle, .. } => {
+            Data::Foreign {
+                type_tag, handle, ..
+            } => {
                 if type_tag != expected_tag {
                     return Err(RuntimeError::Other(format!(
                         "pop_foreign: expected type_tag '{}', got '{}'",
