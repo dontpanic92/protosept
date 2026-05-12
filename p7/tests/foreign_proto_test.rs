@@ -1,6 +1,7 @@
 //! End-to-end tests for `@foreign` proto support.
 
 use p7::interpreter::context::{Context, Data};
+use p7::{InMemoryModuleProvider, ModuleProvider};
 
 static mut COUNTER_VALUE: i64 = 0;
 static mut FINALIZER_CALLS: i64 = 0;
@@ -238,6 +239,64 @@ fn host_other_release(_ctx: &mut Context) -> Result<(), p7::errors::RuntimeError
     Ok(())
 }
 
+fn host_cross_module_invoke(ctx: &mut Context) -> Result<(), p7::errors::RuntimeError> {
+    let frame = ctx.stack_frame_mut()?;
+    let type_tag = match frame.stack.pop() {
+        Some(Data::String(s)) => s,
+        other => panic!("expected type_tag string, got {:?}", other),
+    };
+    let method = match frame.stack.pop() {
+        Some(Data::String(s)) => s,
+        other => panic!("expected method string, got {:?}", other),
+    };
+    let _vtable_slot = match frame.stack.pop() {
+        Some(Data::Int(_)) => (),
+        other => panic!("expected vtable_slot int, got {:?}", other),
+    };
+    let _return_ty = match frame.stack.pop() {
+        Some(Data::Array(_)) => (),
+        other => panic!("expected return_ty array, got {:?}", other),
+    };
+
+    match (type_tag.as_str(), method.as_str()) {
+        ("host.Host", "games") => {
+            let _handle = ctx.pop_foreign("host.Host")?;
+            ctx.push_foreign("host.Registry", 2)
+        }
+        ("host.Registry", "count") => {
+            let _handle = ctx.pop_foreign("host.Registry")?;
+            ctx.stack_frame_mut()?.stack.push(Data::Int(3));
+            Ok(())
+        }
+        other => panic!("unexpected foreign call {:?}", other),
+    }
+}
+
+fn host_cross_module_release(_ctx: &mut Context) -> Result<(), p7::errors::RuntimeError> {
+    Ok(())
+}
+
+const CROSS_MODULE_BINDINGS: &str = r#"
+@foreign(dispatcher="host.invoke", finalizer="host.release", type_tag="host.Registry")
+pub proto Registry {
+    fn count(self: ref<Registry>) -> int;
+}
+
+@foreign(dispatcher="host.invoke", finalizer="host.release", type_tag="host.Host")
+pub proto Host {
+    fn games(self: ref<Host>) -> box<Registry>;
+}
+"#;
+
+const CROSS_MODULE_SCRIPT: &str = r#"
+import bindings;
+
+pub fn init(host: ref<bindings.Host>) -> int {
+    let registry = host.games();
+    registry.count()
+}
+"#;
+
 const HANDLE_RETURN_SOURCE: &str = r#"
 @foreign(dispatcher="other.invoke", finalizer="other.release", type_tag="other.Other")
 pub proto Other {
@@ -319,4 +378,29 @@ fn foreign_proto_method_returning_ref_proto_encodes_foreign_return_ty() {
         captured.0
     );
     assert_eq!(captured.1, "other.Other");
+}
+
+#[test]
+fn imported_foreign_proto_dispatches_with_entry_module_carrier() {
+    let mut provider = InMemoryModuleProvider::new();
+    provider.add_module("bindings".to_string(), CROSS_MODULE_BINDINGS.to_string());
+
+    let module = p7::compile_with_provider(
+        CROSS_MODULE_SCRIPT.to_string(),
+        Box::new(provider) as Box<dyn ModuleProvider>,
+    )
+    .expect("compile");
+
+    let mut ctx = Context::new();
+    ctx.register_host_function("host.invoke".to_string(), host_cross_module_invoke);
+    ctx.register_host_function("host.release".to_string(), host_cross_module_release);
+    ctx.load_module(module);
+    ctx.push_foreign("host.Host", 1).expect("push host");
+    let host = ctx.stack[0].stack.pop().expect("host");
+
+    ctx.push_function("init", vec![host]);
+    ctx.resume().expect("init");
+
+    let result = ctx.stack[0].stack.pop().expect("result");
+    assert_eq!(result, Data::Int(3));
 }

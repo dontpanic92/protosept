@@ -972,14 +972,15 @@ impl Generator {
         let carrier_local_name =
             InternedString::from(format!("__ForeignCarrier_{}", proto_ident.name));
         let carrier_qualified_name = InternedString::from(format!(
-            "{}__ForeignCarrier",
+            "{}{}",
             // The proto's qualified_name is "<scope>.<protoname>"; replace
-            // the trailing proto name with the carrier convention to keep
-            // qualified-name uniqueness without depending on lexical scope.
+            // the trailing proto name with the carrier name so every foreign
+            // proto gets a distinct qualified carrier in the same scope.
             proto_qualified_name
                 .as_str()
                 .strip_suffix(proto_ident.name.as_str())
                 .unwrap_or(proto_qualified_name.as_str()),
+            carrier_local_name,
         ));
 
         let carrier_struct = Struct {
@@ -1521,11 +1522,12 @@ impl Generator {
         let carrier_local_name =
             InternedString::from(format!("__ForeignCarrier_{}", proto_local_name));
         let carrier_qualified_name = InternedString::from(format!(
-            "{}__ForeignCarrier",
+            "{}{}",
             proto_qualified_name
                 .as_str()
                 .strip_suffix(&proto_local_name)
                 .unwrap_or(proto_qualified_name.as_str()),
+            carrier_local_name,
         ));
 
         // Skip if a carrier with this qualified name already exists in the
