@@ -120,6 +120,28 @@ pub fn run() -> int {
 }
 "#;
 
+const BOXED_FIELD_SOURCE: &str = r#"
+@foreign(dispatcher="counter.invoke", finalizer="counter.release", type_tag="counter.Counter")
+pub proto Counter {
+    fn inc(self: ref<Counter>) -> int;
+    fn read(self: ref<Counter>) -> int;
+}
+
+@intrinsic(name="counter.make")
+pub fn make_counter() -> box<Counter>;
+
+struct State(
+    counter: box<Counter>,
+);
+
+pub fn run() -> int {
+    let state = State(make_counter());
+    let _x: int = state.counter.inc();
+    let _y: int = state.counter.inc();
+    state.counter.read()
+}
+"#;
+
 const NO_METHOD_SOURCE: &str = r#"
 @foreign(dispatcher="unused.invoke", finalizer="counter.release", type_tag="counter.Counter")
 pub proto Counter {
@@ -179,6 +201,26 @@ fn foreign_proto_dispatch_and_finalizer() {
         "expected finalizer to fire at least once after GC, got {}",
         finalizer_calls,
     );
+}
+
+#[test]
+fn foreign_proto_box_can_be_stored_in_struct_field() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    reset_globals();
+
+    let module = p7::compile(BOXED_FIELD_SOURCE.to_string()).expect("compile");
+
+    let mut ctx = Context::new();
+    ctx.register_host_function("counter.make".to_string(), host_make_counter);
+    ctx.register_host_function("counter.invoke".to_string(), host_counter_invoke);
+    ctx.register_host_function("counter.release".to_string(), host_counter_release);
+
+    ctx.load_module(module);
+    ctx.push_function("run", Vec::new());
+    ctx.resume().expect("run");
+
+    let result = ctx.stack[0].stack.pop().expect("result");
+    assert_eq!(result, Data::Int(2));
 }
 
 #[test]
