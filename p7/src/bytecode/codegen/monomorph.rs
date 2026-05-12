@@ -113,6 +113,7 @@ impl Generator {
         let monomorphized_struct = Struct {
             qualified_name: monomorphized_name,
             fields: monomorphized_fields,
+            field_visibility: base_struct.field_visibility.clone(),
             field_defaults: base_struct.field_defaults.clone(),
             attributes: base_struct.attributes.clone(),
             type_parameters: Vec::new(), // Monomorphized structs have no type parameters
@@ -369,6 +370,25 @@ impl Generator {
             monomorphized_params.push(resolved_type);
         }
 
+        for (idx, default_expr) in base_func.param_defaults.iter().enumerate() {
+            if let Some(default_expr) = default_expr {
+                let Some(expected_type) = monomorphized_params.get(idx) else {
+                    continue;
+                };
+                let param_name = base_func
+                    .param_names
+                    .get(idx)
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|| idx.to_string());
+                self.validate_default_expression(
+                    default_expr.clone(),
+                    expected_type,
+                    &format!("parameter '{}'", param_name),
+                    SourcePos::at(line, col),
+                )?;
+            }
+        }
+
         // Substitute and resolve return type
         let monomorphized_return_type = if let Some(parsed_ret) = parsed_return_type {
             let substituted_parsed_type =
@@ -390,6 +410,7 @@ impl Generator {
         // Create the monomorphized function metadata
         let monomorphized_func = Function {
             qualified_name: monomorphized_name.clone(),
+            is_pub: base_func.is_pub,
             params: monomorphized_params.clone(),
             param_names: base_func.param_names.clone(),
             param_defaults: base_func.param_defaults.clone(),

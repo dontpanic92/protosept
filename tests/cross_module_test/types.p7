@@ -17,6 +17,22 @@ pub struct Pos(pub row: int, pub col: int) {
     }
 }
 
+pub struct PrivateBox(
+    value: int,
+) {
+    pub fn get(ref self) -> int {
+        self.value
+    }
+
+    fn secret(ref self) -> int {
+        self.value + 1
+    }
+
+    fn hidden() -> int {
+        99
+    }
+}
+
 pub enum Direction(Up, Down, Left, Right) {
     pub fn is_vertical(ref self) -> bool {
         match self {

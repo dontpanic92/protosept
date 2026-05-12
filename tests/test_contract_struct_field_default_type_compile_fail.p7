@@ -1,0 +1,3 @@
+// compile_fail: struct field defaults must match the declared field type
+
+struct DefaultContractBadField(value: int = "not an int");

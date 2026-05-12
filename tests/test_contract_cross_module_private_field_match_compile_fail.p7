@@ -1,0 +1,10 @@
+// compile_fail: imported private struct fields cannot be match-destructured
+
+import cross_module_test.types;
+
+fn test_private_field_match_contract() -> int {
+    let box = types.PrivateBox(1);
+    match box {
+        types.PrivateBox(value) => value,
+    }
+}

@@ -5,8 +5,8 @@ use crate::{
     bytecode::builder::ByteCodeBuilder,
     intern::InternedString,
     semantic::{
-        Function, FunctionId, LocalSymbolScope, PrimitiveType, Symbol, SymbolKind, SymbolTable,
-        Type, TypeDefinition, TypeId, Variable,
+        Function, FunctionId, LocalSymbolScope, PrimitiveType, Struct, Symbol, SymbolKind,
+        SymbolTable, Type, TypeDefinition, TypeId, Variable,
     },
 };
 
@@ -567,6 +567,61 @@ impl Generator {
         Ok(())
     }
 
+    pub(super) fn validate_default_expression(
+        &mut self,
+        expression: Expression,
+        expected_type: &Type,
+        context: &str,
+        pos: Option<SourcePos>,
+    ) -> SaResult<()> {
+        let saved_builder = std::mem::replace(&mut self.builder, ByteCodeBuilder::new());
+        let saved_string_constants = std::mem::take(&mut self.string_constants);
+        let saved_local_scope = self.local_scope.take();
+        let saved_moved_variables = std::mem::take(&mut self.moved_variables);
+        let saved_moved_params = std::mem::take(&mut self.moved_params);
+        let saved_pending_monomorphizations = std::mem::take(&mut self.pending_monomorphizations);
+
+        self.local_scope = Some(LocalSymbolScope::new(Vec::new()));
+        let result = self.generate_expression_with_expected_type(expression, Some(expected_type));
+
+        self.builder = saved_builder;
+        self.string_constants = saved_string_constants;
+        self.local_scope = saved_local_scope;
+        self.moved_variables = saved_moved_variables;
+        self.moved_params = saved_moved_params;
+        self.pending_monomorphizations = saved_pending_monomorphizations;
+
+        let inferred_type = result?;
+        if !self.types_compatible(&inferred_type, expected_type) {
+            return Err(SemanticError::TypeMismatch {
+                lhs: format!("{} default type {}", context, inferred_type.to_string()),
+                rhs: format!("expected {}", expected_type.to_string()),
+                pos,
+            });
+        }
+
+        Ok(())
+    }
+
+    fn validate_parameter_defaults(
+        &mut self,
+        params: &[Variable],
+        declarations: &[crate::ast::Parameter],
+    ) -> SaResult<()> {
+        for (param, declaration) in params.iter().zip(declarations.iter()) {
+            if let Some(default_expr) = &declaration.default_value {
+                self.validate_default_expression(
+                    default_expr.clone(),
+                    &param.ty,
+                    &format!("parameter '{}'", param.name),
+                    declaration.name.pos(),
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Check if a semantic type contains ref<T> anywhere
     pub(super) fn type_contains_ref(&self, ty: &Type) -> bool {
         match ty {
@@ -584,6 +639,34 @@ impl Generator {
             }
             _ => false,
         }
+    }
+
+    pub(super) fn ensure_struct_field_visible(
+        &self,
+        struct_def: &Struct,
+        field_index: usize,
+        field_name: &str,
+        line: usize,
+        col: usize,
+    ) -> SaResult<()> {
+        let is_cross_module = struct_def
+            .source_module
+            .as_ref()
+            .is_some_and(|module| module.as_str() != self._current_module_path.as_str());
+        let is_public = struct_def
+            .field_visibility
+            .get(field_index)
+            .copied()
+            .unwrap_or(true);
+
+        if is_cross_module && !is_public {
+            return Err(SemanticError::Other(format!(
+                "Field '{}' on struct '{}' is private at line {} column {}",
+                field_name, struct_def.qualified_name, line, col
+            )));
+        }
+
+        Ok(())
     }
 
     /// Find a module-level variable by name. Returns (var_id, type, is_mutable).
@@ -854,6 +937,10 @@ impl Generator {
             .map(|param| param.default_value.clone())
             .collect();
 
+        if !is_generic {
+            self.validate_parameter_defaults(&params, &declaration.parameters)?;
+        }
+
         let (return_type, generic_return_type) = if is_generic {
             let generic_ret = declaration.return_type.clone();
             (Type::Primitive(PrimitiveType::Unit), generic_ret)
@@ -877,6 +964,7 @@ impl Generator {
 
         let ty = Function {
             qualified_name: qualified_name.clone(),
+            is_pub: declaration.is_pub,
             params: params.iter().map(|var| var.ty.clone()).collect(),
             param_names: params.iter().map(|var| var.name.clone()).collect(),
             param_defaults: param_defaults.clone(),
@@ -1118,6 +1206,10 @@ impl Generator {
             .map(|param| param.default_value.clone())
             .collect();
 
+        if !is_generic {
+            self.validate_parameter_defaults(&params, &declaration.parameters)?;
+        }
+
         let (return_type, generic_return_type) = if is_generic {
             // For generic functions, store placeholder and keep parsed type
             let generic_ret = declaration.return_type.clone();
@@ -1142,6 +1234,7 @@ impl Generator {
 
         let ty = Function {
             qualified_name: qualified_name.clone(),
+            is_pub: declaration.is_pub,
             params: params.iter().map(|var| var.ty.clone()).collect(),
             param_names: params.iter().map(|var| var.name.clone()).collect(),
             param_defaults: param_defaults.clone(),

@@ -1,0 +1,8 @@
+// compile_fail: private struct fields are not accessible across modules
+
+import cross_module_test.types;
+
+fn main() -> int {
+    let value = types.PrivateBox(42);
+    value.value
+}

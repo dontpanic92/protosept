@@ -200,10 +200,17 @@ impl Generator {
                     if !sub_pat.is_wildcard()
                         && let Pattern::Identifier(id) = sub_pat
                     {
+                        let (field_name, field_ty) = struct_def.fields[field_idx].clone();
+                        self.ensure_struct_field_visible(
+                            &struct_def,
+                            field_idx,
+                            &field_name,
+                            id.line,
+                            id.col,
+                        )?;
                         // Dup for all but nothing extra needed
                         self.builder.dup();
                         self.builder.ldfield(field_idx as u32);
-                        let field_ty = struct_def.fields[field_idx].1.clone();
                         let var_id = self
                             .local_scope
                             .as_mut()
@@ -264,9 +271,16 @@ impl Generator {
                             if !sub_pat.is_wildcard()
                                 && let Pattern::Identifier(id) = sub_pat
                             {
+                                let (field_name, field_ty) = struct_def.fields[field_idx].clone();
+                                self.ensure_struct_field_visible(
+                                    &struct_def,
+                                    field_idx,
+                                    &field_name,
+                                    id.line,
+                                    id.col,
+                                )?;
                                 self.builder.dup();
                                 self.builder.ldfield(field_idx as u32);
-                                let field_ty = struct_def.fields[field_idx].1.clone();
                                 let var_id = self
                                     .local_scope
                                     .as_mut()
@@ -676,6 +690,7 @@ impl Generator {
         let ty = Struct {
             qualified_name: qualified_name.clone(),
             fields: Vec::new(),
+            field_visibility: Vec::new(),
             field_defaults: Vec::new(),
             attributes: attributes.clone(),
             type_parameters: type_param_names,
@@ -747,6 +762,7 @@ impl Generator {
             .collect();
 
         let is_generic = !type_param_names.is_empty();
+        let field_visibility: Vec<bool> = fields.iter().map(|f| f.is_pub).collect();
 
         let (fields_with_types, generic_field_types) = if is_generic {
             let parsed_field_types: Vec<crate::ast::Type> =
@@ -770,6 +786,23 @@ impl Generator {
             let mut resolved_fields = Vec::new();
             for (idx, f) in fields.iter().enumerate() {
                 let field_type = self.get_semantic_type(&f.field_type)?;
+                if let Some(default_expr) = &f.default_value {
+                    let field_name = f
+                        .name
+                        .as_ref()
+                        .map(|n| n.name.to_string())
+                        .unwrap_or_else(|| idx.to_string());
+                    let pos = f
+                        .name
+                        .as_ref()
+                        .and_then(|n| crate::errors::SourcePos::at(n.line, n.col));
+                    self.validate_default_expression(
+                        default_expr.clone(),
+                        &field_type,
+                        &format!("field '{}'", field_name),
+                        pos,
+                    )?;
+                }
                 if self.type_contains_ref(&field_type) {
                     let field_name = f
                         .name
@@ -798,6 +831,7 @@ impl Generator {
         let ty = Struct {
             qualified_name: qualified_name.clone(),
             fields: fields_with_types,
+            field_visibility,
             field_defaults,
             attributes: attributes.clone(),
             type_parameters: type_param_names.clone(),
@@ -1013,6 +1047,7 @@ impl Generator {
         let carrier_struct = Struct {
             qualified_name: carrier_qualified_name.clone(),
             fields: Vec::new(),
+            field_visibility: Vec::new(),
             field_defaults: Vec::new(),
             attributes: Vec::new(),
             type_parameters: Vec::new(),
@@ -1340,6 +1375,7 @@ impl Generator {
             TypeDefinition::Struct(s) => TypeDefinition::Struct(Struct {
                 qualified_name: s.qualified_name.clone(),
                 fields: Vec::new(),
+                field_visibility: s.field_visibility.clone(),
                 field_defaults: Vec::new(),
                 attributes: s.attributes.clone(),
                 type_parameters: s.type_parameters.clone(),
@@ -1410,6 +1446,7 @@ impl Generator {
                 TypeDefinition::Struct(Struct {
                     qualified_name: s.qualified_name.clone(),
                     fields,
+                    field_visibility: s.field_visibility.clone(),
                     field_defaults: s.field_defaults.clone(),
                     attributes: s.attributes.clone(),
                     type_parameters: s.type_parameters.clone(),
@@ -1571,6 +1608,7 @@ impl Generator {
         let carrier_struct = Struct {
             qualified_name: carrier_qualified_name.clone(),
             fields: Vec::new(),
+            field_visibility: Vec::new(),
             field_defaults: Vec::new(),
             attributes: Vec::new(),
             type_parameters: Vec::new(),

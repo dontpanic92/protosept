@@ -1,0 +1,7 @@
+// compile_fail: imported private static methods cannot be called
+
+import cross_module_test.types;
+
+fn test_private_static_method_contract() -> int {
+    types.PrivateBox.hidden()
+}

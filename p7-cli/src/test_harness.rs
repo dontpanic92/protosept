@@ -1,10 +1,9 @@
 use p7::{
-    InMemoryModuleProvider,
+    InMemoryModuleProvider, RunOptions,
     ast::{Attribute, Expression},
     errors::Proto7Error,
     interpreter::context::Data as P7Value,
     semantic::SymbolKind,
-    RunOptions,
 };
 use std::{fs, path::PathBuf};
 
@@ -166,17 +165,18 @@ fn find_test_cases(module: &p7::bytecode::Module) -> Result<Vec<TestCase>, Failu
 
     for symbol in &module.symbols {
         if let SymbolKind::Function { func_id, .. } = symbol.kind
-            && let Some(func) = module.functions.get(func_id as usize) {
-                for attr in &func.attributes {
-                    if let Some((expected_type, expected_value)) = parse_test_attribute(attr)? {
-                        test_cases.push(TestCase {
-                            function_name: symbol.name.to_string(),
-                            expected_type,
-                            expected_value,
-                        });
-                    }
+            && let Some(func) = module.functions.get(func_id as usize)
+        {
+            for attr in &func.attributes {
+                if let Some((expected_type, expected_value)) = parse_test_attribute(attr)? {
+                    test_cases.push(TestCase {
+                        function_name: symbol.name.to_string(),
+                        expected_type,
+                        expected_value,
+                    });
                 }
             }
+        }
     }
 
     Ok(test_cases)
@@ -202,7 +202,11 @@ fn run_test_case(
 
     let actual_type = match p7_result {
         P7Value::Int(_) => {
-            if *expected_type == "bool" { "bool" } else { "int" }
+            if *expected_type == "bool" {
+                "bool"
+            } else {
+                "int"
+            }
         }
         P7Value::Float(_) => "float",
         P7Value::String(_) => "string",
@@ -224,22 +228,21 @@ fn run_test_case(
                 let expected_bool = match expected_value_str.as_str() {
                     "true" => 1i64,
                     "false" => 0i64,
-                    _ => return Ok(TestResult::Failure(FailureReason::ValueMismatch {
-                        expected: expected_value_str.clone(),
-                        found: actual_val.to_string(),
-                    })),
+                    _ => {
+                        return Ok(TestResult::Failure(FailureReason::ValueMismatch {
+                            expected: expected_value_str.clone(),
+                            found: actual_val.to_string(),
+                        }));
+                    }
                 };
                 *actual_val == expected_bool
             } else {
-                expected_value_str
-                    .parse::<i64>() == Ok(*actual_val)
+                expected_value_str.parse::<i64>() == Ok(*actual_val)
             }
         }
         P7Value::Float(actual_val) => expected_value_str
             .parse::<f64>()
-            .is_ok_and(|expected_val| {
-                (actual_val - expected_val).abs() < 1e-9
-            }),
+            .is_ok_and(|expected_val| (actual_val - expected_val).abs() < 1e-9),
         P7Value::String(actual_val) => actual_val == expected_value_str,
         P7Value::Array(elements) => {
             let formatted = format_array(elements);
@@ -270,13 +273,16 @@ fn run_test_case(
 }
 
 fn format_array(elements: &[P7Value]) -> String {
-    let items: Vec<String> = elements.iter().map(|e| match e {
-        P7Value::Int(i) => i.to_string(),
-        P7Value::Float(f) => f.to_string(),
-        P7Value::String(s) => format!("\"{}\"", s),
-        P7Value::Array(inner) => format_array(inner),
-        _ => format!("{:?}", e),
-    }).collect();
+    let items: Vec<String> = elements
+        .iter()
+        .map(|e| match e {
+            P7Value::Int(i) => i.to_string(),
+            P7Value::Float(f) => f.to_string(),
+            P7Value::String(s) => format!("\"{}\"", s),
+            P7Value::Array(inner) => format_array(inner),
+            _ => format!("{:?}", e),
+        })
+        .collect();
     format!("[{}]", items.join(", "))
 }
 
@@ -330,7 +336,12 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
     // Find all test cases
     let test_cases = match find_test_cases(&module) {
         Ok(test_cases) => test_cases,
-        Err(reason) => return Ok(vec![("test-attribute".to_string(), TestResult::Failure(reason))]),
+        Err(reason) => {
+            return Ok(vec![(
+                "test-attribute".to_string(),
+                TestResult::Failure(reason),
+            )]);
+        }
     };
 
     if test_cases.is_empty() {
@@ -345,7 +356,13 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
         // Reuse the already-compiled module (clone is cheap compared to recompilation)
         let test_module = module.clone();
 
-        match run_test_case(test_module, &test_case, RunOptions { script_dir: script_dir.clone() }) {
+        match run_test_case(
+            test_module,
+            &test_case,
+            RunOptions {
+                script_dir: script_dir.clone(),
+            },
+        ) {
             Ok(result) => results.push((test_case.function_name.clone(), result)),
             Err(e) => results.push((
                 test_case.function_name.clone(),
@@ -411,9 +428,10 @@ pub fn run_cli(program_name: &str, args: &[String]) -> anyhow::Result<TestSummar
             let path = entry.path();
             if path.is_file()
                 && let Some(file_name) = path.file_name().and_then(|n| n.to_str())
-                    && file_name.ends_with(".p7") {
-                        files.push(path);
-                    }
+                && file_name.ends_with(".p7")
+            {
+                files.push(path);
+            }
         }
     }
 
@@ -525,7 +543,10 @@ mod tests {
                 Some(ident("expected_type")),
                 Expression::StringLiteral(InternedString::from("int")),
             ),
-            (Some(ident("expected_value")), Expression::IntegerLiteral(42)),
+            (
+                Some(ident("expected_value")),
+                Expression::IntegerLiteral(42),
+            ),
         ]);
 
         assert!(matches!(

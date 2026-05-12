@@ -82,9 +82,17 @@ impl Generator {
                                 if !sub_pat.is_wildcard()
                                     && let Pattern::Identifier(id) = sub_pat
                                 {
+                                    let (field_name, field_ty) =
+                                        struct_def.fields[field_idx].clone();
+                                    self.ensure_struct_field_visible(
+                                        &struct_def,
+                                        field_idx,
+                                        &field_name,
+                                        id.line,
+                                        id.col,
+                                    )?;
                                     self.builder.dup();
                                     self.builder.ldfield(field_idx as u32);
-                                    let field_ty = struct_def.fields[field_idx].1.clone();
                                     self.bind_pattern_variable(&Some(id.clone()), field_ty)?;
                                 }
                             }
@@ -247,9 +255,16 @@ impl Generator {
                         if !sub_pat.is_wildcard()
                             && let Pattern::Identifier(id) = sub_pat
                         {
+                            let (field_name, field_ty) = struct_def.fields[field_idx].clone();
+                            self.ensure_struct_field_visible(
+                                &struct_def,
+                                field_idx,
+                                &field_name,
+                                id.line,
+                                id.col,
+                            )?;
                             self.builder.dup();
                             self.builder.ldfield(field_idx as u32);
-                            let field_ty = struct_def.fields[field_idx].1.clone();
                             self.bind_pattern_variable(&Some(id.clone()), field_ty)?;
                         }
                     }

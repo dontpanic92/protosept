@@ -227,8 +227,7 @@ impl Generator {
                     )));
                 }
 
-                let rhs_ty =
-                    self.generate_expression_with_expected_type(rhs, Some(&lhs_ty))?;
+                let rhs_ty = self.generate_expression_with_expected_type(rhs, Some(&lhs_ty))?;
                 if !self.types_compatible(&rhs_ty, &lhs_ty) {
                     return Err(SemanticError::TypeMismatch {
                         lhs: format!(
@@ -383,9 +382,15 @@ impl Generator {
                 .enumerate()
                 .find(|(_i, (fname, _))| fname == &field.name)
             {
+                self.ensure_struct_field_visible(
+                    struct_def,
+                    idx,
+                    &field.name,
+                    field.line,
+                    field.col,
+                )?;
                 let field_type = ftype.clone();
-                let rhs_ty =
-                    self.generate_expression_with_expected_type(rhs, Some(&field_type))?;
+                let rhs_ty = self.generate_expression_with_expected_type(rhs, Some(&field_type))?;
                 if !self.types_compatible(&rhs_ty, &field_type) {
                     return Err(SemanticError::TypeMismatch {
                         lhs: format!("field '{}' has type {}", field.name, field_type.to_string()),
@@ -493,7 +498,9 @@ impl Generator {
             TokenType::Equals | TokenType::NotEquals
         );
 
-        if is_equality && (matches!(left, Expression::NullLiteral) || matches!(right, Expression::NullLiteral)) {
+        if is_equality
+            && (matches!(left, Expression::NullLiteral) || matches!(right, Expression::NullLiteral))
+        {
             let left_is_null = matches!(left, Expression::NullLiteral);
             let right_is_null = matches!(right, Expression::NullLiteral);
             if left_is_null && right_is_null {
@@ -948,6 +955,7 @@ impl Generator {
             .enumerate()
             .find(|(_i, (fname, _))| fname == &field.name)
         {
+            self.ensure_struct_field_visible(struct_def, idx, &field.name, field.line, field.col)?;
             self.builder.ldfield(idx as u32);
             Ok(ftype.clone())
         } else {

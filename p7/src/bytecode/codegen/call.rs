@@ -1020,6 +1020,13 @@ impl Generator {
             })?
             .clone();
 
+        if !function_def.is_pub {
+            return Err(SemanticError::Other(format!(
+                "Method '{}.{}' is private to module '{}'",
+                type_name, field.name, module_path
+            )));
+        }
+
         // Map the return type from the imported module's type table to the current module's
         let mut type_map = std::collections::HashMap::new();
         let mapped_return_type =

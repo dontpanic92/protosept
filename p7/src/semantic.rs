@@ -158,6 +158,8 @@ impl Symbol {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Function {
     pub qualified_name: InternedString,
+    #[serde(default)]
+    pub is_pub: bool,
     pub params: Vec<Type>,
     pub param_names: Vec<InternedString>,
     #[serde(skip)]
@@ -212,6 +214,8 @@ pub struct Enum {
 pub struct Struct {
     pub qualified_name: InternedString,
     pub fields: Vec<(InternedString, Type)>,
+    #[serde(default)]
+    pub field_visibility: Vec<bool>,
     #[serde(skip)]
     pub field_defaults: Vec<Option<crate::ast::Expression>>,
     #[serde(skip)]

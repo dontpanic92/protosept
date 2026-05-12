@@ -168,11 +168,9 @@ impl Generator {
             Expression::ArrayIndex { array, index, pos } => {
                 self.generate_array_index(*array, *index, pos)
             }
-            Expression::NullLiteral => {
-                Err(SemanticError::Other(
-                    "null literal requires a nullable expected type".to_string(),
-                ))
-            }
+            Expression::NullLiteral => Err(SemanticError::Other(
+                "null literal requires a nullable expected type".to_string(),
+            )),
             Expression::ForceUnwrap { operand, token } => {
                 self.generate_force_unwrap(*operand, token)
             }

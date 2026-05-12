@@ -106,6 +106,18 @@ impl Generator {
                     pos: SourcePos::at(field_name.line, field_name.col),
                 });
             }
+            let field_index = struct_def
+                .fields
+                .iter()
+                .position(|(f, _)| *f == field_name.name)
+                .unwrap();
+            self.ensure_struct_field_visible(
+                &struct_def,
+                field_index,
+                &field_name.name,
+                field_name.line,
+                field_name.col,
+            )?;
             update_map.insert(field_name.name.clone(), expr);
         }
 

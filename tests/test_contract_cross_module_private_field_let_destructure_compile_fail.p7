@@ -1,0 +1,9 @@
+// compile_fail: imported private struct fields cannot be let-destructured
+
+import cross_module_test.types;
+
+fn test_private_field_let_destructure_contract() -> int {
+    let box = types.PrivateBox(1);
+    let types.PrivateBox(value) = box;
+    value
+}

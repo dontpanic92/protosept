@@ -1,0 +1,5 @@
+// compile_fail: parameter defaults must match the declared parameter type
+
+fn default_contract_bad_param(x: int = "not an int") -> int {
+    x
+}
