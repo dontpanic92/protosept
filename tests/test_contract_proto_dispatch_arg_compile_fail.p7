@@ -1,0 +1,18 @@
+// compile_fail: proto dynamic dispatch arguments must match the proto method signature
+
+proto ContractAdder {
+    fn add(self: ref<ContractAdder>, x: int) -> int;
+}
+
+struct[ContractAdder] ContractAdderImpl(
+    value: int,
+) {
+    pub fn add(self: ref<ContractAdderImpl>, x: int) -> int {
+        x + self.value
+    }
+}
+
+fn main() -> int {
+    let adder = box(ContractAdderImpl(1)) as box<ContractAdder>;
+    adder.add("wrong")
+}

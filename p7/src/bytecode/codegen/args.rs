@@ -61,7 +61,12 @@ impl Generator {
             let mut arg_map = std::collections::HashMap::new();
             for (name_opt, expr) in arguments.into_iter() {
                 if let Some(name) = name_opt {
-                    arg_map.insert(name.name, expr);
+                    if arg_map.insert(name.name.clone(), expr).is_some() {
+                        return Err(SemanticError::Other(format!(
+                            "Duplicate named argument '{}' provided to '{}'",
+                            name.name, call_name
+                        )));
+                    }
                 }
             }
 
@@ -188,11 +193,34 @@ impl Generator {
         Ok(())
     }
 
-    pub(crate) fn push_argument_list(&mut self, arguments: Vec<Expression>) -> SaResult<()> {
-        for expr in arguments {
-            self.generate_expression(expr)?;
+    pub(crate) fn process_positional_arguments(
+        &self,
+        call_name: &str,
+        call_line: usize,
+        call_col: usize,
+        arguments: Vec<(Option<Identifier>, Expression)>,
+        expected_count: usize,
+    ) -> SaResult<Vec<Expression>> {
+        let mut ordered_exprs = Vec::with_capacity(arguments.len());
+        for (name_opt, expr) in arguments {
+            if let Some(name) = name_opt {
+                return Err(SemanticError::Other(format!(
+                    "'{}' does not accept named argument '{}' at line {} column {}",
+                    call_name, name.name, call_line, call_col
+                )));
+            }
+            ordered_exprs.push(expr);
         }
-        Ok(())
+
+        if ordered_exprs.len() != expected_count {
+            return Err(SemanticError::TypeMismatch {
+                lhs: format!("{} args expected", expected_count),
+                rhs: format!("{} provided", ordered_exprs.len()),
+                pos: SourcePos::at(call_line, call_col),
+            });
+        }
+
+        Ok(ordered_exprs)
     }
 }
 #[cfg(test)]

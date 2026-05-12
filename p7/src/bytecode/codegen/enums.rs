@@ -49,19 +49,6 @@ impl Generator {
             });
         };
 
-        // Validate argument count
-        if arguments.len() != field_types.len() {
-            return Err(SemanticError::TypeMismatch {
-                lhs: format!(
-                    "{} arguments expected for variant '{}'",
-                    field_types.len(),
-                    variant_name
-                ),
-                rhs: format!("{} provided", arguments.len()),
-                pos: callee_expr.source_pos(),
-            });
-        }
-
         // Check if this is a payload variant
         if field_types.is_empty() {
             // Unit variant called like a function - this is an error
@@ -72,24 +59,21 @@ impl Generator {
             });
         }
 
+        let (call_line, call_col) = callee_expr.get_pos();
+        let ordered_exprs = self.process_positional_arguments(
+            &variant_name,
+            call_line,
+            call_col,
+            arguments,
+            field_types.len(),
+        )?;
+
         // For payload variants, generate code to create the enum value
         // First, push the variant index
         self.builder.ldi(variant_index as i64);
 
         // Then push all the field values
-        for (arg_opt, expected_type) in arguments.iter().zip(field_types.iter()) {
-            let arg_expr = &arg_opt.1;
-            let arg_type = self.generate_expression(arg_expr.clone())?;
-
-            // Type check the argument
-            if !self.types_compatible(&arg_type, expected_type) {
-                return Err(SemanticError::TypeMismatch {
-                    lhs: arg_type.to_string(),
-                    rhs: expected_type.to_string(),
-                    pos: callee_expr.source_pos(),
-                });
-            }
-        }
+        self.push_typed_argument_list(ordered_exprs, &field_types, call_line, call_col)?;
 
         // Create the enum value with the variant index and fields
         // We represent enum values as structs where the first field is the variant index

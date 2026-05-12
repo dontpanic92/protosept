@@ -43,7 +43,12 @@ impl Generator {
             &field_defaults,
         )?;
 
-        self.push_argument_list(ordered_exprs)?;
+        let field_types: Vec<Type> = struct_def
+            .fields
+            .iter()
+            .map(|(_, field_type)| field_type.clone())
+            .collect();
+        self.push_typed_argument_list(ordered_exprs, &field_types, call_line, call_col)?;
         self.builder.newstruct(struct_def.fields.len() as u32);
 
         Ok(Type::Struct(type_id))

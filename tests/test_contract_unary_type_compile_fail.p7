@@ -1,0 +1,5 @@
+// compile_fail: logical not requires a bool operand
+
+fn main() -> bool {
+    !1
+}

@@ -133,18 +133,7 @@ impl Generator {
             &function_def.param_defaults,
         )?;
 
-        // Generate argument evaluation with move tracking
-        for expr in ordered_exprs {
-            let move_info = self.compute_move_info(&expr);
-            self.generate_expression(expr)?;
-            if let Some((id, is_param)) = move_info {
-                if is_param {
-                    self.mark_param_moved(id);
-                } else {
-                    self.mark_variable_moved(id);
-                }
-            }
-        }
+        self.push_typed_argument_list(ordered_exprs, &function_def.params, base.line, base.col)?;
 
         self.builder.call(symbol_id);
         Ok(ret_type)
@@ -471,18 +460,13 @@ impl Generator {
             &function_def.param_defaults,
         )?;
 
-        // Generate argument evaluation with move tracking
-        for expr in ordered_exprs {
-            let move_info = self.compute_move_info(&expr);
-            self.generate_expression(expr)?;
-            if let Some((id, is_param)) = move_info {
-                if is_param {
-                    self.mark_param_moved(id);
-                } else {
-                    self.mark_variable_moved(id);
-                }
-            }
-        }
+        let mut type_map = std::collections::HashMap::new();
+        let mapped_params: Vec<Type> = function_def
+            .params
+            .iter()
+            .map(|p| self.map_type_from_module(&imported_module, p, &mut type_map))
+            .collect::<SaResult<Vec<_>>>()?;
+        self.push_typed_argument_list(ordered_exprs, &mapped_params, call_line, call_col)?;
 
         // Check if this is an intrinsic function
         if let Some(intrinsic_name) = &function_def.intrinsic_name {
@@ -686,13 +670,15 @@ impl Generator {
                 pos: field.pos(),
             })?;
 
-        // Process arguments (skip first param which is self)
-        if !method_params.is_empty() {
-            for arg in arguments {
-                let (_, expr) = arg;
-                self.generate_expression(expr)?;
-            }
-        }
+        let expected_params = method_params.get(1..).unwrap_or(&[]);
+        let ordered_exprs = self.process_positional_arguments(
+            &format!("proto method {}", field.name),
+            field.line,
+            field.col,
+            arguments,
+            expected_params.len(),
+        )?;
+        self.push_typed_argument_list(ordered_exprs, expected_params, field.line, field.col)?;
 
         // Hash the method name
         let mut hasher = DefaultHasher::new();
@@ -1078,17 +1064,21 @@ impl Generator {
             if let Some(var_id) = scope.find_variable(&call_name) {
                 let var_type = scope.get_variable_type(var_id).clone();
                 if let Type::Function {
-                    params: _,
+                    params,
                     return_type,
                 } = var_type
                 {
                     // Load the closure value first (it sits below the arguments on the stack)
                     self.builder.ldvar(var_id);
-                    // Generate arguments
-                    let arg_count = arguments.len() as u32;
-                    for (_, arg_expr) in arguments {
-                        self.generate_expression(arg_expr)?;
-                    }
+                    let ordered_exprs = self.process_positional_arguments(
+                        &call_name,
+                        call_line,
+                        call_col,
+                        arguments,
+                        params.len(),
+                    )?;
+                    self.push_typed_argument_list(ordered_exprs, &params, call_line, call_col)?;
+                    let arg_count = params.len() as u32;
                     // Call it
                     self.builder.call_closure(arg_count);
                     return Ok(*return_type);
@@ -1097,15 +1087,20 @@ impl Generator {
             if let Some(param_id) = scope.find_param(&call_name) {
                 let param_type = scope.get_param_type(param_id).clone();
                 if let Type::Function {
-                    params: _,
+                    params,
                     return_type,
                 } = param_type
                 {
                     self.builder.ldpar(param_id);
-                    let arg_count = arguments.len() as u32;
-                    for (_, arg_expr) in arguments {
-                        self.generate_expression(arg_expr)?;
-                    }
+                    let ordered_exprs = self.process_positional_arguments(
+                        &call_name,
+                        call_line,
+                        call_col,
+                        arguments,
+                        params.len(),
+                    )?;
+                    self.push_typed_argument_list(ordered_exprs, &params, call_line, call_col)?;
+                    let arg_count = params.len() as u32;
                     self.builder.call_closure(arg_count);
                     return Ok(*return_type);
                 }

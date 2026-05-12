@@ -1,0 +1,5 @@
+// compile_fail: arithmetic operators require numeric operands
+
+fn main() -> int {
+    true + false
+}

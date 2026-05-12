@@ -1,41 +1,41 @@
 // Test string comparison operators
 import test.test;
 
-@test(expected_type = "int", expected_value = "1")
-fn test_string_eq_literal_true() -> int {
+@test(expected_type = "bool", expected_value = "true")
+fn test_string_eq_literal_true() -> bool {
     "alpha" == "alpha"
 }
 
-@test(expected_type = "int", expected_value = "0")
-fn test_string_eq_literal_false() -> int {
+@test(expected_type = "bool", expected_value = "false")
+fn test_string_eq_literal_false() -> bool {
     "alpha" == "beta"
 }
 
-@test(expected_type = "int", expected_value = "1")
-fn test_string_neq_literal_true() -> int {
+@test(expected_type = "bool", expected_value = "true")
+fn test_string_neq_literal_true() -> bool {
     "alpha" != "beta"
 }
 
-@test(expected_type = "int", expected_value = "0")
-fn test_string_neq_literal_false() -> int {
+@test(expected_type = "bool", expected_value = "false")
+fn test_string_neq_literal_false() -> bool {
     "alpha" != "alpha"
 }
 
-@test(expected_type = "int", expected_value = "1")
-fn test_string_eq_variables() -> int {
+@test(expected_type = "bool", expected_value = "true")
+fn test_string_eq_variables() -> bool {
     let a = "hello";
     let b = "hello";
     a == b
 }
 
-@test(expected_type = "int", expected_value = "1")
-fn test_string_neq_variables() -> int {
+@test(expected_type = "bool", expected_value = "true")
+fn test_string_neq_variables() -> bool {
     let a = "hello";
     let b = "world";
     a != b
 }
 
-@test(expected_type = "int", expected_value = "1")
-fn test_string_eq_empty() -> int {
+@test(expected_type = "bool", expected_value = "true")
+fn test_string_eq_empty() -> bool {
     "" == ""
 }

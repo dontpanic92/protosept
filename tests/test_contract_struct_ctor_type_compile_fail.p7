@@ -1,0 +1,10 @@
+// compile_fail: struct constructor field arguments must match declared field types
+
+struct ContractPoint(
+    x: int,
+);
+
+fn main() -> int {
+    let p = ContractPoint("wrong");
+    p.x
+}

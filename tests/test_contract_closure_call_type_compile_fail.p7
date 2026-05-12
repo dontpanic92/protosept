@@ -1,0 +1,6 @@
+// compile_fail: closure call arguments must match the function type parameters
+
+fn main() -> int {
+    let f = (x: int) => x;
+    f("wrong")
+}

@@ -1,0 +1,9 @@
+// compile_fail: generic function arguments must match monomorphized parameter types
+
+fn contract_identity<T>(x: T) -> T {
+    return x;
+}
+
+fn main() -> int {
+    contract_identity<int>("wrong")
+}

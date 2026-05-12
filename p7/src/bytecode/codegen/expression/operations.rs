@@ -17,10 +17,22 @@ impl Generator {
         let ty = self.generate_expression(right)?;
         match operator.token_type {
             TokenType::Minus => {
+                if !matches!(
+                    ty,
+                    Type::Primitive(PrimitiveType::Int) | Type::Primitive(PrimitiveType::Float)
+                ) {
+                    return Err(self.type_mismatch_error(
+                        ty.to_string(),
+                        "numeric type".to_string(),
+                        operator.line,
+                        operator.col,
+                    ));
+                }
                 self.builder.neg();
                 Ok(ty)
             }
             TokenType::Not | TokenType::Exclamation => {
+                self.expect_bool_type(&ty, operator.line, operator.col)?;
                 self.builder.not();
                 Ok(Type::Primitive(PrimitiveType::Bool))
             }
@@ -500,33 +512,57 @@ impl Generator {
                 | TokenType::GreaterThanOrEqual
                 | TokenType::LessThan
                 | TokenType::LessThanOrEqual
-                | TokenType::And
-                | TokenType::Or
         );
         let is_equality = matches!(
             operator.token_type,
             TokenType::Equals | TokenType::NotEquals
         );
+        let is_logical = matches!(operator.token_type, TokenType::And | TokenType::Or);
+        let is_arithmetic = matches!(
+            operator.token_type,
+            TokenType::Plus
+                | TokenType::Minus
+                | TokenType::Multiply
+                | TokenType::Divide
+                | TokenType::Percent
+        );
 
-        let result_ty = if lhs_ty == rhs_ty {
-            lhs_ty.clone()
-        } else {
-            match (&lhs_ty, &rhs_ty) {
-                // Allow implicit int <-> float promotion
-                (Type::Primitive(PrimitiveType::Int), Type::Primitive(PrimitiveType::Float))
-                | (Type::Primitive(PrimitiveType::Float), Type::Primitive(PrimitiveType::Int)) => {
-                    Type::Primitive(PrimitiveType::Float)
-                }
-                // Allow null comparisons: ?T == null or null == ?T
-                (Type::Nullable(_), Type::Nullable(_)) if is_equality => lhs_ty.clone(),
-                // Allow string + string for concatenation
-                (
-                    Type::Primitive(PrimitiveType::String),
-                    Type::Primitive(PrimitiveType::String),
-                ) if operator.token_type == TokenType::Plus => {
-                    Type::Primitive(PrimitiveType::String)
-                }
-                _ => {
+        let numeric_result = |lhs: &Type, rhs: &Type| match (lhs, rhs) {
+            (Type::Primitive(PrimitiveType::Int), Type::Primitive(PrimitiveType::Int)) => {
+                Some(Type::Primitive(PrimitiveType::Int))
+            }
+            (Type::Primitive(PrimitiveType::Int), Type::Primitive(PrimitiveType::Float))
+            | (Type::Primitive(PrimitiveType::Float), Type::Primitive(PrimitiveType::Int))
+            | (Type::Primitive(PrimitiveType::Float), Type::Primitive(PrimitiveType::Float)) => {
+                Some(Type::Primitive(PrimitiveType::Float))
+            }
+            _ => None,
+        };
+
+        let nullable_equality_compatible = |lhs: &Type, rhs: &Type| match (lhs, rhs) {
+            (Type::Nullable(lhs_inner), Type::Nullable(rhs_inner)) => {
+                matches!(lhs_inner.as_ref(), Type::Primitive(PrimitiveType::Unit))
+                    || matches!(rhs_inner.as_ref(), Type::Primitive(PrimitiveType::Unit))
+                    || self.types_compatible(lhs_inner, rhs_inner)
+                    || self.types_compatible(rhs_inner, lhs_inner)
+            }
+            _ => false,
+        };
+
+        let result_ty = if is_logical {
+            self.expect_bool_type(&lhs_ty, operator.line, operator.col)?;
+            self.expect_bool_type(&rhs_ty, operator.line, operator.col)?;
+            Type::Primitive(PrimitiveType::Bool)
+        } else if is_arithmetic {
+            if operator.token_type == TokenType::Plus
+                && lhs_ty == Type::Primitive(PrimitiveType::String)
+                && rhs_ty == Type::Primitive(PrimitiveType::String)
+            {
+                Type::Primitive(PrimitiveType::String)
+            } else if operator.token_type == TokenType::Percent {
+                if lhs_ty != Type::Primitive(PrimitiveType::Int)
+                    || rhs_ty != Type::Primitive(PrimitiveType::Int)
+                {
                     return Err(self.type_mismatch_error(
                         lhs_ty.to_string(),
                         rhs_ty.to_string(),
@@ -534,7 +570,51 @@ impl Generator {
                         operator.col,
                     ));
                 }
+                Type::Primitive(PrimitiveType::Int)
+            } else if let Some(result) = numeric_result(&lhs_ty, &rhs_ty) {
+                result
+            } else {
+                return Err(self.type_mismatch_error(
+                    lhs_ty.to_string(),
+                    rhs_ty.to_string(),
+                    operator.line,
+                    operator.col,
+                ));
             }
+        } else if is_equality {
+            if lhs_ty == rhs_ty
+                || self.types_compatible(&lhs_ty, &rhs_ty)
+                || self.types_compatible(&rhs_ty, &lhs_ty)
+                || nullable_equality_compatible(&lhs_ty, &rhs_ty)
+            {
+                Type::Primitive(PrimitiveType::Bool)
+            } else {
+                return Err(self.type_mismatch_error(
+                    lhs_ty.to_string(),
+                    rhs_ty.to_string(),
+                    operator.line,
+                    operator.col,
+                ));
+            }
+        } else if is_comparison {
+            if numeric_result(&lhs_ty, &rhs_ty).is_none() {
+                return Err(self.type_mismatch_error(
+                    lhs_ty.to_string(),
+                    rhs_ty.to_string(),
+                    operator.line,
+                    operator.col,
+                ));
+            }
+            Type::Primitive(PrimitiveType::Bool)
+        } else if lhs_ty == rhs_ty {
+            lhs_ty.clone()
+        } else {
+            return Err(self.type_mismatch_error(
+                lhs_ty.to_string(),
+                rhs_ty.to_string(),
+                operator.line,
+                operator.col,
+            ));
         };
 
         // For string + string, emit concat intrinsic instead of Add instruction

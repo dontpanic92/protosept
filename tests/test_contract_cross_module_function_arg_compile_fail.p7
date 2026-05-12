@@ -1,0 +1,8 @@
+// compile_fail: imported module function arguments must be checked after type remapping
+
+import cross_module_test.types;
+
+fn main() -> int {
+    let p = types.make_pos("wrong", 2);
+    p.row
+}
