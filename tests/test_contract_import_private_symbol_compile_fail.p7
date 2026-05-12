@@ -1,0 +1,8 @@
+// compile_fail: direct import of a private symbol is rejected
+
+import cross_module_test.types.HiddenStruct;
+
+fn test_import_private_symbol_contract() -> int {
+    let hidden = HiddenStruct(1);
+    hidden.value
+}

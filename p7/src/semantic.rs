@@ -190,6 +190,8 @@ pub struct Function {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Enum {
     pub qualified_name: InternedString,
+    #[serde(default)]
+    pub is_pub: bool,
     pub variants: Vec<(InternedString, Vec<Type>)>, // (variant_name, field_types)
     #[serde(skip)]
     pub attributes: Vec<crate::ast::Attribute>,
@@ -213,6 +215,8 @@ pub struct Enum {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Struct {
     pub qualified_name: InternedString,
+    #[serde(default)]
+    pub is_pub: bool,
     pub fields: Vec<(InternedString, Type)>,
     #[serde(default)]
     pub field_visibility: Vec<bool>,
@@ -240,6 +244,8 @@ pub struct Struct {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Proto {
     pub qualified_name: InternedString,
+    #[serde(default)]
+    pub is_pub: bool,
     pub methods: Vec<(InternedString, Vec<Type>, Option<Type>)>, // (name, params, return_type)
     #[serde(skip)]
     pub attributes: Vec<crate::ast::Attribute>,

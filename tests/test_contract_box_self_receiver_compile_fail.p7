@@ -1,0 +1,13 @@
+// compile_fail: box self methods require a box<T> receiver
+
+struct ContractBoxReceiver(value: int) {
+    fn mutate(box self) {
+        self.value = self.value + 1;
+    }
+}
+
+fn test_box_receiver_contract() -> int {
+    let value = ContractBoxReceiver(1);
+    value.mutate();
+    0
+}

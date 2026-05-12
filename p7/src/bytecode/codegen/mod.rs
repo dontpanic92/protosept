@@ -103,7 +103,36 @@ impl Generator {
         let module = self.imported_modules.get(module_path)?;
         let root = module.symbols.first()?;
         let child_id = root.children.get(member)?;
-        module.symbols.get(*child_id as usize)
+        let symbol = module.symbols.get(*child_id as usize)?;
+        self.imported_symbol_is_public(module, symbol)
+            .then_some(symbol)
+    }
+
+    pub(super) fn imported_symbol_is_public(
+        &self,
+        module: &Module,
+        symbol: &crate::semantic::Symbol,
+    ) -> bool {
+        match symbol.kind {
+            SymbolKind::Function { func_id, .. } => module
+                .functions
+                .get(func_id as usize)
+                .is_some_and(|function| function.is_pub),
+            SymbolKind::Type(type_id) => module
+                .types
+                .get(type_id as usize)
+                .is_some_and(Self::type_definition_is_public),
+            SymbolKind::Module(_) => true,
+            SymbolKind::Constant(_) | SymbolKind::HostMethod { .. } => false,
+        }
+    }
+
+    pub(super) fn type_definition_is_public(type_def: &TypeDefinition) -> bool {
+        match type_def {
+            TypeDefinition::Struct(s) => s.is_pub,
+            TypeDefinition::Enum(e) => e.is_pub,
+            TypeDefinition::Proto(p) => p.is_pub,
+        }
     }
 
     /// Resolve a pub module-level variable from an imported module by name

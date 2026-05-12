@@ -112,6 +112,7 @@ impl Generator {
         // Create the monomorphized struct
         let monomorphized_struct = Struct {
             qualified_name: monomorphized_name,
+            is_pub: base_struct.is_pub,
             fields: monomorphized_fields,
             field_visibility: base_struct.field_visibility.clone(),
             field_defaults: base_struct.field_defaults.clone(),
@@ -237,6 +238,7 @@ impl Generator {
         // Create the monomorphized enum
         let monomorphized_enum = Enum {
             qualified_name: monomorphized_name,
+            is_pub: base_enum.is_pub,
             variants: monomorphized_variants,
             attributes: base_enum.attributes.clone(),
             type_parameters: Vec::new(), // Monomorphized enums have no type parameters

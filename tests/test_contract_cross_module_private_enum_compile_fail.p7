@@ -1,0 +1,10 @@
+// compile_fail: imported private top-level enums cannot be named or constructed
+
+import cross_module_test.types;
+
+fn test_private_enum_contract() -> int {
+    let hidden = types.HiddenEnum.Value(1);
+    match hidden {
+        types.HiddenEnum.Value(value) => value,
+    }
+}

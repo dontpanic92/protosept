@@ -109,6 +109,13 @@ impl Generator {
                 }
             })?;
 
+            if !self.imported_symbol_is_public(&module, member) {
+                return Err(SemanticError::TypeNotFound {
+                    name: name.to_string(),
+                    pos: SourcePos::at(line, col),
+                });
+            }
+
             match member.kind {
                 SymbolKind::Type(type_id) => (type_id, member.qualified_name.clone()),
                 _ => {

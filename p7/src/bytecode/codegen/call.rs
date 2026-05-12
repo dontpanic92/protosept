@@ -20,6 +20,56 @@ impl Generator {
             .is_some_and(|name| name.as_str() == "self")
     }
 
+    fn receiver_compatible(actual: &Type, expected: &Type) -> bool {
+        match expected {
+            Type::BoxType(expected_inner) => {
+                matches!(actual, Type::BoxType(actual_inner) if actual_inner.as_ref() == expected_inner.as_ref())
+            }
+            Type::Reference(expected_inner) => match actual {
+                Type::Reference(actual_inner)
+                | Type::MutableReference(actual_inner)
+                | Type::BoxType(actual_inner) => actual_inner.as_ref() == expected_inner.as_ref(),
+                other => other == expected_inner.as_ref(),
+            },
+            Type::MutableReference(expected_inner) => match actual {
+                Type::MutableReference(actual_inner) | Type::BoxType(actual_inner) => {
+                    actual_inner.as_ref() == expected_inner.as_ref()
+                }
+                other => other == expected_inner.as_ref(),
+            },
+            other => actual == other,
+        }
+    }
+
+    fn validate_receiver_type(
+        &self,
+        object_ty: &Type,
+        function_def: &crate::semantic::Function,
+        method_name: &str,
+        line: usize,
+        col: usize,
+    ) -> SaResult<()> {
+        let Some(expected_receiver) = function_def.params.first() else {
+            return Err(SemanticError::Other(format!(
+                "Method '{}' has no receiver parameter at line {} column {}",
+                method_name, line, col
+            )));
+        };
+
+        if !Self::receiver_compatible(object_ty, expected_receiver) {
+            return Err(SemanticError::TypeMismatch {
+                lhs: format!("receiver type {}", self.type_to_string(expected_receiver)),
+                rhs: format!(
+                    "receiver expression type {}",
+                    self.type_to_string(object_ty)
+                ),
+                pos: SourcePos::at(line, col),
+            });
+        }
+
+        Ok(())
+    }
+
     /// Main entry point for generating function calls.
     /// Dispatches to specialized handlers based on the callee expression type.
     pub(crate) fn generate_function_call(&mut self, call: FunctionCall) -> SaResult<Type> {
@@ -826,6 +876,13 @@ impl Generator {
                     field.name
                 )));
             }
+            self.validate_receiver_type(
+                object_ty,
+                &function_def,
+                &field.name,
+                field.line,
+                field.col,
+            )?;
 
             // Local method — emit Call(symbol_id)
             let param_names_full = &function_def.param_names;
@@ -876,6 +933,30 @@ impl Generator {
             )));
         }
 
+        // Map parameter types from source module
+        let imported_module = self
+            .imported_modules
+            .get(&source_module_path)
+            .unwrap()
+            .clone();
+        let mut type_map = std::collections::HashMap::new();
+        let mapped_params_full: Vec<Type> = function_def
+            .params
+            .iter()
+            .map(|p| self.map_type_from_module(&imported_module, p, &mut type_map))
+            .collect::<SaResult<Vec<_>>>()?;
+
+        self.validate_receiver_type(
+            object_ty,
+            &crate::semantic::Function {
+                params: mapped_params_full.clone(),
+                ..function_def.clone()
+            },
+            &field.name,
+            field.line,
+            field.col,
+        )?;
+
         let ordered_exprs = self.process_arguments(
             &format!("{}.{}", type_name, field.name),
             field.line,
@@ -885,19 +966,12 @@ impl Generator {
             &param_defaults_full[1..],
         )?;
 
-        // Map parameter types from source module
-        let imported_module = self
-            .imported_modules
-            .get(&source_module_path)
-            .unwrap()
-            .clone();
-        let mut type_map = std::collections::HashMap::new();
-        let mapped_params: Vec<Type> = function_def.params[1..]
-            .iter()
-            .map(|p| self.map_type_from_module(&imported_module, p, &mut type_map))
-            .collect::<SaResult<Vec<_>>>()?;
-
-        self.push_typed_argument_list(ordered_exprs, &mapped_params, field.line, field.col)?;
+        self.push_typed_argument_list(
+            ordered_exprs,
+            &mapped_params_full[1..],
+            field.line,
+            field.col,
+        )?;
 
         // Emit CallExternal for cross-module method call
         let module_path_idx = self.add_string_constant(&source_module_path);

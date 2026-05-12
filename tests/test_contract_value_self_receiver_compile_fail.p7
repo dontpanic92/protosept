@@ -1,0 +1,12 @@
+// compile_fail: value self methods require a value receiver, not box<T>
+
+struct ContractValueReceiver(value: int) {
+    fn consume(self) -> int {
+        self.value
+    }
+}
+
+fn test_value_receiver_contract() -> int {
+    let value = box(ContractValueReceiver(1));
+    value.consume()
+}

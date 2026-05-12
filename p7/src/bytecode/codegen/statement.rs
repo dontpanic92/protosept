@@ -496,6 +496,7 @@ impl Generator {
 
         let ty = Enum {
             qualified_name: qualified_name.clone(),
+            is_pub,
             variants: Vec::new(),
             attributes: attributes.clone(),
             type_parameters: type_param_names,
@@ -597,6 +598,7 @@ impl Generator {
 
         let ty = Enum {
             qualified_name: qualified_name.clone(),
+            is_pub,
             variants,
             attributes: attributes.clone(),
             type_parameters: type_param_names.clone(),
@@ -689,6 +691,7 @@ impl Generator {
 
         let ty = Struct {
             qualified_name: qualified_name.clone(),
+            is_pub,
             fields: Vec::new(),
             field_visibility: Vec::new(),
             field_defaults: Vec::new(),
@@ -830,6 +833,7 @@ impl Generator {
 
         let ty = Struct {
             qualified_name: qualified_name.clone(),
+            is_pub,
             fields: fields_with_types,
             field_visibility,
             field_defaults,
@@ -893,6 +897,7 @@ impl Generator {
         let qualified_name = self.symbol_table.get_new_symbol_qualified_name(&name.name);
         let ty = Proto {
             qualified_name: qualified_name.clone(),
+            is_pub,
             methods: vec![],
             attributes: attributes.clone(),
             foreign_type_tag: None,
@@ -958,6 +963,7 @@ impl Generator {
         let foreign_attrs = Self::extract_foreign_attrs(&attributes)?;
         let ty = Proto {
             qualified_name: qualified_name.clone(),
+            is_pub,
             methods: methods_with_types.clone(),
             attributes: attributes.clone(),
             foreign_type_tag: foreign_attrs.as_ref().and_then(|f| f.type_tag.clone()),
@@ -1046,6 +1052,7 @@ impl Generator {
 
         let carrier_struct = Struct {
             qualified_name: carrier_qualified_name.clone(),
+            is_pub: false,
             fields: Vec::new(),
             field_visibility: Vec::new(),
             field_defaults: Vec::new(),
@@ -1276,6 +1283,13 @@ impl Generator {
         if let Some(sym_id) = root.children.get(symbol_name.as_str())
             && let Some(sym) = imported_parent.symbols.get(*sym_id as usize)
         {
+            if !self.imported_symbol_is_public(&imported_parent, sym) {
+                return Err(SemanticError::Other(format!(
+                    "Symbol '{}' in module '{}' is private",
+                    symbol_name, parent_path
+                )));
+            }
+
             let resolved_kind = match sym.kind {
                 SymbolKind::Type(imported_type_id) => {
                     if let Some(existing_symbol) = self
@@ -1374,6 +1388,7 @@ impl Generator {
         let stub_def: TypeDefinition = match type_def {
             TypeDefinition::Struct(s) => TypeDefinition::Struct(Struct {
                 qualified_name: s.qualified_name.clone(),
+                is_pub: s.is_pub,
                 fields: Vec::new(),
                 field_visibility: s.field_visibility.clone(),
                 field_defaults: Vec::new(),
@@ -1388,6 +1403,7 @@ impl Generator {
             }),
             TypeDefinition::Enum(e) => TypeDefinition::Enum(Enum {
                 qualified_name: e.qualified_name.clone(),
+                is_pub: e.is_pub,
                 variants: Vec::new(),
                 attributes: e.attributes.clone(),
                 type_parameters: e.type_parameters.clone(),
@@ -1400,6 +1416,7 @@ impl Generator {
             }),
             TypeDefinition::Proto(p) => TypeDefinition::Proto(Proto {
                 qualified_name: p.qualified_name.clone(),
+                is_pub: p.is_pub,
                 methods: Vec::new(),
                 attributes: p.attributes.clone(),
                 foreign_type_tag: p.foreign_type_tag.clone(),
@@ -1445,6 +1462,7 @@ impl Generator {
 
                 TypeDefinition::Struct(Struct {
                     qualified_name: s.qualified_name.clone(),
+                    is_pub: s.is_pub,
                     fields,
                     field_visibility: s.field_visibility.clone(),
                     field_defaults: s.field_defaults.clone(),
@@ -1479,6 +1497,7 @@ impl Generator {
 
                 TypeDefinition::Enum(Enum {
                     qualified_name: e.qualified_name.clone(),
+                    is_pub: e.is_pub,
                     variants,
                     attributes: e.attributes.clone(),
                     type_parameters: e.type_parameters.clone(),
@@ -1509,6 +1528,7 @@ impl Generator {
 
                 TypeDefinition::Proto(Proto {
                     qualified_name: p.qualified_name.clone(),
+                    is_pub: p.is_pub,
                     methods,
                     attributes: p.attributes.clone(),
                     foreign_type_tag: p.foreign_type_tag.clone(),
@@ -1607,6 +1627,7 @@ impl Generator {
 
         let carrier_struct = Struct {
             qualified_name: carrier_qualified_name.clone(),
+            is_pub: false,
             fields: Vec::new(),
             field_visibility: Vec::new(),
             field_defaults: Vec::new(),

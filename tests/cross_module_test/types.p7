@@ -33,6 +33,12 @@ pub struct PrivateBox(
     }
 }
 
+struct HiddenStruct(pub value: int);
+
+enum HiddenEnum(
+    Value: int,
+);
+
 pub enum Direction(Up, Down, Left, Right) {
     pub fn is_vertical(ref self) -> bool {
         match self {
@@ -69,6 +75,10 @@ pub fn make_pos(r: int, c: int) -> Pos {
 
 pub fn get_row(p: Pos) -> int {
     return p.row;
+}
+
+fn hidden_function() -> int {
+    123
 }
 
 // Public module-level bindings (accessible cross-module)
