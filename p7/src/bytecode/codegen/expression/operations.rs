@@ -165,7 +165,7 @@ impl Generator {
             }
         };
 
-        let rhs_ty = self.generate_expression(right)?;
+        let rhs_ty = self.generate_expression_with_expected_type(right, Some(&inner_ty))?;
 
         // RHS must be compatible with inner type
         if !self.types_compatible(&rhs_ty, &inner_ty) {
@@ -479,6 +479,52 @@ impl Generator {
         operator: Token,
         right: Expression,
     ) -> SaResult<Type> {
+        let is_comparison = matches!(
+            operator.token_type,
+            TokenType::Equals
+                | TokenType::NotEquals
+                | TokenType::GreaterThan
+                | TokenType::GreaterThanOrEqual
+                | TokenType::LessThan
+                | TokenType::LessThanOrEqual
+        );
+        let is_equality = matches!(
+            operator.token_type,
+            TokenType::Equals | TokenType::NotEquals
+        );
+
+        if is_equality && (matches!(left, Expression::NullLiteral) || matches!(right, Expression::NullLiteral)) {
+            let left_is_null = matches!(left, Expression::NullLiteral);
+            let right_is_null = matches!(right, Expression::NullLiteral);
+            if left_is_null && right_is_null {
+                return Err(SemanticError::Other(format!(
+                    "Cannot compare two bare null literals at line {} column {}",
+                    operator.line, operator.col
+                )));
+            }
+
+            let non_null_ty = if left_is_null {
+                self.builder.ldnull();
+                self.generate_expression(right)?
+            } else {
+                let ty = self.generate_expression(left)?;
+                self.builder.ldnull();
+                ty
+            };
+
+            if !matches!(non_null_ty, Type::Nullable(_)) {
+                return Err(self.type_mismatch_error(
+                    non_null_ty.to_string(),
+                    "nullable type".to_string(),
+                    operator.line,
+                    operator.col,
+                ));
+            }
+
+            self.emit_binary_instruction(&operator.token_type);
+            return Ok(Type::Primitive(PrimitiveType::Bool));
+        }
+
         let lhs_ty = self.generate_expression(left)?;
         let rhs_ty = self.generate_expression(right)?;
 
@@ -506,20 +552,6 @@ impl Generator {
             self.emit_binary_instruction(&operator.token_type);
             return Ok(Type::Primitive(PrimitiveType::Int));
         }
-
-        let is_comparison = matches!(
-            operator.token_type,
-            TokenType::Equals
-                | TokenType::NotEquals
-                | TokenType::GreaterThan
-                | TokenType::GreaterThanOrEqual
-                | TokenType::LessThan
-                | TokenType::LessThanOrEqual
-        );
-        let is_equality = matches!(
-            operator.token_type,
-            TokenType::Equals | TokenType::NotEquals
-        );
         let is_logical = matches!(operator.token_type, TokenType::And | TokenType::Or);
         let is_arithmetic = matches!(
             operator.token_type,

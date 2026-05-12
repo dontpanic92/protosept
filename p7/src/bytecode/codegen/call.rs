@@ -13,6 +13,13 @@ use super::{Generator, SaResult};
 type CallArgs = Vec<(Option<Identifier>, Expression)>;
 
 impl Generator {
+    fn method_has_self_receiver(function_def: &crate::semantic::Function) -> bool {
+        function_def
+            .param_names
+            .first()
+            .is_some_and(|name| name.as_str() == "self")
+    }
+
     /// Main entry point for generating function calls.
     /// Dispatches to specialized handlers based on the callee expression type.
     pub(crate) fn generate_function_call(&mut self, call: FunctionCall) -> SaResult<Type> {
@@ -562,6 +569,13 @@ impl Generator {
         let function_def = self.symbol_table.get_function(func_id).clone();
         let ret_type = function_def.return_type.clone();
 
+        if Self::method_has_self_receiver(&function_def) {
+            return Err(SemanticError::Other(format!(
+                "Instance method '{}.{}' cannot be called as a static method",
+                ident.name, field.name
+            )));
+        }
+
         let ordered_exprs = self.process_arguments(
             &format!("{}.{}", ident.name, field.name),
             field.line,
@@ -784,8 +798,8 @@ impl Generator {
         object_ty: &Type,
         field: &Identifier,
         arguments: CallArgs,
-        call_line: usize,
-        call_col: usize,
+        _call_line: usize,
+        _call_col: usize,
     ) -> SaResult<Type> {
         // Extract the type_id for source_module lookup (works for both struct and enum)
         let type_id_opt = match object_ty {
@@ -806,21 +820,16 @@ impl Generator {
             type_symbol_id.and_then(|sym_id| self.resolve_method(sym_id, field).ok());
 
         if let Some((method_symbol_id, function_def)) = local_result {
+            if !Self::method_has_self_receiver(&function_def) {
+                return Err(SemanticError::Other(format!(
+                    "Static method '{}' cannot be called as an instance method",
+                    field.name
+                )));
+            }
+
             // Local method — emit Call(symbol_id)
             let param_names_full = &function_def.param_names;
             let param_defaults_full = &function_def.param_defaults;
-
-            if param_names_full.is_empty() {
-                if !arguments.is_empty() {
-                    return Err(SemanticError::TypeMismatch {
-                        lhs: "0 args expected".to_string(),
-                        rhs: format!("{} provided", arguments.len()),
-                        pos: SourcePos::at(call_line, call_col),
-                    });
-                }
-                self.builder.call(method_symbol_id);
-                return Ok(function_def.return_type.clone());
-            }
 
             let type_symbol = self
                 .symbol_table
@@ -860,38 +869,35 @@ impl Generator {
         let param_names_full = &function_def.param_names;
         let param_defaults_full = &function_def.param_defaults;
 
-        if param_names_full.is_empty() {
-            if !arguments.is_empty() {
-                return Err(SemanticError::TypeMismatch {
-                    lhs: "0 args expected".to_string(),
-                    rhs: format!("{} provided", arguments.len()),
-                    pos: SourcePos::at(call_line, call_col),
-                });
-            }
-        } else {
-            let ordered_exprs = self.process_arguments(
-                &format!("{}.{}", type_name, field.name),
-                field.line,
-                field.col,
-                arguments,
-                &param_names_full[1..],
-                &param_defaults_full[1..],
-            )?;
-
-            // Map parameter types from source module
-            let imported_module = self
-                .imported_modules
-                .get(&source_module_path)
-                .unwrap()
-                .clone();
-            let mut type_map = std::collections::HashMap::new();
-            let mapped_params: Vec<Type> = function_def.params[1..]
-                .iter()
-                .map(|p| self.map_type_from_module(&imported_module, p, &mut type_map))
-                .collect::<SaResult<Vec<_>>>()?;
-
-            self.push_typed_argument_list(ordered_exprs, &mapped_params, field.line, field.col)?;
+        if !Self::method_has_self_receiver(&function_def) {
+            return Err(SemanticError::Other(format!(
+                "Static method '{}.{}' cannot be called as an instance method",
+                type_name, field.name
+            )));
         }
+
+        let ordered_exprs = self.process_arguments(
+            &format!("{}.{}", type_name, field.name),
+            field.line,
+            field.col,
+            arguments,
+            &param_names_full[1..],
+            &param_defaults_full[1..],
+        )?;
+
+        // Map parameter types from source module
+        let imported_module = self
+            .imported_modules
+            .get(&source_module_path)
+            .unwrap()
+            .clone();
+        let mut type_map = std::collections::HashMap::new();
+        let mapped_params: Vec<Type> = function_def.params[1..]
+            .iter()
+            .map(|p| self.map_type_from_module(&imported_module, p, &mut type_map))
+            .collect::<SaResult<Vec<_>>>()?;
+
+        self.push_typed_argument_list(ordered_exprs, &mapped_params, field.line, field.col)?;
 
         // Emit CallExternal for cross-module method call
         let module_path_idx = self.add_string_constant(&source_module_path);
@@ -1338,6 +1344,13 @@ impl Generator {
     ) -> SaResult<Type> {
         let (source_module_path, type_name, function_def, mapped_return_type) =
             self.resolve_external_method(type_id, field)?;
+
+        if Self::method_has_self_receiver(&function_def) {
+            return Err(SemanticError::Other(format!(
+                "Instance method '{}.{}' cannot be called as a static method",
+                type_name, field.name
+            )));
+        }
 
         let ordered_exprs = self.process_arguments(
             &format!("{}.{}", type_name, field.name),

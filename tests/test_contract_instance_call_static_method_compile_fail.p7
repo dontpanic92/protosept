@@ -1,0 +1,14 @@
+// compile_fail: static methods cannot be called through an instance
+
+struct ContractStaticTarget(
+    value: int,
+) {
+    pub fn make() -> int {
+        1
+    }
+}
+
+fn main() -> int {
+    let target = ContractStaticTarget(0);
+    target.make()
+}

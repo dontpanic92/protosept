@@ -1,0 +1,14 @@
+// compile_fail: instance methods cannot be called through the type
+
+struct ContractMethodTarget(
+    value: int,
+) {
+    pub fn get(self: ref<ContractMethodTarget>) -> int {
+        self.value
+    }
+}
+
+fn main() -> int {
+    let target = ContractMethodTarget(1);
+    ContractMethodTarget.get(ref(target))
+}

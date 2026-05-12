@@ -169,13 +169,9 @@ impl Generator {
                 self.generate_array_index(*array, *index, pos)
             }
             Expression::NullLiteral => {
-                // Null literal needs type context to determine the inner type
-                // For now, emit a placeholder - the actual type comes from bidirectional typing
-                self.builder.ldnull();
-                // Return a placeholder nullable type; the actual type will be refined by context
-                Ok(Type::Nullable(Box::new(Type::Primitive(
-                    PrimitiveType::Unit,
-                ))))
+                Err(SemanticError::Other(
+                    "null literal requires a nullable expected type".to_string(),
+                ))
             }
             Expression::ForceUnwrap { operand, token } => {
                 self.generate_force_unwrap(*operand, token)
@@ -212,18 +208,16 @@ impl Generator {
                     if let Type::Nullable(_) = expected_ty {
                         self.builder.ldnull();
                         return Ok(expected_ty.clone());
-                    } else {
-                        // If expected type is not nullable, this is an error
-                        return Ok(Type::Nullable(Box::new(Type::Primitive(
-                            PrimitiveType::Unit,
-                        ))));
                     }
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: "null".to_string(),
+                        rhs: self.type_to_string(expected_ty),
+                        pos: None,
+                    });
                 }
-                // No expected type - return generic nullable
-                self.builder.ldnull();
-                Ok(Type::Nullable(Box::new(Type::Primitive(
-                    PrimitiveType::Unit,
-                ))))
+                Err(SemanticError::Other(
+                    "null literal requires a nullable expected type".to_string(),
+                ))
             }
             Expression::ArrayLiteral { elements, pos } => {
                 // Extract element type from expected array type

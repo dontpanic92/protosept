@@ -1,0 +1,6 @@
+// compile_fail: bare null requires nullable context
+
+fn main() -> int {
+    let value = null;
+    0
+}

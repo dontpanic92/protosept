@@ -104,42 +104,71 @@ fn extract_string_from_expression(expr: &Expression) -> Option<String> {
     }
 }
 
-fn parse_test_attribute(attr: &Attribute) -> Option<(String, String)> {
+fn parse_test_attribute(attr: &Attribute) -> Result<Option<(String, String)>, FailureReason> {
     if attr.name.name != "test" {
-        return None;
+        return Ok(None);
     }
 
     let mut expected_type = None;
     let mut expected_value = None;
 
     for (name_opt, expr) in &attr.arguments {
-        if let Some(name) = name_opt {
-            match name.name.as_str() {
-                "expected_type" => {
-                    expected_type = extract_string_from_expression(expr);
+        let Some(name) = name_opt else {
+            return Err(FailureReason::InvalidTestAttribute(
+                "@test arguments must be named".to_string(),
+            ));
+        };
+
+        let Some(value) = extract_string_from_expression(expr) else {
+            return Err(FailureReason::InvalidTestAttribute(format!(
+                "@test argument '{}' must be a string literal",
+                name.name
+            )));
+        };
+
+        match name.name.as_str() {
+            "expected_type" => {
+                if expected_type.replace(value).is_some() {
+                    return Err(FailureReason::InvalidTestAttribute(
+                        "Duplicate @test argument 'expected_type'".to_string(),
+                    ));
                 }
-                "expected_value" => {
-                    expected_value = extract_string_from_expression(expr);
+            }
+            "expected_value" => {
+                if expected_value.replace(value).is_some() {
+                    return Err(FailureReason::InvalidTestAttribute(
+                        "Duplicate @test argument 'expected_value'".to_string(),
+                    ));
                 }
-                _ => {}
+            }
+            _ => {
+                return Err(FailureReason::InvalidTestAttribute(format!(
+                    "Unknown @test argument '{}'",
+                    name.name
+                )));
             }
         }
     }
 
     match (expected_type, expected_value) {
-        (Some(t), Some(v)) => Some((t, v)),
-        _ => None,
+        (Some(t), Some(v)) => Ok(Some((t, v))),
+        (None, _) => Err(FailureReason::InvalidTestAttribute(
+            "Missing @test argument 'expected_type'".to_string(),
+        )),
+        (_, None) => Err(FailureReason::InvalidTestAttribute(
+            "Missing @test argument 'expected_value'".to_string(),
+        )),
     }
 }
 
-fn find_test_cases(module: &p7::bytecode::Module) -> Vec<TestCase> {
+fn find_test_cases(module: &p7::bytecode::Module) -> Result<Vec<TestCase>, FailureReason> {
     let mut test_cases = Vec::new();
 
     for symbol in &module.symbols {
         if let SymbolKind::Function { func_id, .. } = symbol.kind
             && let Some(func) = module.functions.get(func_id as usize) {
                 for attr in &func.attributes {
-                    if let Some((expected_type, expected_value)) = parse_test_attribute(attr) {
+                    if let Some((expected_type, expected_value)) = parse_test_attribute(attr)? {
                         test_cases.push(TestCase {
                             function_name: symbol.name.to_string(),
                             expected_type,
@@ -150,7 +179,7 @@ fn find_test_cases(module: &p7::bytecode::Module) -> Vec<TestCase> {
             }
     }
 
-    test_cases
+    Ok(test_cases)
 }
 
 fn run_test_case(
@@ -299,7 +328,10 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
     };
 
     // Find all test cases
-    let test_cases = find_test_cases(&module);
+    let test_cases = match find_test_cases(&module) {
+        Ok(test_cases) => test_cases,
+        Err(reason) => return Ok(vec![("test-attribute".to_string(), TestResult::Failure(reason))]),
+    };
 
     if test_cases.is_empty() {
         return Ok(vec![(
@@ -422,4 +454,84 @@ pub fn run_cli(program_name: &str, args: &[String]) -> anyhow::Result<TestSummar
     );
 
     Ok(summary)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use p7::ast::Identifier;
+    use p7::intern::InternedString;
+
+    fn ident(name: &str) -> Identifier {
+        Identifier {
+            name: InternedString::from(name),
+            line: 1,
+            col: 1,
+        }
+    }
+
+    fn test_attr(arguments: Vec<(Option<Identifier>, Expression)>) -> Attribute {
+        Attribute {
+            name: ident("test"),
+            arguments,
+        }
+    }
+
+    #[test]
+    fn test_attribute_accepts_required_string_keys() {
+        let attr = test_attr(vec![
+            (
+                Some(ident("expected_type")),
+                Expression::StringLiteral(InternedString::from("int")),
+            ),
+            (
+                Some(ident("expected_value")),
+                Expression::StringLiteral(InternedString::from("42")),
+            ),
+        ]);
+
+        let parsed = parse_test_attribute(&attr).unwrap();
+        assert_eq!(parsed, Some(("int".to_string(), "42".to_string())));
+    }
+
+    #[test]
+    fn test_attribute_rejects_unknown_key() {
+        let attr = test_attr(vec![
+            (
+                Some(ident("expected_type")),
+                Expression::StringLiteral(InternedString::from("int")),
+            ),
+            (
+                Some(ident("unexpected")),
+                Expression::StringLiteral(InternedString::from("42")),
+            ),
+            (
+                Some(ident("expected_value")),
+                Expression::StringLiteral(InternedString::from("42")),
+            ),
+        ]);
+
+        assert!(matches!(
+            parse_test_attribute(&attr),
+            Err(FailureReason::InvalidTestAttribute(message))
+                if message.contains("Unknown @test argument 'unexpected'")
+        ));
+    }
+
+    #[test]
+    fn test_attribute_rejects_non_string_value() {
+        let attr = test_attr(vec![
+            (
+                Some(ident("expected_type")),
+                Expression::StringLiteral(InternedString::from("int")),
+            ),
+            (Some(ident("expected_value")), Expression::IntegerLiteral(42)),
+        ]);
+
+        assert!(matches!(
+            parse_test_attribute(&attr),
+            Err(FailureReason::InvalidTestAttribute(message))
+                if message.contains("must be a string literal")
+        ));
+    }
 }
