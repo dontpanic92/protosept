@@ -47,6 +47,12 @@ impl Context {
                 self.mark_data(data, marked);
             }
         }
+
+        for root in &self.external_roots {
+            if let Some(data) = root {
+                self.mark_data(data, marked);
+            }
+        }
     }
 
     /// Recursively mark a data value and any boxes it references
@@ -178,6 +184,12 @@ impl Context {
         // Update references in module-level variables
         for vars in &mut self.module_vars {
             Self::update_data_vec(vars, index_map);
+        }
+
+        for root in &mut self.external_roots {
+            if let Some(data) = root {
+                Self::update_data(data, index_map);
+            }
         }
 
         // Update references in heap structs

@@ -67,6 +67,9 @@ pub struct Context {
     // a foreign value stamped by one module flows to another. See
     // `discover_foreign_carriers` for the maintenance logic.
     pub(super) foreign_carrier_methods: HashMap<String, Vec<ForeignCarrierMethod>>,
+    // Host-owned values that must survive GC compaction. These are used by
+    // embedding runtimes that keep script state between calls.
+    external_roots: Vec<Option<Data>>,
 }
 
 /// One row in `Context::foreign_carrier_methods`: a single proto-method
@@ -105,6 +108,7 @@ impl Context {
             foreign_types: HashMap::new(),
             foreign_uuids: HashMap::new(),
             foreign_carrier_methods: HashMap::new(),
+            external_roots: Vec::new(),
         };
 
         // Register builtin host functions
@@ -121,6 +125,38 @@ impl Context {
     /// Get the script directory, if set.
     pub fn script_dir(&self) -> Option<&str> {
         self.script_dir.as_deref()
+    }
+
+    pub fn add_external_root(&mut self, data: Data) -> usize {
+        if let Some((idx, slot)) = self
+            .external_roots
+            .iter_mut()
+            .enumerate()
+            .find(|(_, slot)| slot.is_none())
+        {
+            *slot = Some(data);
+            idx
+        } else {
+            self.external_roots.push(Some(data));
+            self.external_roots.len() - 1
+        }
+    }
+
+    pub fn set_external_root(&mut self, idx: usize, data: Data) {
+        if idx >= self.external_roots.len() {
+            self.external_roots.resize_with(idx + 1, || None);
+        }
+        self.external_roots[idx] = Some(data);
+    }
+
+    pub fn external_root(&self, idx: usize) -> Option<Data> {
+        self.external_roots.get(idx).and_then(Clone::clone)
+    }
+
+    pub fn remove_external_root(&mut self, idx: usize) {
+        if let Some(slot) = self.external_roots.get_mut(idx) {
+            *slot = None;
+        }
     }
 
     /// Register all builtin host functions
