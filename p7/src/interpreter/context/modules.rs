@@ -2,6 +2,7 @@ use crate::bytecode::Module;
 use crate::errors::RuntimeError;
 
 use super::Context;
+use super::ForeignCarrierMethod;
 use super::data::{ContextResult, Data, StackFrame};
 
 impl Context {
@@ -78,7 +79,8 @@ impl Context {
             if let SymbolKind::Type(carrier_type_id) = sym.kind {
                 // The HostMethod children are unique to carrier structs.
                 let mut tag_for_carrier: Option<String> = None;
-                for &child_id in sym.children.values() {
+                let mut method_rows: Vec<(u32, u32)> = Vec::new(); // (method_hash, method_symbol_id)
+                for (child_name, &child_id) in sym.children.iter() {
                     if let Some(child) = module.symbols.get(child_id as usize)
                         && let SymbolKind::HostMethod { type_tag, .. } = &child.kind
                     {
@@ -99,23 +101,90 @@ impl Context {
                             entry.finalizer = Some("com.release".to_string());
                         }
                         tag_for_carrier = Some(tag);
-                        break;
+                        method_rows.push((Self::hash_method_name(child_name.as_str()), child_id));
                     }
                 }
 
                 // Stash the proto's UUID on the foreign type registry
                 // keyed by tag, when present. The carrier's
                 // conforming_to[0] is the underlying foreign proto.
-                if let Some(tag) = tag_for_carrier
+                let proto_type_id_opt = if let Some(tag) = tag_for_carrier.clone()
                     && let Some(TypeDefinition::Struct(s)) =
                         module.types.get(carrier_type_id as usize)
                     && let Some(&proto_id) = s.conforming_to.first()
-                    && let Some(TypeDefinition::Proto(p)) = module.types.get(proto_id as usize)
-                    && let Some(uuid_str) = &p.foreign_uuid
                 {
-                    self.foreign_uuids
+                    if let Some(TypeDefinition::Proto(p)) = module.types.get(proto_id as usize)
+                        && let Some(uuid_str) = &p.foreign_uuid
+                    {
+                        self.foreign_uuids
+                            .entry(tag)
+                            .or_insert_with(|| uuid_str.to_string());
+                    }
+                    Some(proto_id)
+                } else {
+                    None
+                };
+
+                // Maintain the per-type-tag method index and emit cross-module
+                // vtable entries so that a foreign value stamped with another
+                // module's carrier_type_id still dispatches correctly when its
+                // method is called from this module (and vice versa).
+                if let (Some(tag), Some(proto_type_id)) = (tag_for_carrier, proto_type_id_opt) {
+                    let new_rows: Vec<ForeignCarrierMethod> = method_rows
+                        .iter()
+                        .map(|&(method_hash, method_symbol_id)| ForeignCarrierMethod {
+                            _module_idx: module_idx,
+                            carrier_type_id,
+                            proto_type_id,
+                            method_hash,
+                            method_symbol_id,
+                        })
+                        .collect();
+
+                    let prior_rows: Vec<ForeignCarrierMethod> = self
+                        .foreign_carrier_methods
+                        .get(&tag)
+                        .cloned()
+                        .unwrap_or_default();
+
+                    // Cross-emit vtable entries between every prior row and
+                    // every new row sharing the same method_hash.
+                    for new_row in &new_rows {
+                        for prior in &prior_rows {
+                            if prior.method_hash != new_row.method_hash {
+                                continue;
+                            }
+                            // foreign value stamped with the prior carrier
+                            // dispatches in the new module's context using
+                            // the new module's symbol
+                            self.vtable.insert(
+                                (
+                                    prior.carrier_type_id,
+                                    new_row.proto_type_id,
+                                    new_row.method_hash,
+                                ),
+                                new_row.method_symbol_id,
+                            );
+                            // and the reverse: foreign value stamped with
+                            // the new carrier dispatches in the prior
+                            // module's context using the prior module's
+                            // symbol
+                            self.vtable.insert(
+                                (
+                                    new_row.carrier_type_id,
+                                    prior.proto_type_id,
+                                    prior.method_hash,
+                                ),
+                                prior.method_symbol_id,
+                            );
+                        }
+                    }
+
+                    let bucket = self
+                        .foreign_carrier_methods
                         .entry(tag)
-                        .or_insert_with(|| uuid_str.to_string());
+                        .or_default();
+                    bucket.extend(new_rows);
                 }
             }
         }

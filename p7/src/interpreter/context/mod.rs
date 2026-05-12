@@ -58,6 +58,23 @@ pub struct Context {
     // host dispatcher can `query_interface` by UUID for a given foreign
     // proto without re-walking the module.
     pub(super) foreign_uuids: HashMap<String, String>,
+    // Per type_tag bookkeeping of every carrier+method symbol discovered in
+    // every loaded module. Used to populate cross-module vtable entries when
+    // a foreign value stamped by one module flows to another. See
+    // `discover_foreign_carriers` for the maintenance logic.
+    pub(super) foreign_carrier_methods: HashMap<String, Vec<ForeignCarrierMethod>>,
+}
+
+/// One row in `Context::foreign_carrier_methods`: a single proto-method
+/// HostMethod symbol in a specific loaded module, along with the carrier and
+/// proto type ids needed to key the vtable.
+#[derive(Debug, Clone)]
+pub(super) struct ForeignCarrierMethod {
+    pub _module_idx: usize,
+    pub carrier_type_id: u32,
+    pub proto_type_id: u32,
+    pub method_hash: u32,
+    pub method_symbol_id: u32,
 }
 
 impl Default for Context {
@@ -83,6 +100,7 @@ impl Context {
             module_vars: Vec::new(),
             foreign_types: HashMap::new(),
             foreign_uuids: HashMap::new(),
+            foreign_carrier_methods: HashMap::new(),
         };
 
         // Register builtin host functions

@@ -1302,6 +1302,67 @@ impl Generator {
             return Ok(existing_type_id);
         }
 
+        // Reserve a TypeId in the importer's table up-front with a stub
+        // definition, then record it in `type_map` *before* recursing on
+        // member types. This is essential for self-referential types — e.g.
+        // a proto whose methods take `self: ref<F>` would otherwise recurse
+        // infinitely back into `import_type_from_module` for the same
+        // `type_id` because the second `type_map.get` lookup wouldn't see
+        // it yet.
+        let qualified_name_owned = qualified_name.clone();
+        let stub_def: TypeDefinition = match type_def {
+            TypeDefinition::Struct(s) => TypeDefinition::Struct(Struct {
+                qualified_name: s.qualified_name.clone(),
+                fields: Vec::new(),
+                field_defaults: Vec::new(),
+                attributes: s.attributes.clone(),
+                type_parameters: s.type_parameters.clone(),
+                type_param_bounds: s.type_param_bounds.clone(),
+                generic_field_types: None,
+                monomorphization: None,
+                conforming_to: Vec::new(),
+                methods: Vec::new(),
+                source_module: source_module_path.clone(),
+            }),
+            TypeDefinition::Enum(e) => TypeDefinition::Enum(Enum {
+                qualified_name: e.qualified_name.clone(),
+                variants: Vec::new(),
+                attributes: e.attributes.clone(),
+                type_parameters: e.type_parameters.clone(),
+                type_param_bounds: e.type_param_bounds.clone(),
+                generic_variant_types: None,
+                monomorphization: None,
+                conforming_to: Vec::new(),
+                methods: Vec::new(),
+                source_module: source_module_path.clone(),
+            }),
+            TypeDefinition::Proto(p) => TypeDefinition::Proto(Proto {
+                qualified_name: p.qualified_name.clone(),
+                methods: Vec::new(),
+                attributes: p.attributes.clone(),
+                foreign_type_tag: p.foreign_type_tag.clone(),
+                foreign_uuid: p.foreign_uuid.clone(),
+            }),
+        };
+        let new_id = self.symbol_table.add_type(stub_def);
+        type_map.insert(type_id, new_id);
+        // Insert a symbol so find_symbol_by_qualified_name can locate this
+        // type during monomorphization (type_to_parsed_type emits the
+        // qualified name) and so that recursive imports through the
+        // qualified-name lookup find this entry.
+        let new_symbol = crate::semantic::Symbol::new(
+            qualified_name_owned.clone(),
+            qualified_name_owned.clone(),
+            SymbolKind::Type(new_id),
+        );
+        self.symbol_table.insert_symbol(new_symbol);
+
+        // Re-fetch the source type def: the recursive calls below borrow
+        // `self` mutably and we can't keep a reference to `module.types`.
+        let type_def = module.types.get(type_id as usize).ok_or_else(|| {
+            SemanticError::Other(format!("Type id {} not found in imported module", type_id))
+        })?;
+
         let mapped_def = match type_def {
             TypeDefinition::Struct(s) => {
                 let fields = s
@@ -1392,20 +1453,143 @@ impl Generator {
             }
         };
 
-        let qualified_name_owned = qualified_name.clone();
-        let new_id = self.symbol_table.add_type(mapped_def);
-        type_map.insert(type_id, new_id);
+        self.symbol_table.update_type(new_id, mapped_def);
 
-        // Insert a symbol so find_symbol_by_qualified_name can locate this type
-        // during monomorphization (type_to_parsed_type emits the qualified name).
-        let new_symbol = crate::semantic::Symbol::new(
-            qualified_name_owned.clone(),
-            qualified_name_owned,
-            SymbolKind::Type(new_id),
-        );
-        self.symbol_table.insert_symbol(new_symbol);
+        // For @foreign protos, also re-synthesize the hidden carrier struct
+        // and HostMethod children in the importing module. Without this the
+        // importer has no `(carrier_type_id, proto_id, method_hash)` vtable
+        // entries keyed by its *local* proto id, and dispatch through
+        // `CallProtoMethod` would miss. See
+        // `synthesize_foreign_carrier` for the original (declaring-side)
+        // logic this mirrors.
+        if let Some(TypeDefinition::Proto(p)) = self.symbol_table.get_type_checked(new_id) {
+            let foreign_type_tag = p.foreign_type_tag.clone();
+            let foreign_uuid = p.foreign_uuid.clone();
+            let attributes = p.attributes.clone();
+            let proto_qualified_name = p.qualified_name.clone();
+            let methods = p.methods.clone();
+            if let Some(type_tag) = foreign_type_tag {
+                self.import_foreign_carrier(
+                    new_id,
+                    &proto_qualified_name,
+                    &attributes,
+                    &methods,
+                    &type_tag,
+                    foreign_uuid.as_deref(),
+                )?;
+            }
+        }
 
         Ok(new_id)
+    }
+
+    /// Re-synthesise the `__ForeignCarrier_<F>` struct + HostMethod child
+    /// symbols for an @foreign proto that was imported into the current
+    /// module. This mirrors `synthesize_foreign_carrier` but operates on
+    /// already-resolved metadata so the duplicate `seen_foreign_type_tags`
+    /// guard does not fire — the duplicate is *intentional* across modules.
+    fn import_foreign_carrier(
+        &mut self,
+        proto_type_id: TypeId,
+        proto_qualified_name: &InternedString,
+        attributes: &[Attribute],
+        methods: &[(InternedString, Vec<Type>, Option<Type>)],
+        type_tag: &str,
+        _foreign_uuid: Option<&str>,
+    ) -> SaResult<()> {
+        // Pull the dispatcher name from the proto's @foreign attribute.
+        let dispatcher = Self::extract_foreign_attrs(attributes)
+            .and_then(|f| f.dispatcher)
+            .ok_or_else(|| {
+                SemanticError::Other(format!(
+                    "Imported @foreign proto '{}' is missing a dispatcher attribute",
+                    proto_qualified_name
+                ))
+            })?;
+
+        // Derive a stable carrier qualified name from the proto's qualified
+        // name. We strip the proto's local name and append the carrier
+        // suffix, matching the declaring-side convention so the carrier
+        // identity is the same across the declaring module and any
+        // importer.
+        let proto_local_name = proto_qualified_name
+            .as_str()
+            .rsplit('.')
+            .next()
+            .unwrap_or(proto_qualified_name.as_str())
+            .to_string();
+        let carrier_local_name =
+            InternedString::from(format!("__ForeignCarrier_{}", proto_local_name));
+        let carrier_qualified_name = InternedString::from(format!(
+            "{}__ForeignCarrier",
+            proto_qualified_name
+                .as_str()
+                .strip_suffix(&proto_local_name)
+                .unwrap_or(proto_qualified_name.as_str()),
+        ));
+
+        // Skip if a carrier with this qualified name already exists in the
+        // current module (e.g. importer pulled the same proto twice via
+        // different paths).
+        if self
+            .symbol_table
+            .find_symbol_by_qualified_name(&carrier_qualified_name)
+            .is_some()
+        {
+            return Ok(());
+        }
+
+        let carrier_struct = Struct {
+            qualified_name: carrier_qualified_name.clone(),
+            fields: Vec::new(),
+            field_defaults: Vec::new(),
+            attributes: Vec::new(),
+            type_parameters: Vec::new(),
+            type_param_bounds: Vec::new(),
+            generic_field_types: None,
+            monomorphization: None,
+            conforming_to: vec![proto_type_id],
+            methods: Vec::new(),
+            source_module: None,
+        };
+        let carrier_type_id = self
+            .symbol_table
+            .add_type(TypeDefinition::Struct(carrier_struct));
+
+        let carrier_symbol = Symbol::new(
+            carrier_local_name,
+            carrier_qualified_name.clone(),
+            SymbolKind::Type(carrier_type_id),
+        );
+        self.symbol_table.push_symbol(carrier_symbol);
+
+        for (idx, (method_name, params, return_type)) in methods.iter().enumerate() {
+            let return_kind = match return_type {
+                None => crate::semantic::ReturnKind::Void,
+                Some(Type::Nullable(_)) => crate::semantic::ReturnKind::Optional,
+                Some(_) => crate::semantic::ReturnKind::Value,
+            };
+            let qualified_method_name =
+                InternedString::from(format!("{}.{}", carrier_qualified_name, method_name));
+            let host_method_symbol = Symbol::new(
+                method_name.clone(),
+                qualified_method_name,
+                SymbolKind::HostMethod {
+                    dispatcher_name: InternedString::from(dispatcher.clone()),
+                    method_name: method_name.clone(),
+                    type_tag: InternedString::from(type_tag.to_string()),
+                    param_count: params.len() as u32,
+                    return_kind,
+                    vtable_slot: idx as u32,
+                    return_ty: map_host_return_ty(return_type, &self.symbol_table),
+                },
+            );
+            self.symbol_table.insert_symbol(host_method_symbol);
+        }
+
+        self.symbol_table.pop_symbol();
+
+        Ok(())
     }
 
     pub(super) fn map_type_from_module(
