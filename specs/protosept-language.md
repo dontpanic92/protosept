@@ -3387,7 +3387,8 @@ new bytecode opcode or special dispatch primitive.
 @foreign(
     dispatcher = "com.invoke",        // host fn that handles method calls
     finalizer  = "com.release",       // optional host fn for box<F> drop
-    type_tag   = "radiance.IDirector" // host-defined identity of the proto
+    type_tag   = "radiance.IDirector",// host-defined identity of the proto
+    uuid       = "..."                // optional host-defined interface id
 )
 pub proto IDirector {
     fn activate(self: ref<IDirector>) -> int;
@@ -3396,7 +3397,7 @@ pub proto IDirector {
 ```
 
 Required keys: `dispatcher` (string), `type_tag` (string). Optional:
-`finalizer` (string).
+`finalizer` (string), `uuid` (string).
 
 `type_tag` is the runtime identity of the proto. Two distinct foreign
 protos in the same compilation unit MUST have distinct `type_tag`
@@ -3431,6 +3432,8 @@ entry (top → bottom):
 ```
 type_tag    : string     // value declared in @foreign(type_tag="...")
 method_name : string     // "m"
+vtable_slot : int        // zero-based method index inside this foreign proto
+return_ty   : array      // encoded HostReturnTy tree
 aN
 ...
 a1
@@ -3444,20 +3447,46 @@ existing `InvokeHost` mechanism — no new opcode is introduced.
 
 A single dispatcher MAY serve many foreign protos. The explicit
 `type_tag` on the stack lets one dispatcher disambiguate without
-inspecting the receiver's contents.
+inspecting the receiver's contents. `uuid`, when present, is retained as
+runtime metadata for host dispatchers that need interface identity, such
+as COM `QueryInterface`.
+
+The encoded `return_ty` starts with an integer tag. Current runtime tags
+are `0` = void, `1` = int, `2` = float, `3` = string, `4` = foreign
+(`return_ty[1]` is that foreign proto's `type_tag`), `5` = optional
+(`return_ty[1]` is the inner encoded return type), and `6` = array
+(`return_ty[1]` is the element encoded return type).
 
 #### 18.10.4 Identity, copy, drop
 
 A foreign cell holds an opaque host-supplied `i64` handle plus the
 proto's `type_tag` and an *ownership* flag:
 
-- An owned cell (`box<F>`) fires the proto's `finalizer`, if any,
-  exactly once when the box is collected.
+- An owned cell (`box<F>`) fires the proto's declared `finalizer`, if
+  any, exactly once when the box is collected.
 - A borrowed cell (`ref<F>`) does not fire the finalizer.
 
 Foreign cells participate in the existing GC. The host's finalizer is
 responsible for whatever native lifetime semantics apply (e.g.
 `ComRc::release`).
+
+If a foreign proto omits `finalizer`, no finalizer is registered. There
+is no implicit `com.release` fallback; COM bindings must declare it
+explicitly.
+
+Finalizers are ordinary host functions registered via
+`Context::register_host_function`. At entry the stack layout is
+(top → bottom):
+
+```
+type_tag : string
+handle   : int
+```
+
+Missing finalizer functions and finalizer runtime errors are surfaced as
+GC/runtime errors. Hosts may explicitly override declaration metadata by
+calling `Context::register_foreign_type(type_tag, finalizer)`; such host
+registration wins over module discovery, including an explicit `None`.
 
 #### 18.10.5 Construction
 

@@ -23,6 +23,10 @@ pub(super) struct ForeignTypeReg {
     /// owned `box<F>` is collected. `None` means no finalizer (e.g. for
     /// resources whose Rust-side owner outlives the script).
     pub finalizer: Option<String>,
+    /// True when the host explicitly called `register_foreign_type`.
+    /// Declaration discovery fills unset metadata but must not overwrite
+    /// host-provided finalizer choices, including an explicit `None`.
+    pub host_registered: bool,
     /// Concrete `TypeId` of the synthetic `__ForeignCarrier_<F>` struct in
     /// each loaded module. Populated lazily by [`Context::add_module`] as
     /// new modules are loaded. Multiple modules may share the same tag.
@@ -151,9 +155,11 @@ impl Context {
             .entry(type_tag.to_string())
             .or_insert_with(|| ForeignTypeReg {
                 finalizer: None,
+                host_registered: false,
                 carrier_type_ids: Vec::new(),
             });
         entry.finalizer = finalizer.map(str::to_string);
+        entry.host_registered = true;
     }
 
     /// Look up the COM-style UUID associated with a `@foreign(uuid="...")`

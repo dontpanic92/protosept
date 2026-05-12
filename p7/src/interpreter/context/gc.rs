@@ -2,17 +2,18 @@ use std::collections::HashSet;
 
 use super::Context;
 use super::data::Data;
+use crate::errors::RuntimeError;
 
 impl Context {
     /// Mark-and-sweep garbage collector for box heap
     /// This method performs a full GC cycle
-    pub fn collect_garbage(&mut self) {
+    pub fn collect_garbage(&mut self) -> Result<(), RuntimeError> {
         // Mark phase: identify all reachable boxes
         let mut marked = HashSet::new();
         self.mark_reachable(&mut marked);
 
         // Sweep phase: remove unreachable boxes and compact the heap
-        self.sweep(&marked);
+        self.sweep(&marked)
     }
 
     /// Mark phase: traverse all roots and mark reachable boxes
@@ -97,14 +98,14 @@ impl Context {
 
     /// Sweep phase: remove unmarked boxes and update all references.
     /// Owned `Data::Foreign` cells trigger their proto's registered
-    /// finalizer host fn (called once with the handle as `Data::Int`).
-    fn sweep(&mut self, marked: &HashSet<u32>) {
+    /// finalizer host fn with type_tag and handle metadata.
+    fn sweep(&mut self, marked: &HashSet<u32>) -> Result<(), RuntimeError> {
         // Build a mapping from old indices to new indices
         let mut index_map: Vec<Option<u32>> = vec![None; self.box_heap.len()];
         let mut new_heap = Vec::new();
         let mut new_idx = 0u32;
-        // Collect (finalizer_name, handle) pairs to invoke after compaction.
-        let mut pending_finalizers: Vec<(String, i64)> = Vec::new();
+        // Collect finalizers to invoke after compaction.
+        let mut pending_finalizers: Vec<(String, String, i64)> = Vec::new();
 
         for (old_idx, box_data) in self.box_heap.iter().enumerate() {
             if marked.contains(&(old_idx as u32)) {
@@ -124,7 +125,7 @@ impl Context {
                     && let Some(reg) = self.foreign_types.get(type_tag.as_str())
                     && let Some(name) = &reg.finalizer
                 {
-                    pending_finalizers.push((name.clone(), *handle));
+                    pending_finalizers.push((name.clone(), type_tag.clone(), *handle));
                 }
             }
         }
@@ -137,15 +138,32 @@ impl Context {
 
         // Fire finalizers in collection order. Each finalizer is an
         // ordinary host fn registered via `register_host_function`; it
-        // pops one Data::Int (the handle) and pushes nothing.
-        for (name, handle) in pending_finalizers {
-            if let Some(host_fn) = self.host_functions.get(&name).copied() {
+        // receives type_tag at the top of the stack and handle below it.
+        for (name, type_tag, handle) in pending_finalizers {
+            let host_fn = self.host_functions.get(&name).copied().ok_or_else(|| {
+                RuntimeError::Other(format!(
+                    "Foreign finalizer '{}' for type_tag '{}' is not registered",
+                    name, type_tag
+                ))
+            })?;
+            let stack_len = {
+                let frame = self.stack.last_mut().ok_or(RuntimeError::NoStackFrame)?;
+                let stack_len = frame.stack.len();
+                frame.stack.push(Data::Int(handle));
+                frame.stack.push(Data::String(type_tag.clone()));
+                stack_len
+            };
+            if let Err(err) = host_fn(self) {
                 if let Some(frame) = self.stack.last_mut() {
-                    frame.stack.push(Data::Int(handle));
-                    let _ = host_fn(self);
+                    frame.stack.truncate(stack_len);
                 }
+                return Err(RuntimeError::Other(format!(
+                    "Foreign finalizer '{}' for type_tag '{}' failed: {}",
+                    name, type_tag, err
+                )));
             }
         }
+        Ok(())
     }
 
     /// Update all BoxRef references after compaction

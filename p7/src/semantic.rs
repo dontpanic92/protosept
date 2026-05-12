@@ -249,6 +249,10 @@ pub struct Proto {
     /// dispatcher via `Context::foreign_uuid(type_tag)`.
     #[serde(default)]
     pub foreign_uuid: Option<InternedString>,
+    /// `@foreign(finalizer="...")` value, when present. Used by the
+    /// runtime to register the foreign cell's drop hook during module load.
+    #[serde(default)]
+    pub foreign_finalizer: Option<InternedString>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

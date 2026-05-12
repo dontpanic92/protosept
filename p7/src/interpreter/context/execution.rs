@@ -818,7 +818,7 @@ impl Context {
                     // Trigger GC if threshold is reached
                     self.allocation_count += 1;
                     if self.allocation_count >= self.gc_threshold {
-                        self.collect_garbage();
+                        self.collect_garbage()?;
                         self.allocation_count = 0;
                     }
                 }

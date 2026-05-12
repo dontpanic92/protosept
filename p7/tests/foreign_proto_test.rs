@@ -5,11 +5,14 @@ use p7::{InMemoryModuleProvider, ModuleProvider};
 
 static mut COUNTER_VALUE: i64 = 0;
 static mut FINALIZER_CALLS: i64 = 0;
+static mut OVERRIDE_FINALIZER_CALLS: i64 = 0;
+static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn reset_globals() {
     unsafe {
         COUNTER_VALUE = 0;
         FINALIZER_CALLS = 0;
+        OVERRIDE_FINALIZER_CALLS = 0;
     }
 }
 
@@ -61,14 +64,42 @@ fn host_counter_invoke(ctx: &mut Context) -> Result<(), p7::errors::RuntimeError
 
 fn host_counter_release(ctx: &mut Context) -> Result<(), p7::errors::RuntimeError> {
     let frame = ctx.stack_frame_mut()?;
+    let type_tag = match frame.stack.pop() {
+        Some(Data::String(s)) => s,
+        other => panic!("expected finalizer type_tag string, got {:?}", other),
+    };
     let _handle = match frame.stack.pop() {
         Some(Data::Int(h)) => h,
         other => panic!("expected handle int, got {:?}", other),
     };
+    assert_eq!(type_tag, "counter.Counter");
     unsafe {
         FINALIZER_CALLS += 1;
     }
     Ok(())
+}
+
+fn host_override_release(ctx: &mut Context) -> Result<(), p7::errors::RuntimeError> {
+    let frame = ctx.stack_frame_mut()?;
+    let type_tag = match frame.stack.pop() {
+        Some(Data::String(s)) => s,
+        other => panic!("expected finalizer type_tag string, got {:?}", other),
+    };
+    let _handle = match frame.stack.pop() {
+        Some(Data::Int(h)) => h,
+        other => panic!("expected handle int, got {:?}", other),
+    };
+    assert_eq!(type_tag, "counter.Counter");
+    unsafe {
+        OVERRIDE_FINALIZER_CALLS += 1;
+    }
+    Ok(())
+}
+
+fn host_error_release(_ctx: &mut Context) -> Result<(), p7::errors::RuntimeError> {
+    Err(p7::errors::RuntimeError::Other(
+        "intentional finalizer failure".to_string(),
+    ))
 }
 
 const SOURCE: &str = r#"
@@ -89,8 +120,37 @@ pub fn run() -> int {
 }
 "#;
 
+const NO_METHOD_SOURCE: &str = r#"
+@foreign(dispatcher="unused.invoke", finalizer="counter.release", type_tag="counter.Counter")
+pub proto Counter {
+}
+
+@intrinsic(name="counter.make")
+pub fn make_counter() -> box<Counter>;
+
+pub fn run() -> int {
+    let _c: box<Counter> = make_counter();
+    0
+}
+"#;
+
+const NO_FINALIZER_SOURCE: &str = r#"
+@foreign(dispatcher="unused.invoke", type_tag="counter.Counter")
+pub proto Counter {
+}
+
+@intrinsic(name="counter.make")
+pub fn make_counter() -> box<Counter>;
+
+pub fn run() -> int {
+    let _c: box<Counter> = make_counter();
+    0
+}
+"#;
+
 #[test]
 fn foreign_proto_dispatch_and_finalizer() {
+    let _guard = TEST_LOCK.lock().unwrap();
     reset_globals();
 
     let module = p7::compile(SOURCE.to_string()).expect("compile");
@@ -99,7 +159,6 @@ fn foreign_proto_dispatch_and_finalizer() {
     ctx.register_host_function("counter.make".to_string(), host_make_counter);
     ctx.register_host_function("counter.invoke".to_string(), host_counter_invoke);
     ctx.register_host_function("counter.release".to_string(), host_counter_release);
-    ctx.register_foreign_type("counter.Counter", Some("counter.release"));
 
     ctx.load_module(module);
     ctx.push_function("run", Vec::new());
@@ -112,13 +171,131 @@ fn foreign_proto_dispatch_and_finalizer() {
         "two increments should yield read == 2"
     );
 
-    ctx.collect_garbage();
+    ctx.collect_garbage().expect("collect");
 
     let finalizer_calls = unsafe { FINALIZER_CALLS };
     assert!(
         finalizer_calls >= 1,
         "expected finalizer to fire at least once after GC, got {}",
         finalizer_calls,
+    );
+}
+
+#[test]
+fn foreign_proto_declared_finalizer_registers_without_host_override() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    reset_globals();
+
+    let module = p7::compile(NO_METHOD_SOURCE.to_string()).expect("compile");
+
+    let mut ctx = Context::new();
+    ctx.register_host_function("counter.make".to_string(), host_make_counter);
+    ctx.register_host_function("counter.release".to_string(), host_counter_release);
+
+    ctx.load_module(module);
+    ctx.push_function("run", Vec::new());
+    ctx.resume().expect("run");
+    let result = ctx.stack[0].stack.pop().expect("result");
+    assert_eq!(result, Data::Int(0));
+
+    ctx.collect_garbage().expect("collect");
+    assert_eq!(unsafe { FINALIZER_CALLS }, 1);
+}
+
+#[test]
+fn foreign_proto_host_finalizer_override_wins_over_declaration() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    reset_globals();
+
+    let module = p7::compile(NO_METHOD_SOURCE.to_string()).expect("compile");
+
+    let mut ctx = Context::new();
+    ctx.register_host_function("counter.make".to_string(), host_make_counter);
+    ctx.register_host_function("counter.release".to_string(), host_counter_release);
+    ctx.register_host_function("override.release".to_string(), host_override_release);
+    ctx.register_foreign_type("counter.Counter", Some("override.release"));
+
+    ctx.load_module(module);
+    ctx.push_function("run", Vec::new());
+    ctx.resume().expect("run");
+    let result = ctx.stack[0].stack.pop().expect("result");
+    assert_eq!(result, Data::Int(0));
+
+    ctx.collect_garbage().expect("collect");
+    assert_eq!(unsafe { FINALIZER_CALLS }, 0);
+    assert_eq!(unsafe { OVERRIDE_FINALIZER_CALLS }, 1);
+}
+
+#[test]
+fn foreign_proto_without_finalizer_does_not_default_to_com_release() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    reset_globals();
+
+    let module = p7::compile(NO_FINALIZER_SOURCE.to_string()).expect("compile");
+
+    let mut ctx = Context::new();
+    ctx.register_host_function("counter.make".to_string(), host_make_counter);
+
+    ctx.load_module(module);
+    ctx.push_function("run", Vec::new());
+    ctx.resume().expect("run");
+    let result = ctx.stack[0].stack.pop().expect("result");
+    assert_eq!(result, Data::Int(0));
+
+    ctx.collect_garbage().expect("collect");
+    assert_eq!(unsafe { FINALIZER_CALLS }, 0);
+}
+
+#[test]
+fn foreign_proto_missing_finalizer_host_function_is_reported() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    reset_globals();
+
+    let module = p7::compile(NO_METHOD_SOURCE.to_string()).expect("compile");
+
+    let mut ctx = Context::new();
+    ctx.register_host_function("counter.make".to_string(), host_make_counter);
+
+    ctx.load_module(module);
+    ctx.push_function("run", Vec::new());
+    ctx.resume().expect("run");
+    let result = ctx.stack[0].stack.pop().expect("result");
+    assert_eq!(result, Data::Int(0));
+
+    let err = ctx
+        .collect_garbage()
+        .expect_err("missing finalizer should fail");
+    assert!(
+        err.to_string().contains("counter.release"),
+        "unexpected error: {}",
+        err
+    );
+}
+
+#[test]
+fn foreign_proto_finalizer_error_is_reported() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    reset_globals();
+
+    let module = p7::compile(NO_METHOD_SOURCE.to_string()).expect("compile");
+
+    let mut ctx = Context::new();
+    ctx.register_host_function("counter.make".to_string(), host_make_counter);
+    ctx.register_host_function("counter.release".to_string(), host_error_release);
+
+    ctx.load_module(module);
+    ctx.push_function("run", Vec::new());
+    ctx.resume().expect("run");
+    let result = ctx.stack[0].stack.pop().expect("result");
+    assert_eq!(result, Data::Int(0));
+
+    let err = ctx
+        .collect_garbage()
+        .expect_err("finalizer error should fail");
+    assert!(
+        err.to_string().contains("intentional finalizer failure"),
+        "unexpected error: {}",
+        err
     );
 }
 

@@ -56,6 +56,10 @@ fn host_counter_invoke(ctx: &mut Context) -> Result<(), p7::errors::RuntimeError
 
 fn host_counter_release(ctx: &mut Context) -> Result<(), p7::errors::RuntimeError> {
     let frame = ctx.stack_frame_mut()?;
+    let _type_tag = match frame.stack.pop() {
+        Some(Data::String(_)) => (),
+        other => panic!("expected finalizer type_tag string, got {:?}", other),
+    };
     let _handle = match frame.stack.pop() {
         Some(Data::Int(_)) => (),
         other => panic!("expected handle int, got {:?}", other),

@@ -840,6 +840,7 @@ impl Generator {
             attributes: attributes.clone(),
             foreign_type_tag: None,
             foreign_uuid: None,
+            foreign_finalizer: None,
         };
         let type_id = self.symbol_table.add_type(TypeDefinition::Proto(ty));
 
@@ -902,6 +903,7 @@ impl Generator {
             attributes: attributes.clone(),
             foreign_type_tag: foreign_attrs.as_ref().and_then(|f| f.type_tag.clone()),
             foreign_uuid: foreign_attrs.as_ref().and_then(|f| f.uuid.clone()),
+            foreign_finalizer: foreign_attrs.as_ref().and_then(|f| f.finalizer.clone()),
         };
         self.symbol_table
             .update_type(type_id, TypeDefinition::Proto(ty));
@@ -1036,9 +1038,6 @@ impl Generator {
         }
 
         self.symbol_table.pop_symbol();
-
-        // Suppress unused warning until Phase 3 wires the finalizer.
-        let _ = foreign.finalizer;
 
         Ok(())
     }
@@ -1343,6 +1342,7 @@ impl Generator {
                 attributes: p.attributes.clone(),
                 foreign_type_tag: p.foreign_type_tag.clone(),
                 foreign_uuid: p.foreign_uuid.clone(),
+                foreign_finalizer: p.foreign_finalizer.clone(),
             }),
         };
         let new_id = self.symbol_table.add_type(stub_def);
@@ -1450,6 +1450,7 @@ impl Generator {
                     attributes: p.attributes.clone(),
                     foreign_type_tag: p.foreign_type_tag.clone(),
                     foreign_uuid: p.foreign_uuid.clone(),
+                    foreign_finalizer: p.foreign_finalizer.clone(),
                 })
             }
         };

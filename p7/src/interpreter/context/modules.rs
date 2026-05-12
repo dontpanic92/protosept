@@ -70,72 +70,70 @@ impl Context {
     /// children of synthetic `__ForeignCarrier_*` structs. For each
     /// distinct `type_tag` discovered, record the carrier's `TypeId` so
     /// `Context::push_foreign` can stamp it onto new foreign boxes.
-    /// Also auto-registers a default finalizer (`com.release`) for every
-    /// new tag so consumers do not need a separate registration step,
-    /// and stashes the proto's UUID in `foreign_uuids` keyed by tag.
+    /// Also registers the proto's declared finalizer, if any, and stashes
+    /// the proto's UUID in `foreign_uuids` keyed by tag.
     fn discover_foreign_carriers(&mut self, module_idx: usize, module: &Module) {
         use crate::semantic::{SymbolKind, TypeDefinition};
         for sym in &module.symbols {
             if let SymbolKind::Type(carrier_type_id) = sym.kind {
+                let Some(TypeDefinition::Struct(struct_def)) =
+                    module.types.get(carrier_type_id as usize)
+                else {
+                    continue;
+                };
+                let Some(&proto_id) = struct_def.conforming_to.first() else {
+                    continue;
+                };
+                let Some(TypeDefinition::Proto(proto)) = module.types.get(proto_id as usize) else {
+                    continue;
+                };
+                let Some(type_tag) = &proto.foreign_type_tag else {
+                    continue;
+                };
+
+                let tag = type_tag.to_string();
+                let entry = self.foreign_types.entry(tag.clone()).or_insert_with(|| {
+                    super::ForeignTypeReg {
+                        finalizer: None,
+                        host_registered: false,
+                        carrier_type_ids: Vec::new(),
+                    }
+                });
+                let pair = (module_idx, carrier_type_id);
+                if !entry.carrier_type_ids.contains(&pair) {
+                    entry.carrier_type_ids.push(pair);
+                }
+                if !entry.host_registered && entry.finalizer.is_none() {
+                    entry.finalizer = proto.foreign_finalizer.as_ref().map(ToString::to_string);
+                }
+                if let Some(uuid_str) = &proto.foreign_uuid {
+                    self.foreign_uuids
+                        .entry(tag.clone())
+                        .or_insert_with(|| uuid_str.to_string());
+                }
+
                 // The HostMethod children are unique to carrier structs.
-                let mut tag_for_carrier: Option<String> = None;
                 let mut method_rows: Vec<(u32, u32)> = Vec::new(); // (method_hash, method_symbol_id)
                 for (child_name, &child_id) in sym.children.iter() {
                     if let Some(child) = module.symbols.get(child_id as usize)
                         && let SymbolKind::HostMethod { type_tag, .. } = &child.kind
                     {
-                        let tag = type_tag.to_string();
-                        let entry = self.foreign_types.entry(tag.clone()).or_insert_with(|| {
-                            super::ForeignTypeReg {
-                                finalizer: None,
-                                carrier_type_ids: Vec::new(),
-                            }
-                        });
-                        let pair = (module_idx, carrier_type_id);
-                        if !entry.carrier_type_ids.contains(&pair) {
-                            entry.carrier_type_ids.push(pair);
-                        }
-                        // Default the finalizer to "com.release" if the
-                        // consumer hasn't explicitly registered one.
-                        if entry.finalizer.is_none() {
-                            entry.finalizer = Some("com.release".to_string());
-                        }
-                        tag_for_carrier = Some(tag);
+                        debug_assert_eq!(type_tag.as_str(), tag.as_str());
                         method_rows.push((Self::hash_method_name(child_name.as_str()), child_id));
                     }
                 }
-
-                // Stash the proto's UUID on the foreign type registry
-                // keyed by tag, when present. The carrier's
-                // conforming_to[0] is the underlying foreign proto.
-                let proto_type_id_opt = if let Some(tag) = tag_for_carrier.clone()
-                    && let Some(TypeDefinition::Struct(s)) =
-                        module.types.get(carrier_type_id as usize)
-                    && let Some(&proto_id) = s.conforming_to.first()
-                {
-                    if let Some(TypeDefinition::Proto(p)) = module.types.get(proto_id as usize)
-                        && let Some(uuid_str) = &p.foreign_uuid
-                    {
-                        self.foreign_uuids
-                            .entry(tag)
-                            .or_insert_with(|| uuid_str.to_string());
-                    }
-                    Some(proto_id)
-                } else {
-                    None
-                };
 
                 // Maintain the per-type-tag method index and emit cross-module
                 // vtable entries so that a foreign value stamped with another
                 // module's carrier_type_id still dispatches correctly when its
                 // method is called from this module (and vice versa).
-                if let (Some(tag), Some(proto_type_id)) = (tag_for_carrier, proto_type_id_opt) {
+                {
                     let new_rows: Vec<ForeignCarrierMethod> = method_rows
                         .iter()
                         .map(|&(method_hash, method_symbol_id)| ForeignCarrierMethod {
                             _module_idx: module_idx,
                             carrier_type_id,
-                            proto_type_id,
+                            proto_type_id: proto_id,
                             method_hash,
                             method_symbol_id,
                         })
