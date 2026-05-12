@@ -180,10 +180,7 @@ impl Context {
                         }
                     }
 
-                    let bucket = self
-                        .foreign_carrier_methods
-                        .entry(tag)
-                        .or_default();
+                    let bucket = self.foreign_carrier_methods.entry(tag).or_default();
                     bucket.extend(new_rows);
                 }
             }

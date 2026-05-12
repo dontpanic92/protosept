@@ -1672,9 +1672,9 @@ fn map_host_return_ty(
             // `box<T>`, `ref<T>`, and `&mut T` are handle-copy wrappers (see
             // `Type::is_copy_treated`); on the host ABI they are
             // indistinguishable from `T` itself, so unwrap and recurse.
-            Type::BoxType(inner)
-            | Type::Reference(inner)
-            | Type::MutableReference(inner) => map_ty(inner, symbol_table),
+            Type::BoxType(inner) | Type::Reference(inner) | Type::MutableReference(inner) => {
+                map_ty(inner, symbol_table)
+            }
             Type::Proto(type_id) => {
                 if let Some(TypeDefinition::Proto(proto)) =
                     symbol_table.types.get(*type_id as usize)
