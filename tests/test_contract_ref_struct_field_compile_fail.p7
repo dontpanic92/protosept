@@ -1,0 +1,9 @@
+// compile_fail: struct fields cannot store non-escapable ref<T> values
+
+struct ContractRefHolder(
+    value: ref<int>,
+);
+
+fn main() -> int {
+    0
+}

@@ -555,6 +555,13 @@ impl Generator {
                 let mut field_types = Vec::new();
                 for field_type in &variant.fields {
                     let resolved_type = self.get_semantic_type(field_type)?;
+                    if self.type_contains_ref(&resolved_type) {
+                        return Err(SemanticError::Other(format!(
+                            "Enum variant '{}' cannot contain non-escapable ref<T> payload type '{}'",
+                            variant.name,
+                            self.type_to_string(&resolved_type)
+                        )));
+                    }
                     field_types.push(resolved_type);
                 }
                 resolved_variants.push((variant.name.clone(), field_types));
@@ -763,6 +770,18 @@ impl Generator {
             let mut resolved_fields = Vec::new();
             for (idx, f) in fields.iter().enumerate() {
                 let field_type = self.get_semantic_type(&f.field_type)?;
+                if self.type_contains_ref(&field_type) {
+                    let field_name = f
+                        .name
+                        .as_ref()
+                        .map(|n| n.name.to_string())
+                        .unwrap_or_else(|| idx.to_string());
+                    return Err(SemanticError::Other(format!(
+                        "Struct field '{}' cannot contain non-escapable ref<T> type '{}'",
+                        field_name,
+                        self.type_to_string(&field_type)
+                    )));
+                }
                 let field_name = f
                     .name
                     .as_ref()

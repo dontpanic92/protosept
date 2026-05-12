@@ -1,0 +1,37 @@
+import test.test;
+
+struct ContractMaybe(
+    value: ?int,
+    items: array<int>,
+);
+
+fn accept_nullable(value: ?int) -> int {
+    if value == null { 1 } else { 0 }
+}
+
+fn accept_array(items: array<int>) -> int {
+    items.len()
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_null_argument_uses_parameter_context() -> int {
+    accept_nullable(null)
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_empty_array_argument_uses_parameter_context() -> int {
+    accept_array([])
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_constructor_uses_field_context() -> int {
+    let maybe = ContractMaybe(null, []);
+    if maybe.value == null { maybe.items.len() + 1 } else { 0 }
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_struct_update_uses_field_context() -> int {
+    let maybe = ContractMaybe(null, [1]);
+    let updated = ContractMaybe(...maybe, value = null, items = []);
+    if updated.value == null { updated.items.len() + 1 } else { 0 }
+}

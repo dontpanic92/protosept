@@ -88,6 +88,15 @@ impl Generator {
             let substituted_parsed_type =
                 self.substitute_parsed_type(parsed_field_type, &parsed_type_substitution);
             let resolved_type = self.get_semantic_type(&substituted_parsed_type)?;
+            if self.type_contains_ref(&resolved_type) {
+                return Err(SemanticError::Other(format!(
+                    "Struct field '{}' cannot contain non-escapable ref<T> type '{}' at line {} column {}",
+                    field_name,
+                    self.type_to_string(&resolved_type),
+                    line,
+                    col
+                )));
+            }
             monomorphized_fields.push((field_name.clone(), resolved_type));
         }
 
@@ -200,6 +209,15 @@ impl Generator {
                 let substituted_parsed_type =
                     self.substitute_parsed_type(parsed_field_type, &parsed_type_substitution);
                 let resolved_type = self.get_semantic_type(&substituted_parsed_type)?;
+                if self.type_contains_ref(&resolved_type) {
+                    return Err(SemanticError::Other(format!(
+                        "Enum variant '{}' cannot contain non-escapable ref<T> payload type '{}' at line {} column {}",
+                        variant_name,
+                        self.type_to_string(&resolved_type),
+                        line,
+                        col
+                    )));
+                }
                 resolved_field_types.push(resolved_type);
             }
 

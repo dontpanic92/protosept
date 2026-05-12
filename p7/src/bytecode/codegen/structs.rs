@@ -122,7 +122,8 @@ impl Generator {
         // For each field: use update expression if provided, else load from base
         for (field_idx, (field_name, field_type)) in struct_def.fields.iter().enumerate() {
             if let Some(update_expr) = update_map.remove(field_name) {
-                let expr_ty = self.generate_expression(update_expr)?;
+                let expr_ty =
+                    self.generate_expression_with_expected_type(update_expr, Some(field_type))?;
                 if !self.types_compatible(&expr_ty, field_type) {
                     return Err(SemanticError::TypeMismatch {
                         lhs: format!("field '{}' expects {}", field_name, field_type.to_string()),

@@ -141,7 +141,7 @@ impl Generator {
             // Check if this expression involves a move (before consuming it)
             let move_info = self.compute_move_info(&expr);
 
-            let arg_ty = self.generate_expression(expr)?;
+            let arg_ty = self.generate_expression_with_expected_type(expr, Some(param_ty))?;
 
             // Mark variable as moved if needed
             if let Some((id, is_param)) = move_info {

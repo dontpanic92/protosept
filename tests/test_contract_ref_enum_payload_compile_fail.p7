@@ -1,0 +1,9 @@
+// compile_fail: enum payloads cannot store non-escapable ref<T> values
+
+enum ContractRefPayload(
+    Value: ref<int>,
+);
+
+fn main() -> int {
+    0
+}
