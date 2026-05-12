@@ -1,0 +1,9 @@
+import test.test;
+
+@test(expected_type = "int", expected_value = "1")
+fn test_assign_null_to_nullable_local() -> int {
+    let mut value: ?int = null;
+    value = null;
+    if value == null { 1 } else { 0 }
+}
+

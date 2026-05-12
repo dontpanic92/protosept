@@ -1,0 +1,22 @@
+// compile_fail: generic proto bounds require full method signatures, not just method names
+
+proto ContractFormatter {
+    fn format(self: ref<ContractFormatter>, width: int) -> string;
+}
+
+struct ContractBadFormatter(
+    value: int,
+) {
+    pub fn format(self: ref<ContractBadFormatter>, width: float) -> string {
+        "bad"
+    }
+}
+
+fn use_formatter<T: ContractFormatter>(x: ref<T>) -> string {
+    x.format(10)
+}
+
+fn main() -> string {
+    let formatter = ContractBadFormatter(1);
+    use_formatter<ContractBadFormatter>(ref(formatter))
+}

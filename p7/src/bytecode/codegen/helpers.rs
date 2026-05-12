@@ -619,57 +619,170 @@ impl Generator {
         }
     }
 
+    pub(super) fn validate_no_intrinsic_or_foreign_attr(
+        attributes: &[crate::ast::Attribute],
+        target: &str,
+    ) -> SaResult<()> {
+        for attr in attributes {
+            if attr.name.name == "intrinsic" || attr.name.name == "foreign" {
+                return Err(SemanticError::Other(format!(
+                    "@{} is not valid on {} declarations at line {} column {}",
+                    attr.name.name, target, attr.name.line, attr.name.col
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate_proto_attrs(attributes: &[crate::ast::Attribute]) -> SaResult<()> {
+        for attr in attributes {
+            if attr.name.name == "intrinsic" {
+                return Err(SemanticError::Other(format!(
+                    "@intrinsic is not valid on proto declarations at line {} column {}",
+                    attr.name.line, attr.name.col
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate_intrinsic_name(
+        attributes: &[crate::ast::Attribute],
+    ) -> SaResult<Option<InternedString>> {
+        let mut found = None;
+        for attr in attributes {
+            if attr.name.name != "intrinsic" {
+                continue;
+            }
+            if found.is_some() {
+                return Err(SemanticError::Other(format!(
+                    "Duplicate @intrinsic attribute at line {} column {}",
+                    attr.name.line, attr.name.col
+                )));
+            }
+            if attr.arguments.len() != 1 {
+                return Err(SemanticError::Other(format!(
+                    "@intrinsic requires exactly one string argument at line {} column {}",
+                    attr.name.line, attr.name.col
+                )));
+            }
+
+            let (name_opt, expr) = &attr.arguments[0];
+            if let Some(name) = name_opt
+                && name.name != "name"
+            {
+                return Err(SemanticError::Other(format!(
+                    "@intrinsic unknown argument '{}' at line {} column {}",
+                    name.name, name.line, name.col
+                )));
+            }
+
+            let Expression::StringLiteral(s) = expr else {
+                return Err(SemanticError::Other(format!(
+                    "@intrinsic argument must be a string literal at line {} column {}",
+                    attr.name.line, attr.name.col
+                )));
+            };
+            found = Some(s.clone());
+        }
+        Ok(found)
+    }
+
     pub(super) fn extract_intrinsic_name(
         attributes: &[crate::ast::Attribute],
     ) -> Option<InternedString> {
-        for attr in attributes {
-            if attr.name.name == "intrinsic" {
-                // Look for the intrinsic name in the arguments
-                for (name_opt, expr) in &attr.arguments {
-                    // Check if this is a positional argument (first arg) or named "name"
-                    let is_target = name_opt.as_ref().is_none_or(|n| n.name == "name");
-                    if is_target && let Expression::StringLiteral(s) = expr {
-                        return Some(s.clone());
-                    }
-                }
-            }
-        }
-        None
+        Self::validate_intrinsic_name(attributes).ok().flatten()
     }
 
     /// Parsed contents of a `@foreign(...)` attribute. Required keys are
     /// `dispatcher` and `type_tag`; `finalizer` is optional.
     pub(super) fn extract_foreign_attrs(
         attributes: &[crate::ast::Attribute],
-    ) -> Option<ForeignAttrs> {
+    ) -> SaResult<Option<ForeignAttrs>> {
         let mut found = false;
         let mut out = ForeignAttrs::default();
         for attr in attributes {
             if attr.name.name != "foreign" {
                 continue;
             }
+            if found {
+                return Err(SemanticError::Other(format!(
+                    "Duplicate @foreign attribute at line {} column {}",
+                    attr.name.line, attr.name.col
+                )));
+            }
             found = true;
             for (name_opt, expr) in &attr.arguments {
                 let key = match name_opt {
                     Some(id) => id.name.clone(),
-                    None => continue, // @foreign uses named keys only
+                    None => {
+                        return Err(SemanticError::Other(format!(
+                            "@foreign arguments must be named at line {} column {}",
+                            attr.name.line, attr.name.col
+                        )));
+                    }
                 };
                 let value = match expr {
                     Expression::StringLiteral(s) => s.clone(),
-                    _ => continue, // non-string values rejected in semantic
+                    _ => {
+                        return Err(SemanticError::Other(format!(
+                            "@foreign argument '{}' must be a string literal at line {} column {}",
+                            key, attr.name.line, attr.name.col
+                        )));
+                    }
                 };
-                if key == "dispatcher" {
-                    out.dispatcher = Some(value);
-                } else if key == "finalizer" {
-                    out.finalizer = Some(value);
-                } else if key == "type_tag" {
-                    out.type_tag = Some(value);
-                } else if key == "uuid" {
-                    out.uuid = Some(value);
+                if value.is_empty() {
+                    return Err(SemanticError::Other(format!(
+                        "@foreign argument '{}' cannot be empty at line {} column {}",
+                        key, attr.name.line, attr.name.col
+                    )));
                 }
+
+                let target = match key.as_str() {
+                    "dispatcher" => &mut out.dispatcher,
+                    "finalizer" => &mut out.finalizer,
+                    "type_tag" => &mut out.type_tag,
+                    "uuid" => &mut out.uuid,
+                    _ => {
+                        return Err(SemanticError::Other(format!(
+                            "@foreign unknown argument '{}' at line {} column {}",
+                            key, attr.name.line, attr.name.col
+                        )));
+                    }
+                };
+                if target.is_some() {
+                    return Err(SemanticError::Other(format!(
+                        "Duplicate @foreign argument '{}' at line {} column {}",
+                        key, attr.name.line, attr.name.col
+                    )));
+                }
+                if key == "uuid" && !Self::is_valid_uuid_literal(value.as_str()) {
+                    return Err(SemanticError::Other(format!(
+                        "@foreign uuid '{}' is not a valid UUID at line {} column {}",
+                        value, attr.name.line, attr.name.col
+                    )));
+                }
+                *target = Some(value);
             }
         }
-        if found { Some(out) } else { None }
+        if found { Ok(Some(out)) } else { Ok(None) }
+    }
+
+    fn is_valid_uuid_literal(value: &str) -> bool {
+        let bytes = value.as_bytes();
+        if bytes.len() != 36 {
+            return false;
+        }
+        for (idx, byte) in bytes.iter().enumerate() {
+            if matches!(idx, 8 | 13 | 18 | 23) {
+                if *byte != b'-' {
+                    return false;
+                }
+            } else if !byte.is_ascii_hexdigit() {
+                return false;
+            }
+        }
+        true
     }
 
     /// Resolve a protocol identifier to its TypeId

@@ -207,8 +207,6 @@ impl Generator {
         identifier: Identifier,
         rhs: Expression,
     ) -> SaResult<Type> {
-        let rhs_ty = self.generate_expression(rhs)?;
-
         // When inside a function/method, check local scope first
         if let Some(ref scope) = self.local_scope {
             // Try local variable first
@@ -229,6 +227,8 @@ impl Generator {
                     )));
                 }
 
+                let rhs_ty =
+                    self.generate_expression_with_expected_type(rhs, Some(&lhs_ty))?;
                 if !self.types_compatible(&rhs_ty, &lhs_ty) {
                     return Err(SemanticError::TypeMismatch {
                         lhs: format!(
@@ -276,6 +276,7 @@ impl Generator {
                 )));
             }
 
+            let rhs_ty = self.generate_expression_with_expected_type(rhs, Some(&lhs_ty))?;
             if !self.types_compatible(&rhs_ty, &lhs_ty) {
                 return Err(SemanticError::TypeMismatch {
                     lhs: format!(
@@ -329,7 +330,7 @@ impl Generator {
                 let mut type_map = std::collections::HashMap::new();
                 let lhs_ty = self.map_type_from_module(&imported_module, &raw_ty, &mut type_map)?;
 
-                let rhs_ty = self.generate_expression(rhs)?;
+                let rhs_ty = self.generate_expression_with_expected_type(rhs, Some(&lhs_ty))?;
                 if !self.types_compatible(&rhs_ty, &lhs_ty) {
                     return Err(SemanticError::TypeMismatch {
                         lhs: format!(
@@ -363,7 +364,6 @@ impl Generator {
         }
 
         let object_ty = self.generate_expression(object.clone())?;
-        let rhs_ty = self.generate_expression(rhs)?;
 
         if matches!(object_ty, Type::Reference(_)) {
             return Err(SemanticError::Other(format!(
@@ -383,9 +383,12 @@ impl Generator {
                 .enumerate()
                 .find(|(_i, (fname, _))| fname == &field.name)
             {
-                if !self.types_compatible(&rhs_ty, ftype) {
+                let field_type = ftype.clone();
+                let rhs_ty =
+                    self.generate_expression_with_expected_type(rhs, Some(&field_type))?;
+                if !self.types_compatible(&rhs_ty, &field_type) {
                     return Err(SemanticError::TypeMismatch {
-                        lhs: format!("field '{}' has type {}", field.name, ftype.to_string()),
+                        lhs: format!("field '{}' has type {}", field.name, field_type.to_string()),
                         rhs: format!("assigned value has type {}", rhs_ty.to_string()),
                         pos: self.make_pos(field.line, field.col),
                     });
@@ -451,7 +454,7 @@ impl Generator {
         }
 
         // Generate RHS expression
-        let rhs_ty = self.generate_expression(rhs)?;
+        let rhs_ty = self.generate_expression_with_expected_type(rhs, Some(&element_type))?;
         if !self.types_compatible(&rhs_ty, &element_type) {
             return Err(SemanticError::TypeMismatch {
                 lhs: self.type_to_string(&element_type),

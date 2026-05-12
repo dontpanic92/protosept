@@ -1,0 +1,10 @@
+// compile_fail: @intrinsic requires exactly one string literal argument
+
+@intrinsic(name = 123)
+fn bad_intrinsic() -> int {
+    0
+}
+
+fn main() -> int {
+    bad_intrinsic()
+}

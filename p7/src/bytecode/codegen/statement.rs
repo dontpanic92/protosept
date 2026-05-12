@@ -521,6 +521,8 @@ impl Generator {
         values: Vec<EnumVariant>,
         methods: Vec<StructMethod>,
     ) -> SaResult<Type> {
+        Self::validate_no_intrinsic_or_foreign_attr(&attributes, "enum")?;
+
         let symbol_id = self
             .symbol_table
             .find_symbol_for_type(type_id)
@@ -706,6 +708,8 @@ impl Generator {
         fields: Vec<StructField>,
         methods: Vec<StructMethod>,
     ) -> SaResult<Type> {
+        Self::validate_no_intrinsic_or_foreign_attr(&attributes, "struct")?;
+
         let symbol_id = self
             .symbol_table
             .find_symbol_for_type(type_id)
@@ -864,6 +868,8 @@ impl Generator {
         attributes: Vec<Attribute>,
         methods: Vec<ProtoMethod>,
     ) -> SaResult<Type> {
+        Self::validate_proto_attrs(&attributes)?;
+
         let symbol_id = self
             .symbol_table
             .find_symbol_for_type(type_id)
@@ -896,7 +902,7 @@ impl Generator {
             methods_with_types.push((m.name.name.clone(), params, return_type));
         }
 
-        let foreign_attrs = Self::extract_foreign_attrs(&attributes);
+        let foreign_attrs = Self::extract_foreign_attrs(&attributes)?;
         let ty = Proto {
             qualified_name: qualified_name.clone(),
             methods: methods_with_types.clone(),
@@ -1095,7 +1101,8 @@ impl Generator {
                         None
                     };
 
-                let ty = self.generate_expression(expression)?;
+                let ty =
+                    self.generate_expression_with_expected_type(expression, Some(&expected))?;
 
                 // Mark variable as moved if needed
                 if let Some((id, is_param)) = move_info {
@@ -1500,7 +1507,7 @@ impl Generator {
         _foreign_uuid: Option<&str>,
     ) -> SaResult<()> {
         // Pull the dispatcher name from the proto's @foreign attribute.
-        let dispatcher = Self::extract_foreign_attrs(attributes)
+        let dispatcher = Self::extract_foreign_attrs(attributes)?
             .and_then(|f| f.dispatcher)
             .ok_or_else(|| {
                 SemanticError::Other(format!(

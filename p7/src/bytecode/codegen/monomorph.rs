@@ -604,9 +604,8 @@ impl Generator {
                 // Check if the concrete type satisfies this proto
                 match concrete_type_id {
                     Some(tid) => {
-                        // Use conformance checking — the type must have all required methods
                         if self
-                            .check_type_satisfies_proto(&[proto_type_id], tid)
+                            .check_struct_conformance(tid, &[proto_type_id], line, col)
                             .is_err()
                         {
                             let type_name = self.type_display_name(concrete_type);
@@ -659,34 +658,6 @@ impl Generator {
             }
         }
         None
-    }
-
-    /// Lightweight conformance check: does the type at `type_id` implement all methods required by each proto?
-    fn check_type_satisfies_proto(&self, proto_ids: &[TypeId], type_id: TypeId) -> Result<(), ()> {
-        for &proto_id in proto_ids {
-            let proto = match self.symbol_table.get_type(proto_id) {
-                TypeDefinition::Proto(p) => p,
-                _ => return Err(()),
-            };
-
-            let type_qualified_name = match self.symbol_table.get_type(type_id) {
-                TypeDefinition::Struct(s) => s.qualified_name.clone(),
-                TypeDefinition::Enum(e) => e.qualified_name.clone(),
-                _ => return Err(()),
-            };
-
-            for (method_name, _param_types, _return_type) in &proto.methods {
-                let qualified_method_name = format!("{}.{}", type_qualified_name, method_name);
-                let found = self.symbol_table.symbols.iter().any(|s| {
-                    s.qualified_name == qualified_method_name
-                        && matches!(s.kind, SymbolKind::Function { .. })
-                });
-                if !found {
-                    return Err(());
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Get a human-readable name for a type (for error messages)

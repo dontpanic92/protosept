@@ -1,0 +1,10 @@
+// compile_fail: @foreign accepts only known named string arguments
+
+@foreign(dispatcher = "contract.dispatch", type_tag = "contract-tag", unknown = "bad")
+proto ContractForeign {
+    fn call(self: ref<ContractForeign>) -> int;
+}
+
+fn main() -> int {
+    0
+}

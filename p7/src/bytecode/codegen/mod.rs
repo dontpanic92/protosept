@@ -873,7 +873,7 @@ impl Generator {
             (ret_type, None)
         };
 
-        let intrinsic_name = Self::extract_intrinsic_name(&declaration.attributes);
+        let intrinsic_name = Self::validate_intrinsic_name(&declaration.attributes)?;
 
         let ty = Function {
             qualified_name: qualified_name.clone(),
@@ -972,7 +972,7 @@ impl Generator {
             Type::Primitive(PrimitiveType::Unit)
         };
 
-        let intrinsic_name = Self::extract_intrinsic_name(&declaration.attributes);
+        let intrinsic_name = Self::validate_intrinsic_name(&declaration.attributes)?;
 
         // Push the symbol onto the chain for body generation
         self.symbol_table.push_existing_symbol(symbol_id);
@@ -1138,7 +1138,7 @@ impl Generator {
             (ret_type, None)
         };
 
-        let intrinsic_name = Self::extract_intrinsic_name(&declaration.attributes);
+        let intrinsic_name = Self::validate_intrinsic_name(&declaration.attributes)?;
 
         let ty = Function {
             qualified_name: qualified_name.clone(),
