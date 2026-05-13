@@ -39,7 +39,7 @@ pub(crate) fn tuple_new(ctx: &mut Context) -> ContextResult<()> {
         }
     }
     elements.reverse();
-    ctx.stack_frame_mut()?.stack.push(Data::Tuple(elements));
+    ctx.stack_frame_mut()?.stack.push(Data::tuple(elements));
     Ok(())
 }
 

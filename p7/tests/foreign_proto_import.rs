@@ -41,11 +41,11 @@ fn host_counter_invoke(ctx: &mut Context) -> Result<(), p7::errors::RuntimeError
         Some(Data::Array(_)) => (),
         other => panic!("expected return_ty array, got {:?}", other),
     };
-    assert_eq!(type_tag, "counter.Counter");
+    assert_eq!(type_tag.as_ref(), "counter.Counter");
 
     let _handle = ctx.pop_foreign("counter.Counter")?;
 
-    match method.as_str() {
+    match method.as_ref() {
         "answer" => {
             ctx.stack_frame_mut()?.stack.push(Data::Int(42));
         }

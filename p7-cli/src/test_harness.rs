@@ -243,7 +243,7 @@ fn run_test_case(
         P7Value::Float(actual_val) => expected_value_str
             .parse::<f64>()
             .is_ok_and(|expected_val| (actual_val - expected_val).abs() < 1e-9),
-        P7Value::String(actual_val) => actual_val == expected_value_str,
+        P7Value::String(actual_val) => actual_val.as_ref() == expected_value_str.as_str(),
         P7Value::Array(elements) => {
             let formatted = format_array(elements);
             formatted == *expected_value_str
@@ -259,7 +259,7 @@ fn run_test_case(
         let found = match p7_result {
             P7Value::Int(i) => i.to_string(),
             P7Value::Float(f) => f.to_string(),
-            P7Value::String(s) => s.clone(),
+            P7Value::String(s) => s.to_string(),
             P7Value::Array(elements) => format_array(&elements),
             _ => format!("{:?}", p7_result),
         };

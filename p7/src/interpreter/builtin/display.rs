@@ -9,7 +9,7 @@ pub(crate) fn builtin_entry_script_dir(ctx: &mut Context) -> ContextResult<()> {
             let dir_string = dir.to_string();
             ctx.stack_frame_mut()?
                 .stack
-                .push(Data::Some(Box::new(Data::String(dir_string))));
+                .push(Data::some(Data::string(dir_string)));
         }
         None => {
             ctx.stack_frame_mut()?.stack.push(Data::Null);
@@ -31,7 +31,7 @@ pub(crate) fn display_int(ctx: &mut Context) -> ContextResult<()> {
         Data::Int(v) => {
             ctx.stack_frame_mut()?
                 .stack
-                .push(Data::String(v.to_string()));
+                .push(Data::string(v.to_string()));
             Ok(())
         }
         _ => Err(RuntimeError::Other(format!(
@@ -54,7 +54,7 @@ pub(crate) fn display_float(ctx: &mut Context) -> ContextResult<()> {
         Data::Float(v) => {
             ctx.stack_frame_mut()?
                 .stack
-                .push(Data::String(v.to_string()));
+                .push(Data::string(v.to_string()));
             Ok(())
         }
         _ => Err(RuntimeError::Other(format!(
@@ -76,9 +76,7 @@ pub(crate) fn display_bool(ctx: &mut Context) -> ContextResult<()> {
     match value {
         Data::Int(v) => {
             let text = if v == 0 { "false" } else { "true" };
-            ctx.stack_frame_mut()?
-                .stack
-                .push(Data::String(text.to_string()));
+            ctx.stack_frame_mut()?.stack.push(Data::string(text));
             Ok(())
         }
         _ => Err(RuntimeError::Other(format!(
@@ -107,7 +105,7 @@ pub(crate) fn display_char(ctx: &mut Context) -> ContextResult<()> {
             })?;
             ctx.stack_frame_mut()?
                 .stack
-                .push(Data::String(ch.to_string()));
+                .push(Data::string(ch.to_string()));
             Ok(())
         }
         _ => Err(RuntimeError::Other(format!(
@@ -128,9 +126,7 @@ pub(crate) fn display_unit(ctx: &mut Context) -> ContextResult<()> {
 
     match value {
         Data::Int(_) => {
-            ctx.stack_frame_mut()?
-                .stack
-                .push(Data::String("()".to_string()));
+            ctx.stack_frame_mut()?.stack.push(Data::string("()"));
             Ok(())
         }
         _ => Err(RuntimeError::Other(format!(

@@ -17,12 +17,12 @@ pub fn encode_return_ty(rt: &crate::semantic::HostReturnTy) -> Data {
         H::Float => vec![Data::Int(2)],
         H::String => vec![Data::Int(3)],
         H::Foreign { type_tag } => {
-            vec![Data::Int(4), Data::String(type_tag.to_string())]
+            vec![Data::Int(4), Data::string(type_tag)]
         }
         H::Optional(inner) => vec![Data::Int(5), encode_return_ty(inner)],
         H::Array(inner) => vec![Data::Int(6), encode_return_ty(inner)],
     };
-    Data::Array(arr)
+    Data::array(arr)
 }
 
 impl Context {
@@ -236,7 +236,7 @@ impl Context {
         let base_depth = self.stack.len();
         let current_module_idx = self.stack.last().map(|f| f.module_idx).unwrap_or(0);
 
-        let mut params = captures;
+        let mut params = captures.as_ref().clone();
         params.extend(args);
         let target_pc =
             self.resolve_instruction_address(current_module_idx, func_addr, "closure address")?;
@@ -282,7 +282,7 @@ impl Context {
         let base_depth = self.stack.len();
         let current_module_idx = self.stack.last().map(|f| f.module_idx).unwrap_or(0);
 
-        let mut params = captures;
+        let mut params = captures.as_ref().clone();
         params.extend(args);
         let target_pc =
             self.resolve_instruction_address(current_module_idx, func_addr, "closure address")?;
@@ -353,7 +353,7 @@ impl Context {
                         .clone();
                     self.stack_frame_mut()?
                         .stack
-                        .push(Data::String(string_const));
+                        .push(Data::string(string_const));
                 }
                 Instruction::Ldvar(idx) => {
                     let locals_len = self.stack_frame()?.locals.len();
@@ -1109,8 +1109,8 @@ impl Context {
                                 .push(Data::Int(vtable_slot as i64));
                             self.stack_frame_mut()?
                                 .stack
-                                .push(Data::String(method_name));
-                            self.stack_frame_mut()?.stack.push(Data::String(type_tag));
+                                .push(Data::string(method_name));
+                            self.stack_frame_mut()?.stack.push(Data::string(type_tag));
                             let host_fn =
                                 self.host_functions.get(&dispatcher_name).ok_or_else(|| {
                                     RuntimeError::Other(format!(
@@ -1262,9 +1262,7 @@ impl Context {
                         .stack
                         .pop()
                         .ok_or(RuntimeError::StackUnderflow)?;
-                    self.stack_frame_mut()?
-                        .stack
-                        .push(Data::Some(Box::new(value)));
+                    self.stack_frame_mut()?.stack.push(Data::some(value));
                 }
                 Instruction::IsNull => {
                     let nullable = self
@@ -1285,7 +1283,7 @@ impl Context {
                         .ok_or(RuntimeError::StackUnderflow)?;
                     match nullable {
                         Data::Some(value) => {
-                            self.stack_frame_mut()?.stack.push(*value);
+                            self.stack_frame_mut()?.stack.push(value.as_ref().clone());
                         }
                         Data::Null => {
                             return Err(RuntimeError::Other(
@@ -1312,7 +1310,7 @@ impl Context {
                         .ok_or(RuntimeError::StackUnderflow)?;
                     match nullable {
                         Data::Some(value) => {
-                            self.stack_frame_mut()?.stack.push(*value);
+                            self.stack_frame_mut()?.stack.push(value.as_ref().clone());
                         }
                         Data::Null => {
                             self.stack_frame_mut()?.stack.push(default);
@@ -1336,10 +1334,9 @@ impl Context {
                         captures.push(val);
                     }
                     captures.reverse();
-                    self.stack_frame_mut()?.stack.push(Data::Closure {
-                        func_addr,
-                        captures,
-                    });
+                    self.stack_frame_mut()?
+                        .stack
+                        .push(Data::closure(func_addr, captures));
                 }
 
                 Instruction::CallClosure(arg_count) => {
@@ -1370,7 +1367,7 @@ impl Context {
                             let current_module_idx =
                                 self.stack.last().map(|f| f.module_idx).unwrap_or(0);
                             // Create new frame. Params = captures + args
-                            let mut params = captures;
+                            let mut params = captures.as_ref().clone();
                             params.extend(args);
                             let target_pc = self.resolve_instruction_address(
                                 current_module_idx,

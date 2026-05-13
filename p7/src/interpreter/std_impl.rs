@@ -42,7 +42,7 @@ fn std_io_read_file(ctx: &mut Context) -> ContextResult<()> {
 
     match path_val {
         Data::String(path) => {
-            let read_result = std::fs::read_to_string(&path).or_else(|err| {
+            let read_result = std::fs::read_to_string(path.as_ref()).or_else(|err| {
                 #[cfg(windows)]
                 {
                     if path.starts_with(r"\\?\") && path.contains('/') {
@@ -56,7 +56,7 @@ fn std_io_read_file(ctx: &mut Context) -> ContextResult<()> {
                 Ok(contents) => {
                     ctx.stack_frame_mut()?
                         .stack
-                        .push(Data::Some(Box::new(Data::String(contents))));
+                        .push(Data::some(Data::string(contents)));
                 }
                 Err(_) => {
                     ctx.stack_frame_mut()?.stack.push(Data::Null);

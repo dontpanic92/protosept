@@ -41,7 +41,7 @@ pub(crate) fn hashmap_new(ctx: &mut Context) -> ContextResult<()> {
         pairs.push((chunk[0].clone(), chunk[1].clone()));
     }
 
-    ctx.stack_frame_mut()?.stack.push(Data::Map(pairs));
+    ctx.stack_frame_mut()?.stack.push(Data::map(pairs));
     Ok(())
 }
 
@@ -82,7 +82,7 @@ pub(crate) fn hashmap_get(ctx: &mut Context) -> ContextResult<()> {
                 .find(|(k, _)| *k == key)
                 .map(|(_, v)| v.clone());
             match found {
-                Some(v) => ctx.stack_frame_mut()?.stack.push(Data::Some(Box::new(v))),
+                Some(v) => ctx.stack_frame_mut()?.stack.push(Data::some(v)),
                 None => ctx.stack_frame_mut()?.stack.push(Data::Null),
             }
             Ok(())
@@ -115,6 +115,7 @@ pub(crate) fn hashmap_set(ctx: &mut Context) -> ContextResult<()> {
             })?;
             match boxed_data {
                 Data::Map(pairs) => {
+                    let pairs = std::rc::Rc::make_mut(pairs);
                     if let Some(entry) = pairs.iter_mut().find(|(k, _)| *k == key) {
                         entry.1 = value;
                     } else {
@@ -152,12 +153,13 @@ pub(crate) fn hashmap_remove(ctx: &mut Context) -> ContextResult<()> {
             })?;
             match boxed_data {
                 Data::Map(pairs) => {
+                    let pairs = std::rc::Rc::make_mut(pairs);
                     let removed = pairs
                         .iter()
                         .position(|(k, _)| *k == key)
                         .map(|idx| pairs.remove(idx).1);
                     match removed {
-                        Some(v) => ctx.stack_frame_mut()?.stack.push(Data::Some(Box::new(v))),
+                        Some(v) => ctx.stack_frame_mut()?.stack.push(Data::some(v)),
                         None => ctx.stack_frame_mut()?.stack.push(Data::Null),
                     }
                     Ok(())
@@ -206,8 +208,8 @@ pub(crate) fn hashmap_keys(ctx: &mut Context) -> ContextResult<()> {
 
     match map_val {
         Data::Map(pairs) => {
-            let keys: Vec<Data> = pairs.into_iter().map(|(k, _)| k).collect();
-            ctx.stack_frame_mut()?.stack.push(Data::Array(keys));
+            let keys: Vec<Data> = pairs.iter().map(|(k, _)| k.clone()).collect();
+            ctx.stack_frame_mut()?.stack.push(Data::array(keys));
             Ok(())
         }
         _ => Err(RuntimeError::Other(
@@ -225,8 +227,8 @@ pub(crate) fn hashmap_values(ctx: &mut Context) -> ContextResult<()> {
 
     match map_val {
         Data::Map(pairs) => {
-            let values: Vec<Data> = pairs.into_iter().map(|(_, v)| v).collect();
-            ctx.stack_frame_mut()?.stack.push(Data::Array(values));
+            let values: Vec<Data> = pairs.iter().map(|(_, v)| v.clone()).collect();
+            ctx.stack_frame_mut()?.stack.push(Data::array(values));
             Ok(())
         }
         _ => Err(RuntimeError::Other(

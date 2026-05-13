@@ -68,7 +68,7 @@ pub(crate) fn string_concat(ctx: &mut Context) -> ContextResult<()> {
         (Data::String(a), Data::String(b)) => {
             ctx.stack_frame_mut()?
                 .stack
-                .push(Data::String(format!("{}{}", a, b)));
+                .push(Data::string(format!("{}{}", a, b)));
             Ok(())
         }
         (Data::String(_), other) => Err(RuntimeError::Other(format!(
@@ -135,7 +135,7 @@ pub(crate) fn string_substring(ctx: &mut Context) -> ContextResult<()> {
                     .take(clamped_end - clamped_start)
                     .collect()
             };
-            ctx.stack_frame_mut()?.stack.push(Data::String(result));
+            ctx.stack_frame_mut()?.stack.push(Data::string(result));
             Ok(())
         }
         _ => Err(RuntimeError::Other(
@@ -166,7 +166,7 @@ pub(crate) fn string_char_at(ctx: &mut Context) -> ContextResult<()> {
                 Some(ch) => {
                     ctx.stack_frame_mut()?
                         .stack
-                        .push(Data::Some(Box::new(Data::String(ch.to_string()))));
+                        .push(Data::some(Data::string(ch.to_string())));
                 }
                 None => {
                     ctx.stack_frame_mut()?.stack.push(Data::Null);
@@ -194,11 +194,8 @@ pub(crate) fn string_split(ctx: &mut Context) -> ContextResult<()> {
 
     match (self_val, delim_val) {
         (Data::String(s), Data::String(delim)) => {
-            let parts: Vec<Data> = s
-                .split(&delim)
-                .map(|part| Data::String(part.to_string()))
-                .collect();
-            ctx.stack_frame_mut()?.stack.push(Data::Array(parts));
+            let parts: Vec<Data> = s.split(delim.as_ref()).map(Data::string).collect();
+            ctx.stack_frame_mut()?.stack.push(Data::array(parts));
             Ok(())
         }
         _ => Err(RuntimeError::Other(
@@ -222,7 +219,7 @@ pub(crate) fn string_index_of(ctx: &mut Context) -> ContextResult<()> {
     match (self_val, needle_val) {
         (Data::String(s), Data::String(needle)) => {
             // Find byte offset, then convert to char index
-            let result = match s.find(&needle) {
+            let result = match s.find(needle.as_ref()) {
                 Some(byte_pos) => s[..byte_pos].chars().count() as i64,
                 None => -1,
             };
@@ -249,7 +246,7 @@ pub(crate) fn string_starts_with(ctx: &mut Context) -> ContextResult<()> {
 
     match (self_val, prefix_val) {
         (Data::String(s), Data::String(prefix)) => {
-            let result = if s.starts_with(&prefix) { 1 } else { 0 };
+            let result = if s.starts_with(prefix.as_ref()) { 1 } else { 0 };
             ctx.stack_frame_mut()?.stack.push(Data::Int(result));
             Ok(())
         }
@@ -273,7 +270,7 @@ pub(crate) fn string_contains(ctx: &mut Context) -> ContextResult<()> {
 
     match (self_val, needle_val) {
         (Data::String(s), Data::String(needle)) => {
-            let result = if s.contains(&needle) { 1 } else { 0 };
+            let result = if s.contains(needle.as_ref()) { 1 } else { 0 };
             ctx.stack_frame_mut()?.stack.push(Data::Int(result));
             Ok(())
         }
@@ -297,7 +294,7 @@ pub(crate) fn string_ends_with(ctx: &mut Context) -> ContextResult<()> {
 
     match (self_val, suffix_val) {
         (Data::String(s), Data::String(suffix)) => {
-            let result = if s.ends_with(&suffix) { 1 } else { 0 };
+            let result = if s.ends_with(suffix.as_ref()) { 1 } else { 0 };
             ctx.stack_frame_mut()?.stack.push(Data::Int(result));
             Ok(())
         }
@@ -326,7 +323,7 @@ pub(crate) fn string_repeat(ctx: &mut Context) -> ContextResult<()> {
             } else {
                 s.repeat(n as usize)
             };
-            ctx.stack_frame_mut()?.stack.push(Data::String(result));
+            ctx.stack_frame_mut()?.stack.push(Data::string(result));
             Ok(())
         }
         _ => Err(RuntimeError::Other(
@@ -343,9 +340,7 @@ pub(crate) fn string_trim(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
     match self_val {
         Data::String(s) => {
-            ctx.stack_frame_mut()?
-                .stack
-                .push(Data::String(s.trim().to_string()));
+            ctx.stack_frame_mut()?.stack.push(Data::string(s.trim()));
             Ok(())
         }
         _ => Err(RuntimeError::Other(
@@ -364,7 +359,7 @@ pub(crate) fn string_trim_start(ctx: &mut Context) -> ContextResult<()> {
         Data::String(s) => {
             ctx.stack_frame_mut()?
                 .stack
-                .push(Data::String(s.trim_start().to_string()));
+                .push(Data::string(s.trim_start()));
             Ok(())
         }
         _ => Err(RuntimeError::Other(
@@ -383,7 +378,7 @@ pub(crate) fn string_trim_end(ctx: &mut Context) -> ContextResult<()> {
         Data::String(s) => {
             ctx.stack_frame_mut()?
                 .stack
-                .push(Data::String(s.trim_end().to_string()));
+                .push(Data::string(s.trim_end()));
             Ok(())
         }
         _ => Err(RuntimeError::Other(

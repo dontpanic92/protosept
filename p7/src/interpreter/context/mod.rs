@@ -284,7 +284,7 @@ impl Context {
                     .stack
                     .pop()
                     .ok_or(RuntimeError::StackUnderflow)?;
-                self.stack_frame_mut()?.stack.push(Data::Some(Box::new(v)));
+                self.stack_frame_mut()?.stack.push(Data::some(v));
                 Ok(())
             }
             None => {

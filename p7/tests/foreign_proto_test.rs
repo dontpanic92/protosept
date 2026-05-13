@@ -40,11 +40,11 @@ fn host_counter_invoke(ctx: &mut Context) -> Result<(), p7::errors::RuntimeError
         Some(Data::Array(_)) => (),
         other => panic!("expected return_ty array, got {:?}", other),
     };
-    assert_eq!(type_tag, "counter.Counter");
+    assert_eq!(type_tag.as_ref(), "counter.Counter");
 
     let _handle = ctx.pop_foreign("counter.Counter")?;
 
-    match method.as_str() {
+    match method.as_ref() {
         "inc" => {
             let prev = unsafe {
                 let p = COUNTER_VALUE;
@@ -72,7 +72,7 @@ fn host_counter_release(ctx: &mut Context) -> Result<(), p7::errors::RuntimeErro
         Some(Data::Int(h)) => h,
         other => panic!("expected handle int, got {:?}", other),
     };
-    assert_eq!(type_tag, "counter.Counter");
+    assert_eq!(type_tag.as_ref(), "counter.Counter");
     unsafe {
         FINALIZER_CALLS += 1;
     }
@@ -89,7 +89,7 @@ fn host_override_release(ctx: &mut Context) -> Result<(), p7::errors::RuntimeErr
         Some(Data::Int(h)) => h,
         other => panic!("expected handle int, got {:?}", other),
     };
-    assert_eq!(type_tag, "counter.Counter");
+    assert_eq!(type_tag.as_ref(), "counter.Counter");
     unsafe {
         OVERRIDE_FINALIZER_CALLS += 1;
     }
@@ -409,13 +409,13 @@ fn host_hub_invoke(ctx: &mut Context) -> Result<(), p7::errors::RuntimeError> {
     // guarding against here.
     match frame.stack.pop() {
         Some(Data::Array(elems)) => {
-            let mut iter = elems.into_iter();
+            let mut iter = elems.iter();
             let tag = match iter.next() {
-                Some(Data::Int(n)) => n,
+                Some(Data::Int(n)) => *n,
                 other => panic!("expected return-ty tag int, got {:?}", other),
             };
             let type_tag = match iter.next() {
-                Some(Data::String(s)) => s,
+                Some(Data::String(s)) => s.to_string(),
                 _ => String::new(),
             };
             *HUB_RT.lock().unwrap() = Some((tag, type_tag));
@@ -477,7 +477,7 @@ fn host_cross_module_invoke(ctx: &mut Context) -> Result<(), p7::errors::Runtime
         other => panic!("expected return_ty array, got {:?}", other),
     };
 
-    match (type_tag.as_str(), method.as_str()) {
+    match (type_tag.as_ref(), method.as_ref()) {
         ("host.Host", "games") => {
             let _handle = ctx.pop_foreign("host.Host")?;
             ctx.push_foreign("host.Registry", 2)

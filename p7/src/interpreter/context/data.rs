@@ -1,6 +1,13 @@
 use crate::errors::RuntimeError;
+use std::rc::Rc;
 
 pub type ContextResult<T> = std::result::Result<T, RuntimeError>;
+pub type SharedStr = Rc<str>;
+pub type SharedArray = Rc<Vec<Data>>;
+pub type SharedTuple = Rc<Vec<Data>>;
+pub type SharedMap = Rc<Vec<(Data, Data)>>;
+pub type SharedData = Rc<Data>;
+pub type SharedCaptures = Rc<Vec<Data>>;
 
 /// Type for host functions that can be called from p7 code
 /// Takes a mutable reference to the context to access the stack
@@ -10,7 +17,7 @@ pub type HostFunction = fn(&mut super::Context) -> ContextResult<()>;
 pub enum Data {
     Int(i64),
     Float(f64),
-    String(String),
+    String(SharedStr),
     /// Reference to a heap-allocated struct (index into Context.heap).
     StructRef(u32),
     /// Reference to a heap-allocated box (index into Context.box_heap).
@@ -29,20 +36,20 @@ pub enum Data {
     /// Exception value (enum variant ID) - used for try-catch as special return value
     Exception(i64),
     /// Array value - immutable collection of Data values
-    Array(Vec<Data>),
+    Array(SharedArray),
     /// Null value for nullable types
     Null,
     /// Some(value) for nullable types
-    Some(Box<Data>),
+    Some(SharedData),
     /// Closure value: function address + captured values
     Closure {
         func_addr: u32,
-        captures: Vec<Data>,
+        captures: SharedCaptures,
     },
     /// Tuple value - immutable fixed-size collection of heterogeneous Data values
-    Tuple(Vec<Data>),
+    Tuple(SharedTuple),
     /// Map value - ordered collection of key-value pairs
-    Map(Vec<(Data, Data)>),
+    Map(SharedMap),
     /// A handle to a host-owned object backing an `@foreign` proto value.
     /// `type_tag` identifies the proto (matches `@foreign(type_tag="...")`),
     /// `handle` is an opaque host-defined token, and `owned` distinguishes
@@ -52,6 +59,84 @@ pub enum Data {
         handle: i64,
         owned: bool,
     },
+}
+
+impl Data {
+    pub fn string(value: impl AsRef<str>) -> Self {
+        Data::String(Rc::<str>::from(value.as_ref()))
+    }
+
+    pub fn array(elements: Vec<Data>) -> Self {
+        Data::Array(Rc::new(elements))
+    }
+
+    pub fn tuple(elements: Vec<Data>) -> Self {
+        Data::Tuple(Rc::new(elements))
+    }
+
+    pub fn map(pairs: Vec<(Data, Data)>) -> Self {
+        Data::Map(Rc::new(pairs))
+    }
+
+    pub fn some(value: Data) -> Self {
+        Data::Some(Rc::new(value))
+    }
+
+    pub fn closure(func_addr: u32, captures: Vec<Data>) -> Self {
+        Data::Closure {
+            func_addr,
+            captures: Rc::new(captures),
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Data::String(value) => Some(value.as_ref()),
+            _ => None,
+        }
+    }
+
+    pub fn array_elements(&self) -> Option<&[Data]> {
+        match self {
+            Data::Array(elements) => Some(elements.as_slice()),
+            _ => None,
+        }
+    }
+
+    pub fn tuple_elements(&self) -> Option<&[Data]> {
+        match self {
+            Data::Tuple(elements) => Some(elements.as_slice()),
+            _ => None,
+        }
+    }
+
+    pub fn map_pairs(&self) -> Option<&[(Data, Data)]> {
+        match self {
+            Data::Map(pairs) => Some(pairs.as_slice()),
+            _ => None,
+        }
+    }
+
+    pub fn as_some(&self) -> Option<&Data> {
+        match self {
+            Data::Some(value) => Some(value.as_ref()),
+            _ => None,
+        }
+    }
+
+    pub fn array_elements_mut_in_box(&mut self) -> Option<&mut Vec<Data>> {
+        match self {
+            Data::Array(elements) => Some(Rc::make_mut(elements)),
+            _ => None,
+        }
+    }
+
+    pub fn map_pairs_mut_in_box(&mut self) -> Option<&mut Vec<(Data, Data)>> {
+        match self {
+            Data::Map(pairs) => Some(Rc::make_mut(pairs)),
+            _ => None,
+        }
+    }
 }
 
 impl From<i64> for Data {
@@ -68,7 +153,13 @@ impl From<f64> for Data {
 
 impl From<String> for Data {
     fn from(value: String) -> Self {
-        Data::String(value)
+        Data::string(value)
+    }
+}
+
+impl From<&str> for Data {
+    fn from(value: &str) -> Self {
+        Data::string(value)
     }
 }
 

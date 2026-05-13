@@ -75,7 +75,7 @@ impl Context {
                 }
             }
             Data::Array(elements) => {
-                for elem in elements {
+                for elem in elements.iter() {
                     self.mark_data(elem, marked);
                 }
             }
@@ -83,17 +83,17 @@ impl Context {
                 self.mark_data(inner, marked);
             }
             Data::Closure { captures, .. } => {
-                for capture in captures {
+                for capture in captures.iter() {
                     self.mark_data(capture, marked);
                 }
             }
             Data::Tuple(elements) => {
-                for elem in elements {
+                for elem in elements.iter() {
                     self.mark_data(elem, marked);
                 }
             }
             Data::Map(pairs) => {
-                for (k, v) in pairs {
+                for (k, v) in pairs.iter() {
                     self.mark_data(k, marked);
                     self.mark_data(v, marked);
                 }
@@ -156,7 +156,7 @@ impl Context {
                 let frame = self.stack.last_mut().ok_or(RuntimeError::NoStackFrame)?;
                 let stack_len = frame.stack.len();
                 frame.stack.push(Data::Int(handle));
-                frame.stack.push(Data::String(type_tag.clone()));
+                frame.stack.push(Data::string(type_tag.clone()));
                 stack_len
             };
             if let Err(err) = host_fn(self) {
@@ -258,19 +258,22 @@ impl Context {
                 }
             },
             Data::Array(elements) => {
-                Self::update_data_vec(elements, index_map);
+                let elements = std::rc::Rc::make_mut(elements);
+                Self::update_data_vec(elements.as_mut_slice(), index_map);
             }
             Data::Some(inner) => {
-                Self::update_data(inner, index_map);
+                Self::update_data(std::rc::Rc::make_mut(inner), index_map);
             }
             Data::Closure { captures, .. } => {
-                Self::update_data_vec(captures, index_map);
+                let captures = std::rc::Rc::make_mut(captures);
+                Self::update_data_vec(captures.as_mut_slice(), index_map);
             }
             Data::Tuple(elements) => {
-                Self::update_data_vec(elements, index_map);
+                let elements = std::rc::Rc::make_mut(elements);
+                Self::update_data_vec(elements.as_mut_slice(), index_map);
             }
             Data::Map(pairs) => {
-                for (k, v) in pairs.iter_mut() {
+                for (k, v) in std::rc::Rc::make_mut(pairs).iter_mut() {
                     Self::update_data(k, index_map);
                     Self::update_data(v, index_map);
                 }

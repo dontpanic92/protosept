@@ -42,7 +42,7 @@ pub(crate) fn array_new(ctx: &mut Context) -> ContextResult<()> {
     }
     // Elements were popped in reverse order, so reverse them
     elements.reverse();
-    ctx.stack_frame_mut()?.stack.push(Data::Array(elements));
+    ctx.stack_frame_mut()?.stack.push(Data::array(elements));
     Ok(())
 }
 
@@ -117,9 +117,7 @@ pub(crate) fn array_get(ctx: &mut Context) -> ContextResult<()> {
             }
 
             let element = elements[idx as usize].clone();
-            ctx.stack_frame_mut()?
-                .stack
-                .push(Data::Some(Box::new(element)));
+            ctx.stack_frame_mut()?.stack.push(Data::some(element));
             Ok(())
         }
         (Data::Array(_), _) => Err(RuntimeError::Other(
@@ -190,7 +188,7 @@ pub(crate) fn array_slice(ctx: &mut Context) -> ContextResult<()> {
 
             ctx.stack_frame_mut()?
                 .stack
-                .push(Data::Array(sliced_elements));
+                .push(Data::array(sliced_elements));
             Ok(())
         }
         (Data::Array(_), _, _) => Err(RuntimeError::Other(
@@ -227,6 +225,7 @@ pub(crate) fn array_push(ctx: &mut Context) -> ContextResult<()> {
             // Ensure it's an array
             match boxed_data {
                 Data::Array(elements) => {
+                    let elements = std::rc::Rc::make_mut(elements);
                     elements.push(elem);
                     Ok(())
                 }
@@ -259,6 +258,7 @@ pub(crate) fn array_clear(ctx: &mut Context) -> ContextResult<()> {
             // Ensure it's an array and clear it
             match boxed_data {
                 Data::Array(elements) => {
+                    let elements = std::rc::Rc::make_mut(elements);
                     elements.clear();
                     Ok(())
                 }
@@ -289,12 +289,10 @@ pub(crate) fn array_pop(ctx: &mut Context) -> ContextResult<()> {
 
             match boxed_data {
                 Data::Array(elements) => {
+                    let elements = std::rc::Rc::make_mut(elements);
                     let value = elements.pop();
                     match value {
-                        Some(elem) => ctx
-                            .stack_frame_mut()?
-                            .stack
-                            .push(Data::Some(Box::new(elem))),
+                        Some(elem) => ctx.stack_frame_mut()?.stack.push(Data::some(elem)),
                         None => ctx.stack_frame_mut()?.stack.push(Data::Null),
                     }
                     Ok(())
@@ -340,13 +338,14 @@ pub(crate) fn array_set(ctx: &mut Context) -> ContextResult<()> {
 
             match boxed_data {
                 Data::Array(elements) => {
+                    let elements = std::rc::Rc::make_mut(elements);
                     if idx < 0 || (idx as usize) >= elements.len() {
                         ctx.stack_frame_mut()?.stack.push(Data::Null);
                         return Ok(());
                     }
 
                     let old = std::mem::replace(&mut elements[idx as usize], elem);
-                    ctx.stack_frame_mut()?.stack.push(Data::Some(Box::new(old)));
+                    ctx.stack_frame_mut()?.stack.push(Data::some(old));
                     Ok(())
                 }
                 _ => Err(RuntimeError::Other(
@@ -387,6 +386,7 @@ pub(crate) fn array_insert(ctx: &mut Context) -> ContextResult<()> {
             })?;
             match boxed_data {
                 Data::Array(elements) => {
+                    let elements = std::rc::Rc::make_mut(elements);
                     let len = elements.len() as i64;
                     let clamped = idx.max(0).min(len) as usize;
                     elements.insert(clamped, elem);
@@ -422,14 +422,13 @@ pub(crate) fn array_remove(ctx: &mut Context) -> ContextResult<()> {
             })?;
             match boxed_data {
                 Data::Array(elements) => {
+                    let elements = std::rc::Rc::make_mut(elements);
                     if idx < 0 || (idx as usize) >= elements.len() {
                         ctx.stack_frame_mut()?.stack.push(Data::Null);
                         return Ok(());
                     }
                     let removed = elements.remove(idx as usize);
-                    ctx.stack_frame_mut()?
-                        .stack
-                        .push(Data::Some(Box::new(removed)));
+                    ctx.stack_frame_mut()?.stack.push(Data::some(removed));
                     Ok(())
                 }
                 _ => Err(RuntimeError::Other(
@@ -489,15 +488,15 @@ pub(crate) fn array_join(ctx: &mut Context) -> ContextResult<()> {
     match (array, sep) {
         (Data::Array(elements), Data::String(separator)) => {
             let strs: Vec<String> = elements
-                .into_iter()
+                .iter()
                 .map(|e| match e {
-                    Data::String(s) => s,
+                    Data::String(s) => s.to_string(),
                     _ => String::new(),
                 })
                 .collect();
             ctx.stack_frame_mut()?
                 .stack
-                .push(Data::String(strs.join(&separator)));
+                .push(Data::string(strs.join(separator.as_ref())));
             Ok(())
         }
         _ => Err(RuntimeError::Other(
@@ -523,11 +522,11 @@ pub(crate) fn array_map(ctx: &mut Context) -> ContextResult<()> {
     match array {
         Data::Array(elements) => {
             let mut results = Vec::with_capacity(elements.len());
-            for elem in elements {
-                let result = ctx.call_closure(&closure, vec![elem])?;
+            for elem in elements.iter() {
+                let result = ctx.call_closure(&closure, vec![elem.clone()])?;
                 results.push(result);
             }
-            ctx.stack_frame_mut()?.stack.push(Data::Array(results));
+            ctx.stack_frame_mut()?.stack.push(Data::array(results));
             Ok(())
         }
         _ => Err(RuntimeError::Other(
@@ -551,13 +550,13 @@ pub(crate) fn array_filter(ctx: &mut Context) -> ContextResult<()> {
     match array {
         Data::Array(elements) => {
             let mut results = Vec::new();
-            for elem in elements {
+            for elem in elements.iter() {
                 let result = ctx.call_closure(&closure, vec![elem.clone()])?;
                 if result == Data::Int(1) {
-                    results.push(elem);
+                    results.push(elem.clone());
                 }
             }
-            ctx.stack_frame_mut()?.stack.push(Data::Array(results));
+            ctx.stack_frame_mut()?.stack.push(Data::array(results));
             Ok(())
         }
         _ => Err(RuntimeError::Other(
@@ -586,8 +585,8 @@ pub(crate) fn array_reduce(ctx: &mut Context) -> ContextResult<()> {
     match array {
         Data::Array(elements) => {
             let mut acc = init;
-            for elem in elements {
-                acc = ctx.call_closure(&closure, vec![acc, elem])?;
+            for elem in elements.iter() {
+                acc = ctx.call_closure(&closure, vec![acc, elem.clone()])?;
             }
             ctx.stack_frame_mut()?.stack.push(acc);
             Ok(())
@@ -612,8 +611,8 @@ pub(crate) fn array_for_each(ctx: &mut Context) -> ContextResult<()> {
 
     match array {
         Data::Array(elements) => {
-            for elem in elements {
-                ctx.call_closure_void(&closure, vec![elem])?;
+            for elem in elements.iter() {
+                ctx.call_closure_void(&closure, vec![elem.clone()])?;
             }
             Ok(())
         }
@@ -637,12 +636,10 @@ pub(crate) fn array_find(ctx: &mut Context) -> ContextResult<()> {
 
     match array {
         Data::Array(elements) => {
-            for elem in elements {
+            for elem in elements.iter() {
                 let result = ctx.call_closure(&closure, vec![elem.clone()])?;
                 if result == Data::Int(1) {
-                    ctx.stack_frame_mut()?
-                        .stack
-                        .push(Data::Some(Box::new(elem)));
+                    ctx.stack_frame_mut()?.stack.push(Data::some(elem.clone()));
                     return Ok(());
                 }
             }
@@ -669,8 +666,8 @@ pub(crate) fn array_any(ctx: &mut Context) -> ContextResult<()> {
 
     match array {
         Data::Array(elements) => {
-            for elem in elements {
-                let result = ctx.call_closure(&closure, vec![elem])?;
+            for elem in elements.iter() {
+                let result = ctx.call_closure(&closure, vec![elem.clone()])?;
                 if result == Data::Int(1) {
                     ctx.stack_frame_mut()?.stack.push(Data::Int(1));
                     return Ok(());
@@ -699,8 +696,8 @@ pub(crate) fn array_all(ctx: &mut Context) -> ContextResult<()> {
 
     match array {
         Data::Array(elements) => {
-            for elem in elements {
-                let result = ctx.call_closure(&closure, vec![elem])?;
+            for elem in elements.iter() {
+                let result = ctx.call_closure(&closure, vec![elem.clone()])?;
                 if result != Data::Int(1) {
                     ctx.stack_frame_mut()?.stack.push(Data::Int(0));
                     return Ok(());
