@@ -76,6 +76,132 @@ impl Context {
             .is_some()
     }
 
+    /// Push a script-defined proto method call so the host can invoke a method
+    /// on a rooted script object without compiling synthetic wrapper code.
+    pub fn push_proto_method(
+        &mut self,
+        receiver: Data,
+        method_name: &str,
+        args: Vec<Data>,
+    ) -> ContextResult<()> {
+        if self.modules.is_empty() {
+            return Err(RuntimeError::EntryPointNotFound);
+        }
+
+        let concrete_type_id = match &receiver {
+            Data::ProtoBoxRef {
+                concrete_type_id, ..
+            }
+            | Data::ProtoRefRef {
+                concrete_type_id, ..
+            } => *concrete_type_id,
+            other => {
+                return Err(RuntimeError::Other(format!(
+                    "push_proto_method: expected proto receiver for method '{}', got {:?}",
+                    method_name, other
+                )));
+            }
+        };
+
+        let module_idx = self.stack.last().map(|f| f.module_idx).unwrap_or(0);
+        let method_hash = Self::hash_method_name(method_name);
+        let mut candidate_symbols = Vec::new();
+
+        if let Some(crate::semantic::TypeDefinition::Struct(struct_def)) = self.modules[module_idx]
+            .types
+            .get(concrete_type_id as usize)
+        {
+            for &proto_id in &struct_def.conforming_to {
+                let Some(crate::semantic::TypeDefinition::Proto(proto)) =
+                    self.modules[module_idx].types.get(proto_id as usize)
+                else {
+                    continue;
+                };
+                if proto
+                    .methods
+                    .iter()
+                    .any(|(name, _, _)| name.as_str() == method_name)
+                    && let Some(&symbol_id) =
+                        self.vtable.get(&(concrete_type_id, proto_id, method_hash))
+                    && !candidate_symbols.contains(&symbol_id)
+                {
+                    candidate_symbols.push(symbol_id);
+                }
+            }
+        }
+
+        if candidate_symbols.is_empty() {
+            for (&(candidate_type_id, _, candidate_hash), &symbol_id) in &self.vtable {
+                if candidate_type_id == concrete_type_id
+                    && candidate_hash == method_hash
+                    && !candidate_symbols.contains(&symbol_id)
+                {
+                    candidate_symbols.push(symbol_id);
+                }
+            }
+        }
+
+        let method_symbol_id = match candidate_symbols.as_slice() {
+            [symbol_id] => *symbol_id,
+            [] => {
+                return Err(RuntimeError::Other(format!(
+                    "Method '{}' not found in vtable for type {}",
+                    method_name, concrete_type_id
+                )));
+            }
+            _ => {
+                return Err(RuntimeError::Other(format!(
+                    "Method '{}' is ambiguous for type {}",
+                    method_name, concrete_type_id
+                )));
+            }
+        };
+
+        let (address, args_len) = {
+            let symbol = self.modules[module_idx]
+                .symbols
+                .get(method_symbol_id as usize)
+                .ok_or(RuntimeError::FunctionNotFound)?;
+
+            let (func_id, address) = match &symbol.kind {
+                crate::semantic::SymbolKind::Function { func_id, address } => (*func_id, *address),
+                crate::semantic::SymbolKind::HostMethod { .. } => {
+                    return Err(RuntimeError::Other(format!(
+                        "push_proto_method: host-dispatched method '{}' is not supported",
+                        method_name
+                    )));
+                }
+                _ => return Err(RuntimeError::FunctionNotFound),
+            };
+
+            let function_type = self.modules[module_idx]
+                .functions
+                .get(func_id as usize)
+                .ok_or(RuntimeError::FunctionNotFound)?;
+            (address, function_type.params.len())
+        };
+
+        if args_len != args.len() + 1 {
+            return Err(RuntimeError::Other(format!(
+                "Method '{}' expects {} argument(s) plus receiver, got {}",
+                method_name,
+                args_len.saturating_sub(1),
+                args.len()
+            )));
+        }
+
+        let stack = &mut self.stack_frame_mut()?.stack;
+        stack.push(receiver);
+        stack.extend(args);
+
+        let mut new_frame = StackFrame::new();
+        new_frame.module_idx = module_idx;
+        new_frame.params = stack.split_off(stack.len() - args_len);
+        new_frame.pc = address as usize;
+        self.stack.push(new_frame);
+        Ok(())
+    }
+
     pub fn resume(&mut self) -> ContextResult<()> {
         if self.stack_frame()?.pc == std::usize::MAX {
             return Err(RuntimeError::EntryPointNotFound);

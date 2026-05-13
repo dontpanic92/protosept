@@ -193,12 +193,12 @@ impl Parser {
             let mut protos = vec![];
 
             // Parse first protocol
-            protos.push(self.parse_identifier()?);
+            protos.push(self.parse_qualified_identifier()?);
 
             // Parse additional protocols separated by commas
             while self.peek_match(TokenType::Comma) {
                 self.consume();
-                protos.push(self.parse_identifier()?);
+                protos.push(self.parse_qualified_identifier()?);
             }
 
             self.consume_match(TokenType::CloseBracket)?;
@@ -409,12 +409,12 @@ impl Parser {
             let mut protos = vec![];
 
             // Parse first protocol
-            protos.push(self.parse_identifier()?);
+            protos.push(self.parse_qualified_identifier()?);
 
             // Parse additional protocols separated by commas
             while self.peek_match(TokenType::Comma) {
                 self.consume();
-                protos.push(self.parse_identifier()?);
+                protos.push(self.parse_qualified_identifier()?);
             }
 
             self.consume_match(TokenType::CloseBracket)?;
