@@ -207,14 +207,29 @@ impl Context {
             return Err(RuntimeError::EntryPointNotFound);
         }
 
-        self.run_interpreter_loop()?;
+        // Stop when the frame the caller just pushed pops, so a re-entrant
+        // `resume()` (driven by a host service invoked from inside another
+        // `resume()`) returns after running only its own frame instead of
+        // continuing to execute the outer caller's instructions.
+        let base_depth = self.stack.len().saturating_sub(1);
+        let prev_stop = self.stop_depth;
+        self.stop_depth = Some(base_depth);
 
-        // Current function has finished executing. Pop the stack frame, and push return value if any.
-        if self.stack.len() > 1 {
+        let result = self.run_interpreter_loop();
+        self.stop_depth = prev_stop;
+        result?;
+
+        // Defensive cleanup: if the just-pushed function exited by running
+        // past the end of its module's instructions rather than via `Ret`
+        // (legacy bytecode shape), the frame is still live — pop it and
+        // thread its top-of-stack onto the caller's frame.
+        if self.stack.len() > base_depth {
             let return_value = self.stack_frame_mut()?.stack.pop();
             self.stack.pop();
-            if let Some(value) = return_value {
-                self.stack_frame_mut()?.stack.push(value);
+            if let Some(value) = return_value
+                && let Ok(frame) = self.stack_frame_mut()
+            {
+                frame.stack.push(value);
             }
         }
 
