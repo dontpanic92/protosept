@@ -1,0 +1,25 @@
+proto Scorer {
+    fn score(self: ref<Scorer>) -> int;
+}
+
+struct[Scorer] Dog(
+    value: int,
+) {
+    pub fn score(self: ref<Dog>) -> int {
+        self.value + 1
+    }
+}
+
+fn main() -> int {
+    let scorer = box(Dog(value = 41)) as box<Scorer>;
+    let mut total = 0;
+    let mut i = 0;
+    loop {
+        if i > 300 {
+            break;
+        }
+        total = total + scorer.score();
+        i = i + 1;
+    }
+    total
+}

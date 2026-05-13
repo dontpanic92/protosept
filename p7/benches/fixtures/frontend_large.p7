@@ -1,0 +1,115 @@
+struct Point(
+    x: int,
+    y: int,
+);
+
+struct Boxed<T>(
+    value: T,
+);
+
+proto Scorer {
+    fn score(self: ref<Scorer>) -> int;
+}
+
+struct[Scorer] Dog(
+    name: string,
+    points: int,
+) {
+    pub fn score(self: ref<Dog>) -> int {
+        self.points + 1
+    }
+}
+
+fn identity<T>(x: T) -> T {
+    return x;
+}
+
+fn add(a: int, b: int) -> int {
+    a + b
+}
+
+fn sum_to(limit: int) -> int {
+    let mut total = 0;
+    let mut i = 0;
+    loop {
+        if i > limit {
+            break;
+        }
+        total = total + i;
+        i = i + 1;
+    }
+    total
+}
+
+fn arrays() -> int {
+    let values = box([1, 2, 3, 4, 5]);
+    values.push(6);
+    values.push(7);
+    values[0] + values[6] + values.len()
+}
+
+fn maps() -> int {
+    let values = box({1: 10, 2: 20, 3: 30});
+    values.set(4, 40);
+    values[1] + values[4] + values.len()
+}
+
+fn strings(name: string) -> int {
+    let greeting = "hello " + name;
+    greeting.len_bytes()
+}
+
+fn dispatch() -> int {
+    let dog = box(Dog(name = "Rex", points = 41));
+    let scorer = dog as box<Scorer>;
+    scorer.score()
+}
+
+fn generated_00(x: int) -> int { add(x, 0) + sum_to(3) }
+fn generated_01(x: int) -> int { add(x, 1) + sum_to(4) }
+fn generated_02(x: int) -> int { add(x, 2) + sum_to(5) }
+fn generated_03(x: int) -> int { add(x, 3) + sum_to(6) }
+fn generated_04(x: int) -> int { add(x, 4) + sum_to(7) }
+fn generated_05(x: int) -> int { add(x, 5) + sum_to(8) }
+fn generated_06(x: int) -> int { add(x, 6) + sum_to(9) }
+fn generated_07(x: int) -> int { add(x, 7) + sum_to(10) }
+fn generated_08(x: int) -> int { add(x, 8) + sum_to(11) }
+fn generated_09(x: int) -> int { add(x, 9) + sum_to(12) }
+fn generated_10(x: int) -> int { add(x, 10) + sum_to(13) }
+fn generated_11(x: int) -> int { add(x, 11) + sum_to(14) }
+fn generated_12(x: int) -> int { add(x, 12) + sum_to(15) }
+fn generated_13(x: int) -> int { add(x, 13) + sum_to(16) }
+fn generated_14(x: int) -> int { add(x, 14) + sum_to(17) }
+fn generated_15(x: int) -> int { add(x, 15) + sum_to(18) }
+fn generated_16(x: int) -> int { add(x, 16) + sum_to(19) }
+fn generated_17(x: int) -> int { add(x, 17) + sum_to(20) }
+fn generated_18(x: int) -> int { add(x, 18) + sum_to(21) }
+fn generated_19(x: int) -> int { add(x, 19) + sum_to(22) }
+
+fn main() -> int {
+    generated_00(1)
+        + generated_01(1)
+        + generated_02(1)
+        + generated_03(1)
+        + generated_04(1)
+        + generated_05(1)
+        + generated_06(1)
+        + generated_07(1)
+        + generated_08(1)
+        + generated_09(1)
+        + generated_10(1)
+        + generated_11(1)
+        + generated_12(1)
+        + generated_13(1)
+        + generated_14(1)
+        + generated_15(1)
+        + generated_16(1)
+        + generated_17(1)
+        + generated_18(1)
+        + generated_19(1)
+        + arrays()
+        + maps()
+        + strings("world")
+        + dispatch()
+        + identity<int>(7)
+}

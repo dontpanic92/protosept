@@ -1,0 +1,13 @@
+fn main() -> int {
+    let mut text = "seed";
+    let mut i = 0;
+    loop {
+        if i > 80 {
+            break;
+        }
+        text = text + "-x";
+        i = i + 1;
+    }
+
+    text.len_bytes() + text.substring(0, 4).len_bytes()
+}

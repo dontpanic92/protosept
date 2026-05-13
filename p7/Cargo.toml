@@ -12,3 +12,18 @@ num-traits = "0.2"
 num-derive = "0.4"
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "compiler"
+harness = false
+
+[[bench]]
+name = "runtime"
+harness = false
+
+[[bench]]
+name = "test_corpus"
+harness = false

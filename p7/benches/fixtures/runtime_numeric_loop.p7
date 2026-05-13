@@ -1,0 +1,12 @@
+fn main() -> int {
+    let mut total = 0;
+    let mut i = 0;
+    loop {
+        if i > 1000 {
+            break;
+        }
+        total = total + (i * 3) - (i / 2);
+        i = i + 1;
+    }
+    total
+}

@@ -1,0 +1,18 @@
+fn apply(f: fn(int) -> int, x: int) -> int {
+    f(x)
+}
+
+fn main() -> int {
+    let offset = 7;
+    let add_offset = (x: int) => x + offset;
+    let mut total = 0;
+    let mut i = 0;
+    loop {
+        if i > 400 {
+            break;
+        }
+        total = total + apply(add_offset, i);
+        i = i + 1;
+    }
+    total
+}

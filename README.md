@@ -190,6 +190,31 @@ cargo run -p p7-cli -- test tests/test_basic_operations.p7
 
 Compile-fail tests: add a line starting with `// compile_fail` anywhere in the `.p7` file.
 
+## Benchmarks
+
+The `p7` crate includes Criterion benchmarks for compiler phases, runtime hot paths, and a curated `.p7` test-corpus subset.
+
+Run all `p7` benchmarks:
+
+```bash
+cargo bench -p p7
+```
+
+Run a specific benchmark target:
+
+```bash
+cargo bench -p p7 --bench compiler
+cargo bench -p p7 --bench runtime
+cargo bench -p p7 --bench test_corpus
+```
+
+Criterion stores reports and baselines under `target/criterion`. Before comparing performance changes, also run the functional validation commands:
+
+```bash
+cargo test --quiet
+cargo run -p p7-cli --quiet -- test
+```
+
 ## VS Code extension
 
 The VS Code extension lives in `p7-vscode/` and currently provides:

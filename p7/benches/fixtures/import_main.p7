@@ -1,0 +1,11 @@
+import bench.math;
+import bench.types;
+
+fn main() -> int {
+    let acc = types.Accumulator(seed = 10, step = 2);
+    let choice = types.Choice.Left(7);
+    math.add(acc.seed, acc.step) + math.sum_to(10) + match choice {
+        types.Choice.Left(value) => value,
+        types.Choice.Right(value) => value,
+    }
+}

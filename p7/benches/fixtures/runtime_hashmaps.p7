@@ -1,0 +1,23 @@
+fn main() -> int {
+    let values = box({0: 0});
+    let mut i = 1;
+    loop {
+        if i > 120 {
+            break;
+        }
+        values.set(i, i * 2);
+        i = i + 1;
+    }
+
+    let mut total = 0;
+    let mut j = 0;
+    loop {
+        if j > 120 {
+            break;
+        }
+        total = total + values[j];
+        j = j + 1;
+    }
+
+    total + values.len()
+}

@@ -1,0 +1,15 @@
+fn main() -> int {
+    let kept = box(100);
+    let mut total = 0;
+    let mut i = 0;
+    loop {
+        if i > 220 {
+            break;
+        }
+        let current = box(i);
+        total = total + *current;
+        i = i + 1;
+    }
+
+    total + *kept
+}

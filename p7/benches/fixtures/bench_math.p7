@@ -1,0 +1,16 @@
+pub fn add(a: int, b: int) -> int {
+    a + b
+}
+
+pub fn sum_to(limit: int) -> int {
+    let mut total = 0;
+    let mut i = 0;
+    loop {
+        if i > limit {
+            break;
+        }
+        total = total + i;
+        i = i + 1;
+    }
+    total
+}

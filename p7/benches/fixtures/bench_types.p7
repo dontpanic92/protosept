@@ -1,0 +1,9 @@
+pub struct Accumulator(
+    pub seed: int,
+    pub step: int,
+);
+
+pub enum Choice(
+    Left: int,
+    Right: int,
+);
