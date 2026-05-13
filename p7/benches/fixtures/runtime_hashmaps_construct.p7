@@ -1,0 +1,13 @@
+fn main() -> int {
+    let mut total = 0;
+    let mut i = 0;
+    loop {
+        if i >= 1000 {
+            break;
+        }
+        let values = {0: i, 1: i + 1, 2: i + 2, 3: i + 3, 4: i + 4, 5: i + 5};
+        total = total + values[0] + values[5] + values.len();
+        i = i + 1;
+    }
+    total
+}

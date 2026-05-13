@@ -1,4 +1,5 @@
-use crate::bytecode::Module;
+use crate::bytecode::{Instruction, Module, ResolvedExternalCall, ResolvedExternalVar};
+use crate::errors::RuntimeError;
 
 use super::Context;
 use super::ForeignCarrierMethod;
@@ -30,6 +31,8 @@ impl Context {
                 .insert(module_path.clone(), imported_module_idx);
             self.load_module_internal(*imported);
         }
+        self.resolve_external_lookups(module_idx)
+            .expect("external lookups should resolve before execution");
 
         // Run module-level init code if present
         if let Some(addr) = init_address {
@@ -64,6 +67,8 @@ impl Context {
                 self.load_module_internal(*imported);
             }
         }
+        self.resolve_external_lookups(module_idx)
+            .expect("external lookups should resolve before execution");
 
         // Run module-level init code if present
         if let Some(addr) = init_address {
@@ -190,6 +195,151 @@ impl Context {
         }
     }
 
+    fn resolve_external_lookups(&mut self, module_idx: usize) -> Result<(), RuntimeError> {
+        let decoded_len = self.modules[module_idx].decoded_len();
+        for inst_index in 0..decoded_len {
+            let instruction = self.modules[module_idx]
+                .decoded_instruction(inst_index)
+                .cloned()
+                .ok_or_else(|| {
+                    RuntimeError::Other(format!(
+                        "instruction index {} out of bounds in module {}",
+                        inst_index, module_idx
+                    ))
+                })?;
+
+            match instruction {
+                Instruction::LdExtModVar(module_path_sid, var_name_sid)
+                | Instruction::StExtModVar(module_path_sid, var_name_sid) => {
+                    let module_path =
+                        self.string_constant(module_idx, module_path_sid, "module path")?;
+                    let var_name = self.string_constant(module_idx, var_name_sid, "var name")?;
+                    let target_module_idx =
+                        *self.imported_modules.get(&module_path).ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Module '{}' not found in imported modules",
+                                module_path
+                            ))
+                        })?;
+                    let var_id = self.modules[target_module_idx]
+                        .module_variable_by_name(&var_name, false)
+                        .map(|v| v.var_id)
+                        .ok_or_else(|| {
+                            RuntimeError::VariableNotFound(format!(
+                                "Module variable '{}' not found in module '{}'",
+                                var_name, module_path
+                            ))
+                        })?;
+                    self.modules[module_idx].external_var_targets[inst_index] =
+                        Some(ResolvedExternalVar {
+                            module_idx: target_module_idx,
+                            var_id,
+                        });
+                }
+                Instruction::CallExternal(module_path_sid, symbol_name_sid) => {
+                    let module_path =
+                        self.string_constant(module_idx, module_path_sid, "module path")?;
+                    let symbol_name =
+                        self.string_constant(module_idx, symbol_name_sid, "symbol name")?;
+                    let target_module_idx =
+                        *self.imported_modules.get(&module_path).ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Module '{}' not found in imported modules",
+                                module_path
+                            ))
+                        })?;
+                    let symbol_id = self.resolve_external_symbol_id(
+                        target_module_idx,
+                        &module_path,
+                        &symbol_name,
+                    )?;
+                    let crate::bytecode::ResolvedDispatch::Function {
+                        target_pc,
+                        args_len,
+                    } = self.modules[target_module_idx]
+                        .symbol_dispatch(symbol_id)
+                        .ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Symbol '{}' in module '{}' is not a function",
+                                symbol_name, module_path
+                            ))
+                        })?
+                    else {
+                        return Err(RuntimeError::Other(format!(
+                            "Symbol '{}' in module '{}' is not a function",
+                            symbol_name, module_path
+                        )));
+                    };
+                    self.modules[module_idx].external_call_targets[inst_index] =
+                        Some(ResolvedExternalCall {
+                            module_idx: target_module_idx,
+                            target_pc: *target_pc,
+                            args_len: *args_len,
+                        });
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    fn string_constant(
+        &self,
+        module_idx: usize,
+        string_id: u32,
+        purpose: &str,
+    ) -> Result<String, RuntimeError> {
+        self.modules[module_idx]
+            .string_constants
+            .get(string_id as usize)
+            .cloned()
+            .ok_or_else(|| {
+                RuntimeError::Other(format!(
+                    "Invalid string constant index for {}: {}",
+                    purpose, string_id
+                ))
+            })
+    }
+
+    fn resolve_external_symbol_id(
+        &self,
+        target_module_idx: usize,
+        module_path: &str,
+        symbol_name: &str,
+    ) -> Result<u32, RuntimeError> {
+        let module = &self.modules[target_module_idx];
+        let root_symbol = module.symbols.first().ok_or_else(|| {
+            RuntimeError::Other(format!("Module '{}' has no root symbol", module_path))
+        })?;
+
+        if let Some((type_name, method_name)) = symbol_name.split_once('.') {
+            let type_sym_id = root_symbol.children.get(type_name).ok_or_else(|| {
+                RuntimeError::Other(format!(
+                    "Type '{}' not found in module '{}'",
+                    type_name, module_path
+                ))
+            })?;
+            let type_sym = module.symbols.get(*type_sym_id as usize).ok_or_else(|| {
+                RuntimeError::Other(format!("Invalid symbol id: {}", type_sym_id))
+            })?;
+            let method_sym_id = type_sym.children.get(method_name).ok_or_else(|| {
+                RuntimeError::Other(format!(
+                    "Method '{}' not found on type '{}' in module '{}'",
+                    method_name, type_name, module_path
+                ))
+            })?;
+            Ok(*method_sym_id)
+        } else {
+            root_symbol.children.get(symbol_name).copied().ok_or_else(|| {
+                RuntimeError::Other(format!(
+                    "Symbol '{}' not found in module '{}'",
+                    symbol_name, module_path
+                ))
+            })
+        }
+    }
+
     /// Run module-level initialization code (initializes module-level bindings).
     fn run_module_init(&mut self, module_idx: usize, init_address: usize) {
         let mut init_frame = StackFrame::new();
@@ -210,7 +360,16 @@ impl Context {
 
     /// Build vtable for dynamic dispatch by mapping (concrete_type_id, proto_id, method_name) -> symbol_id
     fn build_vtable(&mut self, module: &Module) {
-        use crate::semantic::TypeDefinition;
+        use crate::semantic::{SymbolKind, TypeDefinition};
+
+        let type_symbols: std::collections::HashMap<u32, _> = module
+            .symbols
+            .iter()
+            .filter_map(|symbol| match symbol.kind {
+                SymbolKind::Type(type_id) => Some((type_id, symbol)),
+                _ => None,
+            })
+            .collect();
 
         // Iterate through all structs
         for (type_id, udt) in module.types.iter().enumerate() {
@@ -225,9 +384,7 @@ impl Context {
                         // For each method in the proto
                         for (method_name, _, _) in &proto.methods {
                             // Find the struct's symbol and look for this method
-                            if let Some(struct_symbol) = module.symbols.iter()
-                                    .find(|s| matches!(&s.kind, crate::semantic::SymbolKind::Type(id) if *id == struct_type_id))
-                                {
+                            if let Some(struct_symbol) = type_symbols.get(&struct_type_id) {
                                 // Look for the method in the struct's children
                                 if let Some(&method_symbol_id) = struct_symbol.children.get(method_name) {
                                     // Hash the method name for fast lookup

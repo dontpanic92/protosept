@@ -10,6 +10,12 @@ const DYNAMIC_DISPATCH: &str = include_str!("fixtures/runtime_dynamic_dispatch.p
 const STRUCT_FIELDS: &str = include_str!("fixtures/runtime_struct_fields.p7");
 const ARRAYS: &str = include_str!("fixtures/runtime_arrays.p7");
 const HASHMAPS: &str = include_str!("fixtures/runtime_hashmaps.p7");
+const HASHMAPS_SMALL_INT: &str = include_str!("fixtures/runtime_hashmaps_small_int.p7");
+const HASHMAPS_LARGE_INT: &str = include_str!("fixtures/runtime_hashmaps_large_int.p7");
+const HASHMAPS_STRING_KEYS: &str = include_str!("fixtures/runtime_hashmaps_string_keys.p7");
+const HASHMAPS_CONSTRUCT: &str = include_str!("fixtures/runtime_hashmaps_construct.p7");
+const HASHMAPS_REMOVE: &str = include_str!("fixtures/runtime_hashmaps_remove.p7");
+const HASHMAPS_MIXED: &str = include_str!("fixtures/runtime_hashmaps_mixed.p7");
 const STRINGS: &str = include_str!("fixtures/runtime_strings.p7");
 const CLOSURES: &str = include_str!("fixtures/runtime_closures.p7");
 const GC_BOXES: &str = include_str!("fixtures/runtime_gc_boxes.p7");
@@ -31,6 +37,12 @@ fn runtime_benches(c: &mut Criterion) {
         ("struct_fields", STRUCT_FIELDS),
         ("arrays", ARRAYS),
         ("hashmaps", HASHMAPS),
+        ("hashmaps_small_int", HASHMAPS_SMALL_INT),
+        ("hashmaps_large_int", HASHMAPS_LARGE_INT),
+        ("hashmaps_string_keys", HASHMAPS_STRING_KEYS),
+        ("hashmaps_construct", HASHMAPS_CONSTRUCT),
+        ("hashmaps_remove", HASHMAPS_REMOVE),
+        ("hashmaps_mixed", HASHMAPS_MIXED),
         ("strings", STRINGS),
         ("closures", CLOSURES),
         ("gc_boxes", GC_BOXES),

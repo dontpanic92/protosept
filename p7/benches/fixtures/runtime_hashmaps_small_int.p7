@@ -1,0 +1,18 @@
+fn main() -> int {
+    let values = box({0: 0, 1: 2, 2: 4, 3: 6, 4: 8, 5: 10, 6: 12, 7: 14});
+    let mut total = 0;
+    let mut i = 0;
+    loop {
+        if i >= 2000 {
+            break;
+        }
+        let key = i % 8;
+        total = total + values[key];
+        if values.contains_key(key) {
+            total = total + 1;
+        }
+        values.set(key, values[key] + 1);
+        i = i + 1;
+    }
+    total + values.len()
+}

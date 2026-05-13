@@ -31,5 +31,7 @@ fn main() -> int {
         r = r + 1;
     }
 
-    total + values.len() + (values.get(999) ?? 7)
+    let keys = values.keys();
+    let vals = values.values();
+    total + values.len() + keys.len() + vals.len() + (values.get(999) ?? 7)
 }

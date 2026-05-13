@@ -79,6 +79,7 @@ pub struct Generator {
     pub(super) loop_context_stack: Vec<LoopContext>,
     // String constant pool for string literals
     pub(super) string_constants: Vec<String>,
+    pub(super) string_constant_ids: std::collections::HashMap<String, u32>,
     // Track the containing type when generating methods (for Self resolution)
     pub(super) current_self_type: Option<Type>,
     pub(super) is_compiling_builtin: bool,
@@ -142,10 +143,7 @@ impl Generator {
         var_name: &str,
     ) -> Option<&'a ModuleVariable> {
         let module = self.imported_modules.get(module_path)?;
-        module
-            .module_variables
-            .iter()
-            .find(|v| v.name == var_name && v.is_pub)
+        module.module_variable_by_name(var_name, true)
     }
 
     pub fn new(module_provider: Box<dyn crate::ModuleProvider>) -> Self {
@@ -162,6 +160,7 @@ impl Generator {
             moved_params: std::collections::HashSet::new(),
             loop_context_stack: Vec::new(),
             string_constants: Vec::new(),
+            string_constant_ids: std::collections::HashMap::new(),
             current_self_type: None,
             is_compiling_builtin: false,
             enclosing_type_params: Vec::new(),
@@ -500,6 +499,13 @@ impl Generator {
             call_targets: Vec::new(),
             symbol_dispatch: Vec::new(),
             proto_method_metas: std::collections::HashMap::new(),
+            external_var_targets: Vec::new(),
+            external_call_targets: Vec::new(),
+            module_variable_ids: self
+                .module_variables
+                .iter()
+                .map(|var| (var.name.to_string(), var.var_id))
+                .collect(),
         })
     }
 
@@ -611,6 +617,7 @@ impl Generator {
     ) -> SaResult<()> {
         let saved_builder = std::mem::replace(&mut self.builder, ByteCodeBuilder::new());
         let saved_string_constants = std::mem::take(&mut self.string_constants);
+        let saved_string_constant_ids = std::mem::take(&mut self.string_constant_ids);
         let saved_local_scope = self.local_scope.take();
         let saved_moved_variables = std::mem::take(&mut self.moved_variables);
         let saved_moved_params = std::mem::take(&mut self.moved_params);
@@ -621,6 +628,7 @@ impl Generator {
 
         self.builder = saved_builder;
         self.string_constants = saved_string_constants;
+        self.string_constant_ids = saved_string_constant_ids;
         self.local_scope = saved_local_scope;
         self.moved_variables = saved_moved_variables;
         self.moved_params = saved_moved_params;
@@ -853,6 +861,7 @@ impl Generator {
             moved_params: std::collections::HashSet::new(),
             loop_context_stack: Vec::new(),
             string_constants: Vec::new(),
+            string_constant_ids: std::collections::HashMap::new(),
             current_self_type: None,
             is_compiling_builtin: is_builtin,
             enclosing_type_params: Vec::new(),

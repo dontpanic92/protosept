@@ -515,53 +515,21 @@ impl Context {
                 }
                 Instruction::LdExtModVar(module_path_sid, var_name_sid) => {
                     let current_module_idx = self.stack_frame()?.module_idx;
-                    let module_path = self.modules[current_module_idx]
-                        .string_constants
-                        .get(module_path_sid as usize)
+                    let target = self.modules[current_module_idx]
+                        .external_var_target(inst_pc)
                         .ok_or_else(|| {
                             RuntimeError::Other(format!(
-                                "Invalid string constant index for module path: {}",
-                                module_path_sid
-                            ))
-                        })?
-                        .clone();
-                    let var_name = self.modules[current_module_idx]
-                        .string_constants
-                        .get(var_name_sid as usize)
-                        .ok_or_else(|| {
-                            RuntimeError::Other(format!(
-                                "Invalid string constant index for var name: {}",
-                                var_name_sid
-                            ))
-                        })?
-                        .clone();
-
-                    let target_module_idx =
-                        *self.imported_modules.get(&module_path).ok_or_else(|| {
-                            RuntimeError::Other(format!(
-                                "Module '{}' not found in imported modules",
-                                module_path
+                                "Unresolved external variable load at instruction {} (module_path_sid={}, var_name_sid={})",
+                                inst_pc, module_path_sid, var_name_sid
                             ))
                         })?;
 
-                    let var_id = self.modules[target_module_idx]
-                        .module_variables
-                        .iter()
-                        .find(|v| v.name == var_name)
-                        .map(|v| v.var_id)
+                    let val = self.module_vars[target.module_idx]
+                        .get(target.var_id as usize)
                         .ok_or_else(|| {
                             RuntimeError::VariableNotFound(format!(
-                                "Module variable '{}' not found in module '{}'",
-                                var_name, module_path
-                            ))
-                        })?;
-
-                    let val = self.module_vars[target_module_idx]
-                        .get(var_id as usize)
-                        .ok_or_else(|| {
-                            RuntimeError::VariableNotFound(format!(
-                                "Module variable index {} out of bounds in module '{}'",
-                                var_id, module_path
+                                "Module variable index {} out of bounds in module index {}",
+                                target.var_id, target.module_idx
                             ))
                         })?
                         .clone();
@@ -569,46 +537,16 @@ impl Context {
                 }
                 Instruction::StExtModVar(module_path_sid, var_name_sid) => {
                     let current_module_idx = self.stack_frame()?.module_idx;
-                    let module_path = self.modules[current_module_idx]
-                        .string_constants
-                        .get(module_path_sid as usize)
+                    let target = self.modules[current_module_idx]
+                        .external_var_target(inst_pc)
                         .ok_or_else(|| {
                             RuntimeError::Other(format!(
-                                "Invalid string constant index for module path: {}",
-                                module_path_sid
-                            ))
-                        })?
-                        .clone();
-                    let var_name = self.modules[current_module_idx]
-                        .string_constants
-                        .get(var_name_sid as usize)
-                        .ok_or_else(|| {
-                            RuntimeError::Other(format!(
-                                "Invalid string constant index for var name: {}",
-                                var_name_sid
-                            ))
-                        })?
-                        .clone();
-
-                    let target_module_idx =
-                        *self.imported_modules.get(&module_path).ok_or_else(|| {
-                            RuntimeError::Other(format!(
-                                "Module '{}' not found in imported modules",
-                                module_path
+                                "Unresolved external variable store at instruction {} (module_path_sid={}, var_name_sid={})",
+                                inst_pc, module_path_sid, var_name_sid
                             ))
                         })?;
-
-                    let var_id = self.modules[target_module_idx]
-                        .module_variables
-                        .iter()
-                        .find(|v| v.name == var_name)
-                        .map(|v| v.var_id)
-                        .ok_or_else(|| {
-                            RuntimeError::VariableNotFound(format!(
-                                "Module variable '{}' not found in module '{}'",
-                                var_name, module_path
-                            ))
-                        })?;
+                    let target_module_idx = target.module_idx;
+                    let var_id = target.var_id;
 
                     let data = self
                         .stack_frame_mut()?
@@ -1144,112 +1082,23 @@ impl Context {
                     host_fn(self)?;
                 }
                 Instruction::CallExternal(module_path_idx, symbol_name_idx) => {
-                    // Look up the module path and symbol name from string constants
                     let current_module_idx = self.stack_frame()?.module_idx;
-                    let module_path = self.modules[current_module_idx]
-                        .string_constants
-                        .get(module_path_idx as usize)
+                    let target = self.modules[current_module_idx]
+                        .external_call_target(inst_pc)
                         .ok_or_else(|| {
                             RuntimeError::Other(format!(
-                                "Invalid string constant index for module path: {}",
-                                module_path_idx
+                                "Unresolved external call at instruction {} (module_path_sid={}, symbol_name_sid={})",
+                                inst_pc, module_path_idx, symbol_name_idx
                             ))
                         })?
                         .clone();
-
-                    let symbol_name = self.modules[current_module_idx]
-                        .string_constants
-                        .get(symbol_name_idx as usize)
-                        .ok_or_else(|| {
-                            RuntimeError::Other(format!(
-                                "Invalid string constant index for symbol name: {}",
-                                symbol_name_idx
-                            ))
-                        })?
-                        .clone();
-
-                    // Look up the module
-                    let target_module_idx =
-                        *self.imported_modules.get(&module_path).ok_or_else(|| {
-                            RuntimeError::Other(format!(
-                                "Module '{}' not found in imported modules",
-                                module_path
-                            ))
-                        })?;
-
-                    // Find the function symbol in the imported module
-                    let module = &self.modules[target_module_idx];
-                    let root_symbol = module.symbols.first().ok_or_else(|| {
-                        RuntimeError::Other(format!("Module '{}' has no root symbol", module_path))
-                    })?;
-
-                    // Support dotted names for method calls (e.g. "Tab.load_into")
-                    let symbol = if symbol_name.contains('.') {
-                        let parts: Vec<&str> = symbol_name.splitn(2, '.').collect();
-                        let type_sym_id = root_symbol.children.get(parts[0]).ok_or_else(|| {
-                            RuntimeError::Other(format!(
-                                "Type '{}' not found in module '{}'",
-                                parts[0], module_path
-                            ))
-                        })?;
-                        let type_sym =
-                            module.symbols.get(*type_sym_id as usize).ok_or_else(|| {
-                                RuntimeError::Other(format!("Invalid symbol id: {}", type_sym_id))
-                            })?;
-                        let method_sym_id = type_sym.children.get(parts[1]).ok_or_else(|| {
-                            RuntimeError::Other(format!(
-                                "Method '{}' not found on type '{}' in module '{}'",
-                                parts[1], parts[0], module_path
-                            ))
-                        })?;
-                        module.symbols.get(*method_sym_id as usize).ok_or_else(|| {
-                            RuntimeError::Other(format!("Invalid symbol id: {}", method_sym_id))
-                        })?
-                    } else {
-                        let symbol_id =
-                            root_symbol
-                                .children
-                                .get(symbol_name.as_str())
-                                .ok_or_else(|| {
-                                    RuntimeError::Other(format!(
-                                        "Symbol '{}' not found in module '{}'",
-                                        symbol_name, module_path
-                                    ))
-                                })?;
-                        module.symbols.get(*symbol_id as usize).ok_or_else(|| {
-                            RuntimeError::Other(format!("Invalid symbol id: {}", symbol_id))
-                        })?
-                    };
-
-                    // Extract function information
-                    let (func_id, address) = match &symbol.kind {
-                        crate::semantic::SymbolKind::Function { func_id, address } => {
-                            (*func_id, *address)
-                        }
-                        _ => {
-                            return Err(RuntimeError::Other(format!(
-                                "Symbol '{}' in module '{}' is not a function",
-                                symbol_name, module_path
-                            )));
-                        }
-                    };
-
-                    let function_def = module.functions.get(func_id as usize).ok_or_else(|| {
-                        RuntimeError::Other(format!("Function definition not found: {}", func_id))
-                    })?;
-
-                    let args_len = function_def.params.len();
 
                     // Create new stack frame with arguments
                     let mut new_frame = StackFrame::new();
-                    new_frame.module_idx = target_module_idx; // Execute in the context of the target module
+                    new_frame.module_idx = target.module_idx; // Execute in the context of the target module
                     let stack = &mut self.stack_frame_mut()?.stack;
-                    new_frame.params = stack.split_off(stack.len() - args_len);
-                    new_frame.pc = self.resolve_instruction_address(
-                        target_module_idx,
-                        address,
-                        "external function address",
-                    )?;
+                    new_frame.params = stack.split_off(stack.len() - target.args_len);
+                    new_frame.pc = target.target_pc;
 
                     self.stack.push(new_frame);
                 }

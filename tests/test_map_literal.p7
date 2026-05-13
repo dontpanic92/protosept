@@ -98,3 +98,26 @@ fn test_map_values() -> int {
     let vs = m.values();
     vs.len()
 }
+
+// Test 14: Duplicate literal keys overwrite value and keep a single entry
+@test(expected_type = "int", expected_value = "101")
+fn test_map_duplicate_literal_key_overwrites() -> int {
+    let m = {1: 10, 1: 100};
+    m[1] + m.len()
+}
+
+// Test 15: keys() preserves insertion order
+@test(expected_type = "string", expected_value = "abc")
+fn test_map_keys_preserve_order() -> string {
+    let m = {"a": 1, "b": 2, "c": 3};
+    let ks = m.keys();
+    ks[0] + ks[1] + ks[2]
+}
+
+// Test 16: values() preserves insertion order
+@test(expected_type = "int", expected_value = "123")
+fn test_map_values_preserve_order() -> int {
+    let m = {"a": 1, "b": 20, "c": 102};
+    let vs = m.values();
+    vs[0] + vs[1] + vs[2]
+}

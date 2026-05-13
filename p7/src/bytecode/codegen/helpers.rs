@@ -88,17 +88,14 @@ impl Generator {
 
     /// Helper to add a string constant to the pool and return its index
     pub(super) fn add_string_constant(&mut self, s: &str) -> u32 {
-        if let Some(idx) = self
-            .string_constants
-            .iter()
-            .position(|existing| existing == s)
-        {
-            idx as u32
-        } else {
-            let idx = self.string_constants.len() as u32;
-            self.string_constants.push(s.to_string());
-            idx
+        if let Some(idx) = self.string_constant_ids.get(s) {
+            return *idx;
         }
+
+        let idx = self.string_constants.len() as u32;
+        self.string_constants.push(s.to_string());
+        self.string_constant_ids.insert(s.to_string(), idx);
+        idx
     }
 
     pub(super) fn handle_primitive_method_call(

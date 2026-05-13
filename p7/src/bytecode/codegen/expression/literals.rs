@@ -118,14 +118,7 @@ impl Generator {
         &mut self,
         value: &str,
     ) -> SaResult<Type> {
-        let string_index = if let Some(idx) = self.string_constants.iter().position(|s| s == value)
-        {
-            idx as u32
-        } else {
-            let idx = self.string_constants.len() as u32;
-            self.string_constants.push(value.to_string());
-            idx
-        };
+        let string_index = self.add_string_constant(value);
 
         self.builder.lds(string_index);
         Ok(Type::Primitive(PrimitiveType::String))

@@ -39,3 +39,115 @@ fn test_map_string_values() -> string {
     let m = {1: "hello", 2: "world"};
     m[1]
 }
+
+// Test 6: Removing a key returns the removed value
+@test(expected_type = "int", expected_value = "20")
+fn test_box_hashmap_remove_returns_value() -> int {
+    let mut m = box({1: 10, 2: 20, 3: 30});
+    m.remove(2) ?? -1
+}
+
+// Test 7: Removing a key removes it from subsequent lookup
+@test(expected_type = "int", expected_value = "0")
+fn test_box_hashmap_remove_deletes_key() -> int {
+    let mut m = box({1: 10, 2: 20, 3: 30});
+    m.remove(2);
+    if m.contains_key(2) { 1 } else { 0 }
+}
+
+// Test 8: Removing preserves the relative order of remaining keys
+@test(expected_type = "string", expected_value = "ac")
+fn test_box_hashmap_remove_preserves_order() -> string {
+    let mut m = box({"a": 1, "b": 2, "c": 3});
+    m.remove("b");
+    let ks = m.keys();
+    ks[0] + ks[1]
+}
+
+// Test 9: Updating an existing key does not move it
+@test(expected_type = "string", expected_value = "ab")
+fn test_box_hashmap_set_existing_preserves_order() -> string {
+    let mut m = box({"a": 1, "b": 2});
+    m.set("a", 10);
+    let ks = m.keys();
+    ks[0] + ks[1]
+}
+
+// Test 10: Exactly the small-map threshold remains usable
+@test(expected_type = "int", expected_value = "8")
+fn test_hashmap_threshold_exact_len() -> int {
+    let mut m = box({0: 0});
+    let mut i = 1;
+    loop {
+        if i >= 8 {
+            break;
+        }
+        m.set(i, i);
+        i = i + 1;
+    }
+    m.len()
+}
+
+// Test 11: Inserting past the threshold promotes and preserves lookup
+@test(expected_type = "int", expected_value = "9")
+fn test_hashmap_promoted_len() -> int {
+    let mut m = box({0: 0});
+    let mut i = 1;
+    loop {
+        if i >= 9 {
+            break;
+        }
+        m.set(i, i);
+        i = i + 1;
+    }
+    m.len()
+}
+
+// Test 12: Updating an existing key at threshold does not promote or change len
+@test(expected_type = "int", expected_value = "1007")
+fn test_hashmap_threshold_update_existing() -> int {
+    let mut m = box({0: 0});
+    let mut i = 1;
+    loop {
+        if i >= 8 {
+            break;
+        }
+        m.set(i, i);
+        i = i + 1;
+    }
+    m.set(7, 999);
+    m[7] + m.len()
+}
+
+// Test 13: Removal after promotion preserves remaining key order
+@test(expected_type = "int", expected_value = "2")
+fn test_hashmap_promoted_remove_preserves_order() -> int {
+    let mut m = box({0: 0});
+    let mut i = 1;
+    loop {
+        if i >= 10 {
+            break;
+        }
+        m.set(i, i);
+        i = i + 1;
+    }
+    m.remove(1);
+    let ks = m.keys();
+    ks[0] + ks[1]
+}
+
+// Test 14: Large maps preserve duplicate-key overwrite semantics
+@test(expected_type = "int", expected_value = "1009")
+fn test_hashmap_promoted_overwrite_existing() -> int {
+    let mut m = box({0: 0});
+    let mut i = 1;
+    loop {
+        if i >= 10 {
+            break;
+        }
+        m.set(i, i);
+        i = i + 1;
+    }
+    m.set(5, 999);
+    m[5] + m.len()
+}

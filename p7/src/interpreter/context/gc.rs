@@ -92,10 +92,10 @@ impl Context {
                     self.mark_data(elem, marked);
                 }
             }
-            Data::Map(pairs) => {
-                for (k, v) in pairs.iter() {
-                    self.mark_data(k, marked);
-                    self.mark_data(v, marked);
+            Data::Map(map) => {
+                for entry in map.entries() {
+                    self.mark_data(entry.key(), marked);
+                    self.mark_data(entry.value(), marked);
                 }
             }
             _ => {}
@@ -272,10 +272,9 @@ impl Context {
                 let elements = std::rc::Rc::make_mut(elements);
                 Self::update_data_vec(elements.as_mut_slice(), index_map);
             }
-            Data::Map(pairs) => {
-                for (k, v) in std::rc::Rc::make_mut(pairs).iter_mut() {
-                    Self::update_data(k, index_map);
-                    Self::update_data(v, index_map);
+            Data::Map(map) => {
+                for value in std::rc::Rc::make_mut(map).values_mut() {
+                    Self::update_data(value, index_map);
                 }
             }
             _ => {}

@@ -15,6 +15,19 @@ pub struct ResolvedCall {
 }
 
 #[derive(Debug, Clone)]
+pub struct ResolvedExternalCall {
+    pub module_idx: usize,
+    pub target_pc: usize,
+    pub args_len: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedExternalVar {
+    pub module_idx: usize,
+    pub var_id: u32,
+}
+
+#[derive(Debug, Clone)]
 pub enum ResolvedDispatch {
     Function {
         target_pc: usize,
@@ -313,6 +326,15 @@ pub struct Module {
     /// Runtime-only proto method metadata keyed by (proto id, method hash).
     #[serde(skip)]
     pub proto_method_metas: HashMap<(u32, u32), ProtoMethodMeta>,
+    /// Runtime-only resolved external variable targets keyed by instruction index.
+    #[serde(skip)]
+    pub external_var_targets: Vec<Option<ResolvedExternalVar>>,
+    /// Runtime-only resolved external function targets keyed by instruction index.
+    #[serde(skip)]
+    pub external_call_targets: Vec<Option<ResolvedExternalCall>>,
+    /// Runtime-only module variable name index.
+    #[serde(skip)]
+    pub module_variable_ids: HashMap<String, u32>,
 }
 
 impl Module {
@@ -337,6 +359,9 @@ impl Module {
         self.call_targets.clear();
         self.symbol_dispatch.clear();
         self.proto_method_metas.clear();
+        self.external_var_targets.clear();
+        self.external_call_targets.clear();
+        self.module_variable_ids.clear();
 
         let mut cursor = std::io::Cursor::new(&self.instructions);
         while cursor.position() < self.instructions.len() as u64 {
@@ -349,6 +374,9 @@ impl Module {
             self.decoded_instructions.push(inst);
         }
         self.call_targets = vec![None; self.decoded_instructions.len()];
+        self.external_var_targets = vec![None; self.decoded_instructions.len()];
+        self.external_call_targets = vec![None; self.decoded_instructions.len()];
+        self.rebuild_module_variable_ids();
         self.build_execution_metadata()?;
 
         Ok(())
@@ -388,6 +416,39 @@ impl Module {
 
     pub fn proto_method_meta(&self, proto_id: u32, method_hash: u32) -> Option<&ProtoMethodMeta> {
         self.proto_method_metas.get(&(proto_id, method_hash))
+    }
+
+    pub fn external_var_target(&self, inst_index: usize) -> Option<&ResolvedExternalVar> {
+        self.external_var_targets.get(inst_index)?.as_ref()
+    }
+
+    pub fn external_call_target(&self, inst_index: usize) -> Option<&ResolvedExternalCall> {
+        self.external_call_targets.get(inst_index)?.as_ref()
+    }
+
+    pub fn module_variable_by_name(
+        &self,
+        name: &str,
+        require_public: bool,
+    ) -> Option<&codegen::ModuleVariable> {
+        if let Some(var_id) = self.module_variable_ids.get(name) {
+            return self
+                .module_variables
+                .get(*var_id as usize)
+                .filter(|var| !require_public || var.is_pub);
+        }
+
+        self.module_variables
+            .iter()
+            .find(|var| var.name == name && (!require_public || var.is_pub))
+    }
+
+    fn rebuild_module_variable_ids(&mut self) {
+        self.module_variable_ids = self
+            .module_variables
+            .iter()
+            .map(|var| (var.name.to_string(), var.var_id))
+            .collect();
     }
 
     fn build_execution_metadata(&mut self) -> Result<(), String> {

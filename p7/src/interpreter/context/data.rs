@@ -1,17 +1,297 @@
 use crate::errors::RuntimeError;
+use indexmap::IndexMap;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 pub type ContextResult<T> = std::result::Result<T, RuntimeError>;
 pub type SharedStr = Rc<str>;
 pub type SharedArray = Rc<Vec<Data>>;
 pub type SharedTuple = Rc<Vec<Data>>;
-pub type SharedMap = Rc<Vec<(Data, Data)>>;
+pub type SharedMap = Rc<RuntimeMap>;
 pub type SharedData = Rc<Data>;
 pub type SharedCaptures = Rc<Vec<Data>>;
+
+pub(crate) const SMALL_MAP_MAX_ENTRIES: usize = 8;
 
 /// Type for host functions that can be called from p7 code
 /// Takes a mutable reference to the context to access the stack
 pub type HostFunction = fn(&mut super::Context) -> ContextResult<()>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MapKey {
+    Int(i64),
+    String(SharedStr),
+    Null,
+    Some(Box<MapKey>),
+    Tuple(Vec<MapKey>),
+    Exception(i64),
+}
+
+impl MapKey {
+    pub(crate) fn try_from_data(data: &Data) -> ContextResult<Self> {
+        match data {
+            Data::Int(value) => Ok(MapKey::Int(*value)),
+            Data::String(value) => Ok(MapKey::String(value.clone())),
+            Data::Null => Ok(MapKey::Null),
+            Data::Some(value) => Ok(MapKey::Some(Box::new(MapKey::try_from_data(value)?))),
+            Data::Tuple(elements) => {
+                let mut keys = Vec::with_capacity(elements.len());
+                for element in elements.iter() {
+                    keys.push(MapKey::try_from_data(element)?);
+                }
+                Ok(MapKey::Tuple(keys))
+            }
+            Data::Exception(value) => Ok(MapKey::Exception(*value)),
+            Data::Float(_) => Err(RuntimeError::Other(
+                "HashMap key type is not hashable at runtime: float".to_string(),
+            )),
+            Data::StructRef(_) => Err(RuntimeError::Other(
+                "HashMap key type is not hashable at runtime: struct reference".to_string(),
+            )),
+            Data::BoxRef(_) | Data::ProtoBoxRef { .. } | Data::ProtoRefRef { .. } => {
+                Err(RuntimeError::Other(
+                    "HashMap key type is not hashable at runtime: box/proto reference".to_string(),
+                ))
+            }
+            Data::Array(_) => Err(RuntimeError::Other(
+                "HashMap key type is not hashable at runtime: array".to_string(),
+            )),
+            Data::Closure { .. } => Err(RuntimeError::Other(
+                "HashMap key type is not hashable at runtime: closure".to_string(),
+            )),
+            Data::Map(_) => Err(RuntimeError::Other(
+                "HashMap key type is not hashable at runtime: map".to_string(),
+            )),
+            Data::Foreign { .. } => Err(RuntimeError::Other(
+                "HashMap key type is not hashable at runtime: foreign value".to_string(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapEntry {
+    key_hash: MapKey,
+    key: Data,
+    value: Data,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeMap {
+    storage: RuntimeMapStorage,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum RuntimeMapStorage {
+    Small(Vec<MapEntry>),
+    Large(IndexMap<MapKey, MapEntry>),
+}
+
+impl RuntimeMap {
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
+        if capacity > SMALL_MAP_MAX_ENTRIES {
+            return Self {
+                storage: RuntimeMapStorage::Large(IndexMap::with_capacity(capacity)),
+            };
+        }
+
+        Self {
+            storage: RuntimeMapStorage::Small(Vec::with_capacity(capacity)),
+        }
+    }
+
+    pub(crate) fn from_pairs(pairs: Vec<(Data, Data)>) -> ContextResult<Self> {
+        let mut map = Self::with_capacity(pairs.len());
+        for (key, value) in pairs {
+            map.insert(key, value)?;
+        }
+        Ok(map)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        match &self.storage {
+            RuntimeMapStorage::Small(entries) => entries.len(),
+            RuntimeMapStorage::Large(entries) => entries.len(),
+        }
+    }
+
+    pub(crate) fn insert(&mut self, key: Data, value: Data) -> ContextResult<()> {
+        let key_hash = MapKey::try_from_data(&key)?;
+
+        match &mut self.storage {
+            RuntimeMapStorage::Small(entries) => {
+                if let Some(entry) = entries.iter_mut().find(|entry| entry.key_hash == key_hash) {
+                    entry.value = value;
+                    return Ok(());
+                }
+
+                if entries.len() >= SMALL_MAP_MAX_ENTRIES {
+                    self.promote_to_large();
+                    return self.insert_large(key_hash, key, value);
+                }
+
+                entries.push(MapEntry {
+                    key_hash,
+                    key,
+                    value,
+                });
+            }
+            RuntimeMapStorage::Large(_) => self.insert_large(key_hash, key, value)?,
+        }
+        Ok(())
+    }
+
+    pub(crate) fn get(&self, key: &Data) -> ContextResult<Option<&Data>> {
+        let key_hash = MapKey::try_from_data(key)?;
+        Ok(match &self.storage {
+            RuntimeMapStorage::Small(entries) => entries
+                .iter()
+                .find(|entry| entry.key_hash == key_hash)
+                .map(|entry| &entry.value),
+            RuntimeMapStorage::Large(entries) => entries.get(&key_hash).map(|entry| &entry.value),
+        })
+    }
+
+    pub(crate) fn contains_key(&self, key: &Data) -> ContextResult<bool> {
+        let key_hash = MapKey::try_from_data(key)?;
+        Ok(match &self.storage {
+            RuntimeMapStorage::Small(entries) => {
+                entries.iter().any(|entry| entry.key_hash == key_hash)
+            }
+            RuntimeMapStorage::Large(entries) => entries.contains_key(&key_hash),
+        })
+    }
+
+    pub(crate) fn remove(&mut self, key: &Data) -> ContextResult<Option<Data>> {
+        let key_hash = MapKey::try_from_data(key)?;
+        Ok(match &mut self.storage {
+            RuntimeMapStorage::Small(entries) => entries
+                .iter()
+                .position(|entry| entry.key_hash == key_hash)
+                .map(|idx| entries.remove(idx).value),
+            RuntimeMapStorage::Large(entries) => {
+                entries.shift_remove(&key_hash).map(|entry| entry.value)
+            }
+        })
+    }
+
+    pub(crate) fn keys(&self) -> Vec<Data> {
+        match &self.storage {
+            RuntimeMapStorage::Small(entries) => {
+                entries.iter().map(|entry| entry.key.clone()).collect()
+            }
+            RuntimeMapStorage::Large(entries) => {
+                entries.values().map(|entry| entry.key.clone()).collect()
+            }
+        }
+    }
+
+    pub(crate) fn values(&self) -> Vec<Data> {
+        match &self.storage {
+            RuntimeMapStorage::Small(entries) => {
+                entries.iter().map(|entry| entry.value.clone()).collect()
+            }
+            RuntimeMapStorage::Large(entries) => {
+                entries.values().map(|entry| entry.value.clone()).collect()
+            }
+        }
+    }
+
+    pub(crate) fn entries(&self) -> Vec<&MapEntry> {
+        match &self.storage {
+            RuntimeMapStorage::Small(entries) => entries.iter().collect(),
+            RuntimeMapStorage::Large(entries) => entries.values().collect(),
+        }
+    }
+
+    pub(crate) fn values_mut(&mut self) -> Vec<&mut Data> {
+        match &mut self.storage {
+            RuntimeMapStorage::Small(entries) => {
+                entries.iter_mut().map(|entry| &mut entry.value).collect()
+            }
+            RuntimeMapStorage::Large(entries) => entries
+                .values_mut()
+                .map(|entry| &mut entry.value)
+                .collect(),
+        }
+    }
+
+    fn insert_large(&mut self, key_hash: MapKey, key: Data, value: Data) -> ContextResult<()> {
+        let RuntimeMapStorage::Large(entries) = &mut self.storage else {
+            unreachable!("insert_large requires large storage");
+        };
+
+        if let Some(entry) = entries.get_mut(&key_hash) {
+            entry.value = value;
+        } else {
+            entries.insert(
+                key_hash.clone(),
+                MapEntry {
+                    key_hash,
+                    key,
+                    value,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn promote_to_large(&mut self) {
+        let RuntimeMapStorage::Small(entries) =
+            std::mem::replace(&mut self.storage, RuntimeMapStorage::Small(Vec::new()))
+        else {
+            return;
+        };
+
+        let mut indexed = IndexMap::with_capacity(entries.len() + 1);
+        for entry in entries {
+            indexed.insert(entry.key_hash.clone(), entry);
+        }
+        self.storage = RuntimeMapStorage::Large(indexed);
+    }
+}
+
+impl MapEntry {
+    pub(crate) fn key(&self) -> &Data {
+        &self.key
+    }
+
+    pub(crate) fn value(&self) -> &Data {
+        &self.value
+    }
+}
+
+impl Eq for RuntimeMap {}
+
+impl Hash for MapKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            MapKey::Int(value) => {
+                0u8.hash(state);
+                value.hash(state);
+            }
+            MapKey::String(value) => {
+                1u8.hash(state);
+                value.hash(state);
+            }
+            MapKey::Null => {
+                2u8.hash(state);
+            }
+            MapKey::Some(value) => {
+                3u8.hash(state);
+                value.hash(state);
+            }
+            MapKey::Tuple(values) => {
+                4u8.hash(state);
+                values.hash(state);
+            }
+            MapKey::Exception(value) => {
+                5u8.hash(state);
+                value.hash(state);
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Data {
@@ -75,7 +355,13 @@ impl Data {
     }
 
     pub fn map(pairs: Vec<(Data, Data)>) -> Self {
-        Data::Map(Rc::new(pairs))
+        Data::Map(Rc::new(
+            RuntimeMap::from_pairs(pairs).expect("Data::map requires hashable keys"),
+        ))
+    }
+
+    pub(crate) fn try_map(pairs: Vec<(Data, Data)>) -> ContextResult<Self> {
+        Ok(Data::Map(Rc::new(RuntimeMap::from_pairs(pairs)?)))
     }
 
     pub fn some(value: Data) -> Self {
@@ -110,9 +396,9 @@ impl Data {
         }
     }
 
-    pub fn map_pairs(&self) -> Option<&[(Data, Data)]> {
+    pub fn map_entries(&self) -> Option<Vec<&MapEntry>> {
         match self {
-            Data::Map(pairs) => Some(pairs.as_slice()),
+            Data::Map(map) => Some(map.entries()),
             _ => None,
         }
     }
@@ -131,9 +417,9 @@ impl Data {
         }
     }
 
-    pub fn map_pairs_mut_in_box(&mut self) -> Option<&mut Vec<(Data, Data)>> {
+    pub fn map_mut_in_box(&mut self) -> Option<&mut RuntimeMap> {
         match self {
-            Data::Map(pairs) => Some(Rc::make_mut(pairs)),
+            Data::Map(map) => Some(Rc::make_mut(map)),
             _ => None,
         }
     }

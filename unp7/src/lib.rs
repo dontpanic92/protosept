@@ -323,6 +323,9 @@ mod tests {
             call_targets: Vec::new(),
             symbol_dispatch: Vec::new(),
             proto_method_metas: std::collections::HashMap::new(),
+            external_var_targets: Vec::new(),
+            external_call_targets: Vec::new(),
+            module_variable_ids: std::collections::HashMap::new(),
         };
 
         let output = disassemble_module(&module);
