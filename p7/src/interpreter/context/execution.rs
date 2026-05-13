@@ -1,29 +1,8 @@
-use std::io::Cursor;
-
-use binrw::BinRead;
-
-use crate::bytecode::Instruction;
+use crate::bytecode::{Instruction, ResolvedDispatch};
 use crate::errors::RuntimeError;
 
 use super::Context;
 use super::data::{ContextResult, Data, StackFrame, Struct};
-
-/// Outcome of a `CallProtoMethod` vtable lookup. Two-stage dispatch lets us
-/// release the immutable borrow on `modules` before we push a new stack
-/// frame or invoke a host function.
-enum DispatchKind {
-    /// Ordinary protosept method body at `address`, expecting `args_len`
-    /// stack values.
-    Function { address: u32, args_len: usize },
-    /// `@foreign` proto method routed through a host dispatcher.
-    Host {
-        dispatcher_name: String,
-        method_name: String,
-        type_tag: String,
-        vtable_slot: u32,
-        return_ty: crate::semantic::HostReturnTy,
-    },
-}
 
 /// Encode a `HostReturnTy` as a `Data::Array`-tagged tree so the host
 /// dispatcher can pop+decode it without a custom serialization format.
@@ -60,7 +39,9 @@ impl Context {
 
         let mut stack_frame = StackFrame::new();
         stack_frame.params = params;
-        stack_frame.pc = addr as usize;
+        stack_frame.pc = self.modules[0]
+            .bytecode_address_to_instruction_index(addr)
+            .expect("function address should point to a decoded instruction");
 
         self.stack.push(stack_frame);
     }
@@ -197,7 +178,8 @@ impl Context {
         let mut new_frame = StackFrame::new();
         new_frame.module_idx = module_idx;
         new_frame.params = stack.split_off(stack.len() - args_len);
-        new_frame.pc = address as usize;
+        new_frame.pc =
+            self.resolve_instruction_address(module_idx, address, "proto method address")?;
         self.stack.push(new_frame);
         Ok(())
     }
@@ -256,11 +238,13 @@ impl Context {
 
         let mut params = captures;
         params.extend(args);
+        let target_pc =
+            self.resolve_instruction_address(current_module_idx, func_addr, "closure address")?;
         let frame = StackFrame {
             params,
             locals: Vec::new(),
             stack: Vec::new(),
-            pc: func_addr as usize,
+            pc: target_pc,
             module_idx: current_module_idx,
         };
         self.stack.push(frame);
@@ -300,11 +284,13 @@ impl Context {
 
         let mut params = captures;
         params.extend(args);
+        let target_pc =
+            self.resolve_instruction_address(current_module_idx, func_addr, "closure address")?;
         let frame = StackFrame {
             params,
             locals: Vec::new(),
             stack: Vec::new(),
-            pc: func_addr as usize,
+            pc: target_pc,
             module_idx: current_module_idx,
         };
         self.stack.push(frame);
@@ -328,17 +314,27 @@ impl Context {
             }
 
             let module_idx = self.stack_frame()?.module_idx;
-            let pc = self.stack_frame()?.pc;
+            let inst_pc = self.stack_frame()?.pc;
 
             // Check if we've reached the end of the current module's instructions
-            if pc >= self.modules[module_idx].instructions.len() {
+            if inst_pc >= self.modules[module_idx].decoded_len() {
                 break;
             }
 
-            let mut reader = Cursor::new(&self.modules[module_idx].instructions[pc..]);
-            let instruction = Instruction::read(&mut reader).unwrap();
+            let pc = self.modules[module_idx]
+                .instruction_index_to_bytecode_address(inst_pc)
+                .unwrap_or(inst_pc as u32) as usize;
+            let instruction = self.modules[module_idx]
+                .decoded_instruction(inst_pc)
+                .cloned()
+                .ok_or_else(|| {
+                    RuntimeError::Other(format!(
+                        "instruction index {} out of bounds in module {}",
+                        inst_pc, module_idx
+                    ))
+                })?;
 
-            self.stack_frame_mut()?.pc += reader.position() as usize;
+            self.stack_frame_mut()?.pc += 1;
 
             match instruction {
                 Instruction::Ldi(val) => self.stack_frame_mut()?.stack.push(Data::Int(val)),
@@ -703,45 +699,35 @@ impl Context {
                 Instruction::Gte => {
                     comparison_op!(self, >=);
                 }
-                Instruction::Jmp(addr) => self.stack_frame_mut()?.pc = addr as usize,
+                Instruction::Jmp(addr) => {
+                    self.stack_frame_mut()?.pc =
+                        self.resolve_instruction_address(module_idx, addr, "jump target")?;
+                }
                 Instruction::Jif(addr) => {
                     if let Some(Data::Int(condition)) = self.stack_frame_mut()?.stack.pop() {
                         if condition != 0 {
-                            self.stack_frame_mut()?.pc = addr as usize;
+                            self.stack_frame_mut()?.pc = self.resolve_instruction_address(
+                                module_idx,
+                                addr,
+                                "conditional jump target",
+                            )?;
                         }
                     } else {
                         unimplemented!();
                     }
                 }
-                Instruction::Call(symbol_id) => {
+                Instruction::Call(_) => {
                     let module_idx = self.stack_frame()?.module_idx;
-                    let (address, args_len) = {
-                        let symbol = self.modules[module_idx]
-                            .symbols
-                            .get(symbol_id as usize)
-                            .ok_or(RuntimeError::FunctionNotFound)?;
-
-                        let (func_id, address) = match &symbol.kind {
-                            crate::semantic::SymbolKind::Function { func_id, address } => {
-                                (*func_id, *address)
-                            }
-                            _ => return Err(RuntimeError::FunctionNotFound),
-                        };
-
-                        let function_type = self.modules[module_idx]
-                            .functions
-                            .get(func_id as usize)
-                            .ok_or(RuntimeError::FunctionNotFound)?;
-
-                        let args_len = function_type.params.len();
-                        (address, args_len)
-                    };
+                    let call_target = self.modules[module_idx]
+                        .direct_call_target(inst_pc)
+                        .ok_or(RuntimeError::FunctionNotFound)?
+                        .clone();
 
                     let mut new_frame = StackFrame::new();
                     new_frame.module_idx = module_idx; // Stay in the same module
                     let stack = &mut self.stack_frame_mut()?.stack;
-                    new_frame.params = stack.split_off(stack.len() - args_len);
-                    new_frame.pc = address as usize;
+                    new_frame.params = stack.split_off(stack.len() - call_target.args_len);
+                    new_frame.pc = call_target.target_pc;
 
                     self.stack.push(new_frame);
                 }
@@ -928,7 +914,11 @@ impl Context {
                     if let Some(value) = self.stack_frame()?.stack.last() {
                         if matches!(value, Data::Exception(_)) {
                             // It's an exception, jump to handler
-                            self.stack_frame_mut()?.pc = jump_addr as usize;
+                            self.stack_frame_mut()?.pc = self.resolve_instruction_address(
+                                module_idx,
+                                jump_addr,
+                                "exception handler target",
+                            )?;
                         }
                         // Otherwise, continue normally
                     } else {
@@ -1033,43 +1023,24 @@ impl Context {
                     }
                 }
                 Instruction::CallProtoMethod(proto_id, method_hash) => {
-                    // Dynamic dispatch: look up method in vtable based on concrete type
-                    // The receiver should be a ProtoBoxRef on the stack with arguments after it
-
-                    // We need to peek at the receiver to get the concrete type
-                    // The receiver is at the bottom of the arguments
-                    // For now, we'll assume the receiver is the first argument (self parameter)
-
-                    // First, let's find the function signature to know how many args there are
-                    // We'll need to look up the proto method to get param count
                     let module_idx = self.stack_frame()?.module_idx;
-                    let proto_type = self.modules[module_idx]
-                        .types
-                        .get(proto_id as usize)
-                        .ok_or(RuntimeError::Other("Proto type not found".to_string()))?;
-
-                    let method_name = self.get_method_name_from_hash(proto_id, method_hash)?;
-
-                    let param_count = if let crate::semantic::TypeDefinition::Proto(proto) =
-                        proto_type
-                    {
-                        proto
-                            .methods
-                            .iter()
-                            .find(|(name, _, _)| Self::hash_method_name(name) == method_hash)
-                            .map(|(_, params, _)| params.len())
-                            .ok_or(RuntimeError::Other("Method not found in proto".to_string()))?
-                    } else {
-                        return Err(RuntimeError::Other("Expected proto type".to_string()));
-                    };
+                    let method_meta = self.modules[module_idx]
+                        .proto_method_meta(proto_id, method_hash)
+                        .ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Method with hash {} not found in proto {}",
+                                method_hash, proto_id
+                            ))
+                        })?
+                        .clone();
 
                     // The receiver (self) is at position stack.len() - param_count
                     let stack_len = self.stack_frame()?.stack.len();
-                    if stack_len < param_count {
+                    if stack_len < method_meta.param_count {
                         return Err(RuntimeError::StackUnderflow);
                     }
 
-                    let receiver_idx = stack_len - param_count;
+                    let receiver_idx = stack_len - method_meta.param_count;
                     let receiver = self
                         .stack_frame()?
                         .stack
@@ -1091,63 +1062,34 @@ impl Context {
                         }
                     };
 
-                    // Look up the method in the vtable
                     let method_symbol_id = self
                         .vtable
                         .get(&(concrete_type_id, proto_id, method_hash))
                         .ok_or_else(|| {
                             RuntimeError::Other(format!(
                                 "Method '{}' not found in vtable for type {} implementing proto {}",
-                                method_name, concrete_type_id, proto_id
+                                method_meta.method_name, concrete_type_id, proto_id
                             ))
                         })?;
 
-                    // Now call the method using the standard Call instruction logic
-                    let dispatch_kind: DispatchKind = {
-                        let symbol = self.modules[module_idx]
-                            .symbols
-                            .get(*method_symbol_id as usize)
-                            .ok_or(RuntimeError::FunctionNotFound)?;
-
-                        match &symbol.kind {
-                            crate::semantic::SymbolKind::Function { func_id, address } => {
-                                let function_type = self.modules[module_idx]
-                                    .functions
-                                    .get(*func_id as usize)
-                                    .ok_or(RuntimeError::FunctionNotFound)?;
-                                DispatchKind::Function {
-                                    address: *address,
-                                    args_len: function_type.params.len(),
-                                }
-                            }
-                            crate::semantic::SymbolKind::HostMethod {
-                                dispatcher_name,
-                                method_name,
-                                type_tag,
-                                vtable_slot,
-                                return_ty,
-                                ..
-                            } => DispatchKind::Host {
-                                dispatcher_name: dispatcher_name.to_string(),
-                                method_name: method_name.to_string(),
-                                type_tag: type_tag.to_string(),
-                                vtable_slot: *vtable_slot,
-                                return_ty: return_ty.clone(),
-                            },
-                            _ => return Err(RuntimeError::FunctionNotFound),
-                        }
-                    };
+                    let dispatch_kind = self.modules[module_idx]
+                        .symbol_dispatch(*method_symbol_id)
+                        .ok_or(RuntimeError::FunctionNotFound)?
+                        .clone();
 
                     match dispatch_kind {
-                        DispatchKind::Function { address, args_len } => {
+                        ResolvedDispatch::Function {
+                            target_pc,
+                            args_len,
+                        } => {
                             let mut new_frame = StackFrame::new();
                             new_frame.module_idx = module_idx;
                             let stack = &mut self.stack_frame_mut()?.stack;
                             new_frame.params = stack.split_off(stack.len() - args_len);
-                            new_frame.pc = address as usize;
+                            new_frame.pc = target_pc;
                             self.stack.push(new_frame);
                         }
-                        DispatchKind::Host {
+                        ResolvedDispatch::Host {
                             dispatcher_name,
                             method_name,
                             type_tag,
@@ -1303,7 +1245,11 @@ impl Context {
                     new_frame.module_idx = target_module_idx; // Execute in the context of the target module
                     let stack = &mut self.stack_frame_mut()?.stack;
                     new_frame.params = stack.split_off(stack.len() - args_len);
-                    new_frame.pc = address as usize;
+                    new_frame.pc = self.resolve_instruction_address(
+                        target_module_idx,
+                        address,
+                        "external function address",
+                    )?;
 
                     self.stack.push(new_frame);
                 }
@@ -1426,11 +1372,16 @@ impl Context {
                             // Create new frame. Params = captures + args
                             let mut params = captures;
                             params.extend(args);
+                            let target_pc = self.resolve_instruction_address(
+                                current_module_idx,
+                                func_addr,
+                                "closure address",
+                            )?;
                             let frame = StackFrame {
                                 params,
                                 locals: Vec::new(),
                                 stack: Vec::new(),
-                                pc: func_addr as usize,
+                                pc: target_pc,
                                 module_idx: current_module_idx,
                             };
                             self.stack.push(frame);
@@ -1456,24 +1407,38 @@ impl Context {
         self.stack.last_mut().ok_or(RuntimeError::NoStackFrame)
     }
 
+    fn resolve_instruction_address(
+        &self,
+        module_idx: usize,
+        byte_address: u32,
+        label: &str,
+    ) -> ContextResult<usize> {
+        let module = self.modules.get(module_idx).ok_or_else(|| {
+            RuntimeError::Other(format!(
+                "{} references missing module {}",
+                label, module_idx
+            ))
+        })?;
+        module
+            .bytecode_address_to_instruction_index(byte_address)
+            .ok_or_else(|| {
+                RuntimeError::Other(format!(
+                    "{} byte address {} does not point to a decoded instruction boundary in module {}",
+                    label, byte_address, module_idx
+                ))
+            })
+    }
+
     fn binary_op_int<F>(&mut self, op: F) -> ContextResult<()>
     where
         F: Fn(i64, i64) -> i64,
     {
-        let b = self
-            .stack_frame_mut()?
-            .stack
-            .pop()
-            .ok_or(RuntimeError::StackUnderflow)?;
-        let a = self
-            .stack_frame_mut()?
-            .stack
-            .pop()
-            .ok_or(RuntimeError::StackUnderflow)?;
+        let frame = self.stack_frame_mut()?;
+        let (a, b) = frame.pop2()?;
 
         match (a, b) {
             (Data::Int(a), Data::Int(b)) => {
-                self.stack_frame_mut()?.stack.push(Data::Int(op(a, b)));
+                frame.push(Data::Int(op(a, b)));
             }
             (Data::Exception(_), _) | (_, Data::Exception(_)) => {
                 return Err(RuntimeError::Other(

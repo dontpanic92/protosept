@@ -317,6 +317,12 @@ mod tests {
             module_var_count: 0,
             module_init_address: None,
             module_variables: Vec::new(),
+            decoded_instructions: Vec::new(),
+            byte_to_instruction: std::collections::HashMap::new(),
+            instruction_to_byte: Vec::new(),
+            call_targets: Vec::new(),
+            symbol_dispatch: Vec::new(),
+            proto_method_metas: std::collections::HashMap::new(),
         };
 
         let output = disassemble_module(&module);

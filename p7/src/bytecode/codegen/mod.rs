@@ -494,6 +494,12 @@ impl Generator {
             module_var_count,
             module_init_address,
             module_variables: self.module_variables.clone(),
+            decoded_instructions: Vec::new(),
+            byte_to_instruction: std::collections::HashMap::new(),
+            instruction_to_byte: Vec::new(),
+            call_targets: Vec::new(),
+            symbol_dispatch: Vec::new(),
+            proto_method_metas: std::collections::HashMap::new(),
         })
     }
 

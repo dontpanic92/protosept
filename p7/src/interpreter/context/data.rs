@@ -74,20 +74,20 @@ impl From<String> for Data {
 
 macro_rules! arithmetic_op {
     ($self: ident, $op:tt) => {
-        let b = $self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-        let a = $self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+        let frame = $self.stack_frame_mut()?;
+        let (a, b) = frame.pop2()?;
         match (a, b) {
             (Data::Int(a), Data::Int(b)) => {
-                $self.stack_frame_mut()?.stack.push(Data::Int(a $op b));
+                frame.push(Data::Int(a $op b));
             }
             (Data::Float(a), Data::Float(b)) => {
-                $self.stack_frame_mut()?.stack.push(Data::Float(a $op b));
+                frame.push(Data::Float(a $op b));
             }
             (Data::Int(a), Data::Float(b)) => {
-                $self.stack_frame_mut()?.stack.push(Data::Float((a as f64) $op b));
+                frame.push(Data::Float((a as f64) $op b));
             }
             (Data::Float(a), Data::Int(b)) => {
-                $self.stack_frame_mut()?.stack.push(Data::Float(a $op (b as f64)));
+                frame.push(Data::Float(a $op (b as f64)));
             }
             (Data::String(_), _) | (_, Data::String(_)) => {
                 // Arithmetic on strings is invalid.
@@ -135,36 +135,36 @@ macro_rules! arithmetic_op {
 
 macro_rules! comparison_op {
     ($self: ident, $op:tt) => {
-        let b = $self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
-        let a = $self.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+        let frame = $self.stack_frame_mut()?;
+        let (a, b) = frame.pop2()?;
         let is_equality_op = matches!(stringify!($op), "==" | "!=");
         match (a, b) {
             (Data::Int(a), Data::Int(b)) => {
-                $self.stack_frame_mut()?.stack.push(Data::Int((a $op b) as i64));
+                frame.push(Data::Int((a $op b) as i64));
             }
             (Data::Float(a), Data::Float(b)) => {
-                $self.stack_frame_mut()?.stack.push(Data::Int((a $op b) as i64));
+                frame.push(Data::Int((a $op b) as i64));
             }
             (Data::Int(a), Data::Float(b)) => {
-                $self.stack_frame_mut()?.stack.push(Data::Int(((a as f64) $op b) as i64));
+                frame.push(Data::Int(((a as f64) $op b) as i64));
             }
             (Data::Float(a), Data::Int(b)) => {
-                $self.stack_frame_mut()?.stack.push(Data::Int((a $op (b as f64)) as i64));
+                frame.push(Data::Int((a $op (b as f64)) as i64));
             }
             (Data::String(a), Data::String(b)) if is_equality_op => {
-                $self.stack_frame_mut()?.stack.push(Data::Int((a $op b) as i64));
+                frame.push(Data::Int((a $op b) as i64));
             }
             // Null equality comparisons
             (Data::Null, Data::Null) if is_equality_op => {
-                $self.stack_frame_mut()?.stack.push(Data::Int(("null" $op "null") as i64));
+                frame.push(Data::Int(("null" $op "null") as i64));
             }
             (Data::Null, Data::Some(_)) | (Data::Some(_), Data::Null) if is_equality_op => {
-                $self.stack_frame_mut()?.stack.push(Data::Int(("null" $op "some") as i64));
+                frame.push(Data::Int(("null" $op "some") as i64));
             }
             (Data::Some(_), Data::Some(_)) if is_equality_op => {
                 // Two Some values: consider them equal for null-checking purposes
                 // (the type system ensures this is only used for == null / != null)
-                $self.stack_frame_mut()?.stack.push(Data::Int(("some" $op "some") as i64));
+                frame.push(Data::Int(("some" $op "some") as i64));
             }
             (Data::String(_), _) | (_, Data::String(_)) => {
                 return Err(RuntimeError::Other("Comparison on string".to_string()));
@@ -222,6 +222,20 @@ impl StackFrame {
             pc: std::usize::MAX,
             module_idx: 0, // Default to main module
         }
+    }
+
+    pub(crate) fn pop(&mut self) -> ContextResult<Data> {
+        self.stack.pop().ok_or(RuntimeError::StackUnderflow)
+    }
+
+    pub(crate) fn pop2(&mut self) -> ContextResult<(Data, Data)> {
+        let b = self.pop()?;
+        let a = self.pop()?;
+        Ok((a, b))
+    }
+
+    pub(crate) fn push(&mut self, value: Data) {
+        self.stack.push(value);
     }
 }
 

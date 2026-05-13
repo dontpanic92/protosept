@@ -1,12 +1,11 @@
 use crate::bytecode::Module;
-use crate::errors::RuntimeError;
 
 use super::Context;
 use super::ForeignCarrierMethod;
-use super::data::{ContextResult, Data, StackFrame};
+use super::data::{Data, StackFrame};
 
 impl Context {
-    pub fn load_module(&mut self, module: Module) {
+    pub fn load_module(&mut self, mut module: Module) {
         // Push the main module first to ensure it's at index 0
         self.build_vtable(&module);
         let module_idx_for_foreign = self.modules.len();
@@ -15,6 +14,9 @@ impl Context {
         // Extract imported modules and init address before pushing the main module
         let imported_modules = module.imported_modules.clone();
         let init_address = module.module_init_address;
+        module
+            .prepare_execution()
+            .expect("module bytecode should decode before execution");
         // Allocate module-level variable storage
         let var_count = module.module_var_count as usize;
         let module_idx = self.modules.len();
@@ -37,7 +39,7 @@ impl Context {
 
     /// Helper to load a module and recursively load its dependencies.
     /// Registers each module in imported_modules if not already present.
-    fn load_module_internal(&mut self, module: Module) {
+    fn load_module_internal(&mut self, mut module: Module) {
         self.build_vtable(&module);
         let module_idx_for_foreign = self.modules.len();
         self.discover_foreign_carriers(module_idx_for_foreign, &module);
@@ -45,6 +47,9 @@ impl Context {
         // Extract imported modules and init address before pushing this module
         let imported_modules = module.imported_modules.clone();
         let init_address = module.module_init_address;
+        module
+            .prepare_execution()
+            .expect("module bytecode should decode before execution");
         // Allocate module-level variable storage
         let var_count = module.module_var_count as usize;
         let module_idx = self.modules.len();
@@ -188,7 +193,11 @@ impl Context {
     /// Run module-level initialization code (initializes module-level bindings).
     fn run_module_init(&mut self, module_idx: usize, init_address: usize) {
         let mut init_frame = StackFrame::new();
-        init_frame.pc = init_address;
+        init_frame.pc = self
+            .modules
+            .get(module_idx)
+            .and_then(|module| module.bytecode_address_to_instruction_index(init_address as u32))
+            .expect("module init address should point to a decoded instruction");
         init_frame.module_idx = module_idx;
         self.stack.push(init_frame);
         // Run the init code; it ends with a Ret instruction
@@ -240,31 +249,6 @@ impl Context {
 
     /// Simple hash function for method names
     pub(super) fn hash_method_name(name: &str) -> u32 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        name.hash(&mut hasher);
-        hasher.finish() as u32
-    }
-
-    /// Get method name from hash for error messages (reverse lookup)
-    pub(super) fn get_method_name_from_hash(
-        &self,
-        proto_id: u32,
-        method_hash: u32,
-    ) -> ContextResult<String> {
-        use crate::semantic::TypeDefinition;
-
-        if let Some(TypeDefinition::Proto(proto)) = self.modules[0].types.get(proto_id as usize) {
-            for (method_name, _, _) in &proto.methods {
-                if Self::hash_method_name(method_name) == method_hash {
-                    return Ok(method_name.to_string());
-                }
-            }
-        }
-        Err(RuntimeError::Other(format!(
-            "Method with hash {} not found in proto {}",
-            method_hash, proto_id
-        )))
+        crate::bytecode::hash_method_name(name)
     }
 }

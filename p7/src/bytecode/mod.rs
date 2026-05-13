@@ -1,9 +1,45 @@
 pub mod builder;
 pub mod codegen;
 
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+
 use binrw::{BinRead, binrw};
 
 use crate::semantic::{Symbol, SymbolKind};
+
+#[derive(Debug, Clone)]
+pub struct ResolvedCall {
+    pub target_pc: usize,
+    pub args_len: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum ResolvedDispatch {
+    Function {
+        target_pc: usize,
+        args_len: usize,
+    },
+    Host {
+        dispatcher_name: String,
+        method_name: String,
+        type_tag: String,
+        vtable_slot: u32,
+        return_ty: crate::semantic::HostReturnTy,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct ProtoMethodMeta {
+    pub method_name: String,
+    pub param_count: usize,
+}
+
+pub fn hash_method_name(name: &str) -> u32 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    name.hash(&mut hasher);
+    hasher.finish() as u32
+}
 
 #[binrw]
 #[brw(little)]
@@ -259,6 +295,24 @@ pub struct Module {
     pub module_init_address: Option<u32>,
     /// Exported module-level variable metadata (for cross-module access)
     pub module_variables: Vec<codegen::ModuleVariable>,
+    /// Runtime-only decoded instruction cache. Not serialized; rebuilt before execution.
+    #[serde(skip)]
+    pub decoded_instructions: Vec<Instruction>,
+    /// Runtime-only map from bytecode byte offsets to decoded instruction indices.
+    #[serde(skip)]
+    pub byte_to_instruction: HashMap<u32, usize>,
+    /// Runtime-only map from decoded instruction indices back to bytecode byte offsets.
+    #[serde(skip)]
+    pub instruction_to_byte: Vec<u32>,
+    /// Runtime-only resolved direct call targets keyed by instruction index.
+    #[serde(skip)]
+    pub call_targets: Vec<Option<ResolvedCall>>,
+    /// Runtime-only dispatch records keyed by symbol id.
+    #[serde(skip)]
+    pub symbol_dispatch: Vec<Option<ResolvedDispatch>>,
+    /// Runtime-only proto method metadata keyed by (proto id, method hash).
+    #[serde(skip)]
+    pub proto_method_metas: HashMap<(u32, u32), ProtoMethodMeta>,
 }
 
 impl Module {
@@ -274,5 +328,132 @@ impl Module {
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         bincode::deserialize(bytes).map_err(|e| format!("Module deserialization failed: {e}"))
+    }
+
+    pub fn prepare_execution(&mut self) -> Result<(), String> {
+        self.decoded_instructions.clear();
+        self.byte_to_instruction.clear();
+        self.instruction_to_byte.clear();
+        self.call_targets.clear();
+        self.symbol_dispatch.clear();
+        self.proto_method_metas.clear();
+
+        let mut cursor = std::io::Cursor::new(&self.instructions);
+        while cursor.position() < self.instructions.len() as u64 {
+            let start = cursor.position() as u32;
+            let inst_index = self.decoded_instructions.len();
+            let inst = Instruction::read(&mut cursor)
+                .map_err(|e| format!("failed to decode instruction at byte offset {start}: {e}"))?;
+            self.byte_to_instruction.insert(start, inst_index);
+            self.instruction_to_byte.push(start);
+            self.decoded_instructions.push(inst);
+        }
+        self.call_targets = vec![None; self.decoded_instructions.len()];
+        self.build_execution_metadata()?;
+
+        Ok(())
+    }
+
+    pub fn decoded_instruction(&self, inst_index: usize) -> Option<&Instruction> {
+        self.decoded_instructions.get(inst_index)
+    }
+
+    pub fn decoded_len(&self) -> usize {
+        self.decoded_instructions.len()
+    }
+
+    pub fn bytecode_address_to_instruction_index(&self, address: u32) -> Option<usize> {
+        if address == self.instructions.len() as u32 {
+            Some(self.decoded_instructions.len())
+        } else {
+            self.byte_to_instruction.get(&address).copied()
+        }
+    }
+
+    pub fn instruction_index_to_bytecode_address(&self, inst_index: usize) -> Option<u32> {
+        if inst_index == self.decoded_instructions.len() {
+            Some(self.instructions.len() as u32)
+        } else {
+            self.instruction_to_byte.get(inst_index).copied()
+        }
+    }
+
+    pub fn direct_call_target(&self, inst_index: usize) -> Option<&ResolvedCall> {
+        self.call_targets.get(inst_index)?.as_ref()
+    }
+
+    pub fn symbol_dispatch(&self, symbol_id: u32) -> Option<&ResolvedDispatch> {
+        self.symbol_dispatch.get(symbol_id as usize)?.as_ref()
+    }
+
+    pub fn proto_method_meta(&self, proto_id: u32, method_hash: u32) -> Option<&ProtoMethodMeta> {
+        self.proto_method_metas.get(&(proto_id, method_hash))
+    }
+
+    fn build_execution_metadata(&mut self) -> Result<(), String> {
+        self.symbol_dispatch = vec![None; self.symbols.len()];
+        for (symbol_id, symbol) in self.symbols.iter().enumerate() {
+            self.symbol_dispatch[symbol_id] = match &symbol.kind {
+                SymbolKind::Function { func_id, address } => {
+                    let Some(target_pc) = self.bytecode_address_to_instruction_index(*address)
+                    else {
+                        continue;
+                    };
+                    let function = self.functions.get(*func_id as usize).ok_or_else(|| {
+                        format!("function metadata missing for symbol id {symbol_id}")
+                    })?;
+                    Some(ResolvedDispatch::Function {
+                        target_pc,
+                        args_len: function.params.len(),
+                    })
+                }
+                SymbolKind::HostMethod {
+                    dispatcher_name,
+                    method_name,
+                    type_tag,
+                    vtable_slot,
+                    return_ty,
+                    ..
+                } => Some(ResolvedDispatch::Host {
+                    dispatcher_name: dispatcher_name.to_string(),
+                    method_name: method_name.to_string(),
+                    type_tag: type_tag.to_string(),
+                    vtable_slot: *vtable_slot,
+                    return_ty: return_ty.clone(),
+                }),
+                _ => None,
+            };
+        }
+
+        for (inst_index, inst) in self.decoded_instructions.iter().enumerate() {
+            if let Instruction::Call(symbol_id) = inst
+                && let Some(ResolvedDispatch::Function {
+                    target_pc,
+                    args_len,
+                }) = self.symbol_dispatch(*symbol_id)
+            {
+                self.call_targets[inst_index] = Some(ResolvedCall {
+                    target_pc: *target_pc,
+                    args_len: *args_len,
+                });
+            }
+        }
+
+        for (proto_id, ty) in self.types.iter().enumerate() {
+            let crate::semantic::TypeDefinition::Proto(proto) = ty else {
+                continue;
+            };
+            for (method_name, params, _) in &proto.methods {
+                self.proto_method_metas.insert(
+                    (proto_id as u32, hash_method_name(method_name)),
+                    ProtoMethodMeta {
+                        method_name: method_name.to_string(),
+                        param_count: params.len(),
+                    },
+                );
+            }
+        }
+
+        Ok(())
     }
 }
