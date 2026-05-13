@@ -326,6 +326,7 @@ mod tests {
             external_var_targets: Vec::new(),
             external_call_targets: Vec::new(),
             module_variable_ids: std::collections::HashMap::new(),
+            shared_string_constants: Vec::new(),
         };
 
         let output = disassemble_module(&module);

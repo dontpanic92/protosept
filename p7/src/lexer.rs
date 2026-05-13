@@ -6,7 +6,7 @@ pub struct Token {
     pub length: usize,
 }
 
-use crate::intern::InternedString;
+use crate::intern::{InternedString, StringInterner};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenType {
@@ -98,6 +98,95 @@ impl TokenType {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{InterpolatedStringPart, Lexer, LexerError, TokenType};
+
+    fn next_token_type(input: &str) -> TokenType {
+        let mut lexer = Lexer::new(input.to_string());
+        let token = lexer.next_token();
+        assert_eq!(lexer.errors, Vec::<LexerError>::new());
+        token.token_type
+    }
+
+    #[test]
+    fn string_escape_sequences_are_decoded() {
+        assert_eq!(
+            next_token_type(r#""a\\b\"c\n\r\t\0\u{03b2}""#),
+            TokenType::StringLiteral("a\\b\"c\n\r\t\0β".into())
+        );
+    }
+
+    #[test]
+    fn interpolated_string_uses_same_escape_decoder() {
+        assert_eq!(
+            next_token_type(r#"f"left\n{value}\u{03b2}""#),
+            TokenType::InterpolatedString(vec![
+                InterpolatedStringPart::Literal("left\n".into()),
+                InterpolatedStringPart::Expr("value".into()),
+                InterpolatedStringPart::Literal("β".into()),
+            ])
+        );
+    }
+
+    #[test]
+    fn invalid_unicode_escape_is_reported() {
+        let mut lexer = Lexer::new(r#""\u{110000}""#.to_string());
+        let token = lexer.next_token();
+        assert_eq!(token.token_type, TokenType::EOF);
+        assert!(matches!(
+            lexer.errors.as_slice(),
+            [LexerError::InvalidUnicodeEscape(_, _)]
+        ));
+    }
+
+    #[test]
+    fn unmatched_interpolated_close_brace_is_reported() {
+        let mut lexer = Lexer::new(r#"f"}""#.to_string());
+        let token = lexer.next_token();
+        assert_eq!(token.token_type, TokenType::EOF);
+        assert!(matches!(
+            lexer.errors.as_slice(),
+            [LexerError::InvalidInterpolation(_, _)]
+        ));
+    }
+
+    #[test]
+    fn unterminated_string_is_reported() {
+        let mut lexer = Lexer::new(r#""abc"#.to_string());
+        let token = lexer.next_token();
+        assert_eq!(token.token_type, TokenType::EOF);
+        assert!(matches!(
+            lexer.errors.as_slice(),
+            [LexerError::UnterminatedString(_)]
+        ));
+    }
+
+    #[test]
+    fn repeated_source_strings_are_interned_per_lexer() {
+        let mut lexer = Lexer::new(r#"name name "same" "same""#.to_string());
+        let first_ident = match lexer.next_token().token_type {
+            TokenType::Identifier(value) => value,
+            other => panic!("expected identifier, got {other:?}"),
+        };
+        let second_ident = match lexer.next_token().token_type {
+            TokenType::Identifier(value) => value,
+            other => panic!("expected identifier, got {other:?}"),
+        };
+        let first_string = match lexer.next_token().token_type {
+            TokenType::StringLiteral(value) => value,
+            other => panic!("expected string literal, got {other:?}"),
+        };
+        let second_string = match lexer.next_token().token_type {
+            TokenType::StringLiteral(value) => value,
+            other => panic!("expected string literal, got {other:?}"),
+        };
+
+        assert!(first_ident.ptr_eq(&second_ident));
+        assert!(first_string.ptr_eq(&second_string));
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum LexerError {
     UnexpectedCharacter(char, (usize, usize)),
@@ -169,6 +258,7 @@ pub struct Lexer {
     position: usize,
     line: usize,
     col: usize,
+    interner: StringInterner,
     pub errors: Vec<LexerError>,
 }
 
@@ -182,6 +272,7 @@ impl Lexer {
             position: 0,
             line: 1,
             col: 1,
+            interner: StringInterner::new(),
             errors: vec![],
         }
     }
@@ -242,6 +333,93 @@ impl Lexer {
         self.input[start_position..self.position].to_string()
     }
 
+    fn read_escape_sequence(&mut self) -> Result<char, LexerError> {
+        match self.peek_char() {
+            Some('\\') => {
+                self.read_char();
+                Ok('\\')
+            }
+            Some('"') => {
+                self.read_char();
+                Ok('"')
+            }
+            Some('n') => {
+                self.read_char();
+                Ok('\n')
+            }
+            Some('r') => {
+                self.read_char();
+                Ok('\r')
+            }
+            Some('t') => {
+                self.read_char();
+                Ok('\t')
+            }
+            Some('0') => {
+                self.read_char();
+                Ok('\0')
+            }
+            Some('u') => self.read_unicode_escape(),
+            Some(other) => Err(LexerError::InvalidEscapeSequence(
+                format!("\\{}", other),
+                (self.line, self.col),
+            )),
+            None => Err(LexerError::UnterminatedString((self.line, self.col))),
+        }
+    }
+
+    fn read_unicode_escape(&mut self) -> Result<char, LexerError> {
+        self.read_char(); // Skip 'u'
+        if self.peek_char() != Some('{') {
+            return Err(LexerError::InvalidEscapeSequence(
+                "\\u".to_string(),
+                (self.line, self.col),
+            ));
+        }
+        self.read_char(); // Skip '{'
+
+        let mut hex_digits = String::new();
+        while let Some(c) = self.peek_char() {
+            if c == '}' {
+                break;
+            }
+            if !c.is_ascii_hexdigit() {
+                return Err(LexerError::InvalidUnicodeEscape(
+                    format!("\\u{{{}}}", hex_digits),
+                    (self.line, self.col),
+                ));
+            }
+            hex_digits.push(c);
+            self.read_char();
+        }
+
+        if self.peek_char() != Some('}') {
+            return Err(LexerError::UnterminatedString((self.line, self.col)));
+        }
+        self.read_char(); // Skip '}'
+
+        if hex_digits.is_empty() || hex_digits.len() > MAX_UNICODE_ESCAPE_DIGITS {
+            return Err(LexerError::InvalidUnicodeEscape(
+                format!("\\u{{{}}}", hex_digits),
+                (self.line, self.col),
+            ));
+        }
+
+        let code_point = u32::from_str_radix(&hex_digits, 16).map_err(|_| {
+            LexerError::InvalidUnicodeEscape(
+                format!("\\u{{{}}}", hex_digits),
+                (self.line, self.col),
+            )
+        })?;
+
+        char::from_u32(code_point).ok_or_else(|| {
+            LexerError::InvalidUnicodeEscape(
+                format!("\\u{{{:x}}}", code_point),
+                (self.line, self.col),
+            )
+        })
+    }
+
     fn read_string(&mut self) -> Result<String, LexerError> {
         if self.peek_char() != Some('"') {
             return Err(LexerError::UnexpectedCharacter(
@@ -265,97 +443,8 @@ impl Lexer {
                 return Err(LexerError::UnterminatedString((self.line, self.col)));
             }
             if c == '\\' {
-                // Handle escape sequence
                 self.read_char(); // Skip backslash
-                match self.peek_char() {
-                    Some('\\') => {
-                        result.push('\\');
-                        self.read_char();
-                    }
-                    Some('"') => {
-                        result.push('"');
-                        self.read_char();
-                    }
-                    Some('n') => {
-                        result.push('\n');
-                        self.read_char();
-                    }
-                    Some('r') => {
-                        result.push('\r');
-                        self.read_char();
-                    }
-                    Some('t') => {
-                        result.push('\t');
-                        self.read_char();
-                    }
-                    Some('0') => {
-                        result.push('\0');
-                        self.read_char();
-                    }
-                    Some('u') => {
-                        self.read_char(); // Skip 'u'
-                        if self.peek_char() != Some('{') {
-                            return Err(LexerError::InvalidEscapeSequence(
-                                "\\u".to_string(),
-                                (self.line, self.col),
-                            ));
-                        }
-                        self.read_char(); // Skip '{'
-
-                        let mut hex_digits = String::new();
-                        while let Some(c) = self.peek_char() {
-                            if c == '}' {
-                                break;
-                            }
-                            if !c.is_ascii_hexdigit() {
-                                return Err(LexerError::InvalidUnicodeEscape(
-                                    format!("\\u{{{}}}", hex_digits),
-                                    (self.line, self.col),
-                                ));
-                            }
-                            hex_digits.push(c);
-                            self.read_char();
-                        }
-
-                        if self.peek_char() != Some('}') {
-                            return Err(LexerError::UnterminatedString((self.line, self.col)));
-                        }
-                        self.read_char(); // Skip '}'
-
-                        if hex_digits.is_empty() || hex_digits.len() > MAX_UNICODE_ESCAPE_DIGITS {
-                            return Err(LexerError::InvalidUnicodeEscape(
-                                format!("\\u{{{}}}", hex_digits),
-                                (self.line, self.col),
-                            ));
-                        }
-
-                        let code_point = u32::from_str_radix(&hex_digits, 16).map_err(|_| {
-                            LexerError::InvalidUnicodeEscape(
-                                format!("\\u{{{}}}", hex_digits),
-                                (self.line, self.col),
-                            )
-                        })?;
-
-                        // Check if it's a valid Unicode scalar (not a surrogate)
-                        let ch = char::from_u32(code_point).ok_or_else(|| {
-                            LexerError::InvalidUnicodeEscape(
-                                format!("\\u{{{:x}}}", code_point),
-                                (self.line, self.col),
-                            )
-                        })?;
-
-                        result.push(ch);
-                    }
-                    Some(other) => {
-                        return Err(LexerError::InvalidEscapeSequence(
-                            format!("\\{}", other),
-                            (self.line, self.col),
-                        ));
-                    }
-                    None => {
-                        return Err(LexerError::UnterminatedString((self.line, self.col)));
-                    }
-                }
+                result.push(self.read_escape_sequence()?);
             } else {
                 result.push(c);
                 self.read_char();
@@ -397,94 +486,7 @@ impl Lexer {
             }
             if c == '\\' {
                 self.read_char(); // Skip backslash
-                match self.peek_char() {
-                    Some('\\') => {
-                        current.push('\\');
-                        self.read_char();
-                    }
-                    Some('"') => {
-                        current.push('"');
-                        self.read_char();
-                    }
-                    Some('n') => {
-                        current.push('\n');
-                        self.read_char();
-                    }
-                    Some('r') => {
-                        current.push('\r');
-                        self.read_char();
-                    }
-                    Some('t') => {
-                        current.push('\t');
-                        self.read_char();
-                    }
-                    Some('0') => {
-                        current.push('\0');
-                        self.read_char();
-                    }
-                    Some('u') => {
-                        self.read_char(); // Skip 'u'
-                        if self.peek_char() != Some('{') {
-                            return Err(LexerError::InvalidEscapeSequence(
-                                "\\u".to_string(),
-                                (self.line, self.col),
-                            ));
-                        }
-                        self.read_char(); // Skip '{'
-
-                        let mut hex_digits = String::new();
-                        while let Some(c) = self.peek_char() {
-                            if c == '}' {
-                                break;
-                            }
-                            if !c.is_ascii_hexdigit() {
-                                return Err(LexerError::InvalidUnicodeEscape(
-                                    format!("\\u{{{}}}", hex_digits),
-                                    (self.line, self.col),
-                                ));
-                            }
-                            hex_digits.push(c);
-                            self.read_char();
-                        }
-
-                        if self.peek_char() != Some('}') {
-                            return Err(LexerError::UnterminatedString((self.line, self.col)));
-                        }
-                        self.read_char(); // Skip '}'
-
-                        if hex_digits.is_empty() || hex_digits.len() > MAX_UNICODE_ESCAPE_DIGITS {
-                            return Err(LexerError::InvalidUnicodeEscape(
-                                format!("\\u{{{}}}", hex_digits),
-                                (self.line, self.col),
-                            ));
-                        }
-
-                        let code_point = u32::from_str_radix(&hex_digits, 16).map_err(|_| {
-                            LexerError::InvalidUnicodeEscape(
-                                format!("\\u{{{}}}", hex_digits),
-                                (self.line, self.col),
-                            )
-                        })?;
-
-                        let ch = char::from_u32(code_point).ok_or_else(|| {
-                            LexerError::InvalidUnicodeEscape(
-                                format!("\\u{{{:x}}}", code_point),
-                                (self.line, self.col),
-                            )
-                        })?;
-
-                        current.push(ch);
-                    }
-                    Some(other) => {
-                        return Err(LexerError::InvalidEscapeSequence(
-                            format!("\\{}", other),
-                            (self.line, self.col),
-                        ));
-                    }
-                    None => {
-                        return Err(LexerError::UnterminatedString((self.line, self.col)));
-                    }
-                }
+                current.push(self.read_escape_sequence()?);
                 continue;
             }
 
@@ -497,15 +499,17 @@ impl Lexer {
                 }
 
                 if !current.is_empty() {
-                    parts.push(InterpolatedStringPart::Literal(InternedString::from(
-                        current,
-                    )));
+                    parts.push(InterpolatedStringPart::Literal(
+                        self.interner.intern_string(current),
+                    ));
                     current = String::new();
                 }
 
                 self.read_char(); // Skip '{'
                 let expr = self.read_interpolation_expr()?;
-                parts.push(InterpolatedStringPart::Expr(InternedString::from(expr)));
+                parts.push(InterpolatedStringPart::Expr(
+                    self.interner.intern_string(expr),
+                ));
                 continue;
             }
 
@@ -531,9 +535,9 @@ impl Lexer {
         }
 
         if !current.is_empty() {
-            parts.push(InterpolatedStringPart::Literal(InternedString::from(
-                current,
-            )));
+            parts.push(InterpolatedStringPart::Literal(
+                self.interner.intern_string(current),
+            ));
         }
 
         self.read_char(); // Skip closing "
@@ -841,7 +845,7 @@ impl Lexer {
                 TokenType::At
             }
             Some('"') => match self.read_string() {
-                Ok(string) => TokenType::StringLiteral(InternedString::from(string)),
+                Ok(string) => TokenType::StringLiteral(self.interner.intern_string(string)),
                 Err(err) => {
                     self.errors.push(err);
                     TokenType::EOF
@@ -862,7 +866,7 @@ impl Lexer {
                                 literal.push_str(&chunk);
                             }
                         }
-                        TokenType::StringLiteral(InternedString::from(literal))
+                        TokenType::StringLiteral(self.interner.intern_string(literal))
                     }
                 }
                 Err(err) => {
@@ -899,7 +903,7 @@ impl Lexer {
                         "null" => TokenType::Null,
                         "true" => TokenType::True,
                         "false" => TokenType::False,
-                        _ => TokenType::Identifier(InternedString::from(ident)),
+                        _ => TokenType::Identifier(self.interner.intern_string(ident)),
                     }
                 } else if c.is_numeric() {
                     let num = self.read_number();

@@ -1,4 +1,5 @@
 use core::panic;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
     ast::{Expression, FunctionDeclaration, Statement},
@@ -69,7 +70,8 @@ pub struct Generator {
     )>,
     pub(super) module_provider: Box<dyn crate::ModuleProvider>,
     pub(super) imported_modules: std::collections::HashMap<InternedString, Module>,
-    pub(super) compiling_modules: std::collections::HashSet<InternedString>,
+    pub(super) compiling_modules: Rc<RefCell<std::collections::HashSet<InternedString>>>,
+    compiled_module_cache: Rc<RefCell<HashMap<InternedString, Module>>>,
     pub(super) _current_module_path: InternedString,
     // Track which local variables have been moved (by their index in locals array)
     pub(super) moved_variables: std::collections::HashSet<u32>,
@@ -154,7 +156,8 @@ impl Generator {
             pending_monomorphizations: Vec::new(),
             module_provider,
             imported_modules: std::collections::HashMap::new(),
-            compiling_modules: std::collections::HashSet::new(),
+            compiling_modules: Rc::new(RefCell::new(std::collections::HashSet::new())),
+            compiled_module_cache: Rc::new(RefCell::new(HashMap::new())),
             _current_module_path: InternedString::from("$root"),
             moved_variables: std::collections::HashSet::new(),
             moved_params: std::collections::HashSet::new(),
@@ -485,10 +488,9 @@ impl Generator {
             functions: self.symbol_table.functions.clone(),
             types: self.symbol_table.types.clone(),
             string_constants: self.string_constants.clone(),
-            imported_modules: self
-                .imported_modules
-                .iter()
-                .map(|(k, v)| (k.to_string(), Box::new(v.clone())))
+            imported_modules: std::mem::take(&mut self.imported_modules)
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), Box::new(v)))
                 .collect(),
             module_var_count,
             module_init_address,
@@ -506,6 +508,7 @@ impl Generator {
                 .iter()
                 .map(|var| (var.name.to_string(), var.var_id))
                 .collect(),
+            shared_string_constants: Vec::new(),
         })
     }
 
@@ -796,14 +799,19 @@ impl Generator {
     /// Helper method to compile an imported module
     pub(super) fn compile_module(&mut self, module_path: &str, source: String) -> SaResult<Module> {
         // Cycle detection
-        if self.compiling_modules.contains(module_path) {
+        if self.compiling_modules.borrow().contains(module_path) {
             return Err(SemanticError::Other(format!(
                 "Cyclic import detected: {}",
                 module_path
             )));
         }
+        if let Some(module) = self.compiled_module_cache.borrow().get(module_path) {
+            return Ok(module.clone());
+        }
+        let module_key = InternedString::from(module_path);
         self.compiling_modules
-            .insert(InternedString::from(module_path));
+            .borrow_mut()
+            .insert(module_key.clone());
 
         // Parse the module source
         let mut lexer = crate::lexer::Lexer::new(source);
@@ -823,7 +831,7 @@ impl Generator {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("DEBUG compile_module: parse error = {:?}", e);
-                self.compiling_modules.remove(module_path);
+                self.compiling_modules.borrow_mut().remove(module_path);
                 return Err(SemanticError::Other(format!(
                     "Parse error in imported module: {:?}",
                     e
@@ -835,9 +843,16 @@ impl Generator {
         let mut module_gen = Generator::new_for_module(
             self.module_provider.clone_boxed(),
             InternedString::from(module_path),
+            self.compiling_modules.clone(),
+            self.compiled_module_cache.clone(),
         );
         let result = module_gen.generate(statements);
-        self.compiling_modules.remove(module_path);
+        self.compiling_modules.borrow_mut().remove(module_path);
+        if let Ok(module) = &result {
+            self.compiled_module_cache
+                .borrow_mut()
+                .insert(module_key, module.clone());
+        }
         result
     }
 
@@ -845,6 +860,8 @@ impl Generator {
     fn new_for_module(
         module_provider: Box<dyn crate::ModuleProvider>,
         module_path: InternedString,
+        compiling_modules: Rc<RefCell<std::collections::HashSet<InternedString>>>,
+        compiled_module_cache: Rc<RefCell<HashMap<InternedString, Module>>>,
     ) -> Self {
         // When compiling the builtin module itself, skip preloading builtins
         let is_builtin = *module_path == *"builtin";
@@ -855,7 +872,8 @@ impl Generator {
             pending_monomorphizations: Vec::new(),
             module_provider,
             imported_modules: std::collections::HashMap::new(),
-            compiling_modules: std::collections::HashSet::new(),
+            compiling_modules,
+            compiled_module_cache,
             _current_module_path: module_path.clone(),
             moved_variables: std::collections::HashSet::new(),
             moved_params: std::collections::HashSet::new(),

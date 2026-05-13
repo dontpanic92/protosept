@@ -66,9 +66,10 @@ pub(crate) fn string_concat(ctx: &mut Context) -> ContextResult<()> {
 
     match (self_val, other_val) {
         (Data::String(a), Data::String(b)) => {
-            ctx.stack_frame_mut()?
-                .stack
-                .push(Data::string(format!("{}{}", a, b)));
+            let mut result = String::with_capacity(a.len() + b.len());
+            result.push_str(&a);
+            result.push_str(&b);
+            ctx.stack_frame_mut()?.stack.push(Data::string(result));
             Ok(())
         }
         (Data::String(_), other) => Err(RuntimeError::Other(format!(
@@ -123,18 +124,9 @@ pub(crate) fn string_substring(ctx: &mut Context) -> ContextResult<()> {
 
     match (self_val, start_val, end_val) {
         (Data::String(s), Data::Int(start), Data::Int(end)) => {
-            let char_count = s.chars().count() as i64;
-            let clamped_start = start.max(0).min(char_count) as usize;
-            let clamped_end = end.max(0).min(char_count) as usize;
-
-            let result: String = if clamped_start >= clamped_end {
-                String::new()
-            } else {
-                s.chars()
-                    .skip(clamped_start)
-                    .take(clamped_end - clamped_start)
-                    .collect()
-            };
+            let start_idx = start.max(0) as usize;
+            let end_idx = end.max(0) as usize;
+            let result = substring_by_char_range(&s, start_idx, end_idx);
             ctx.stack_frame_mut()?.stack.push(Data::string(result));
             Ok(())
         }
@@ -162,11 +154,11 @@ pub(crate) fn string_char_at(ctx: &mut Context) -> ContextResult<()> {
                 ctx.stack_frame_mut()?.stack.push(Data::Null);
                 return Ok(());
             }
-            match s.chars().nth(idx as usize) {
+            match char_at(&s, idx as usize) {
                 Some(ch) => {
                     ctx.stack_frame_mut()?
                         .stack
-                        .push(Data::some(Data::string(ch.to_string())));
+                        .push(Data::some(Data::string(ch)));
                 }
                 None => {
                     ctx.stack_frame_mut()?.stack.push(Data::Null);
@@ -178,6 +170,46 @@ pub(crate) fn string_char_at(ctx: &mut Context) -> ContextResult<()> {
             "string.char_at: invalid argument types".to_string(),
         )),
     }
+}
+
+fn substring_by_char_range(s: &str, start: usize, end: usize) -> &str {
+    if start >= end {
+        return "";
+    }
+
+    let mut start_byte = None;
+    let mut end_byte = None;
+    let mut char_count = 0usize;
+
+    for (char_idx, (byte_idx, _)) in s.char_indices().enumerate() {
+        char_count = char_idx + 1;
+        if char_idx == start {
+            start_byte = Some(byte_idx);
+        }
+        if char_idx == end {
+            end_byte = Some(byte_idx);
+            break;
+        }
+    }
+
+    let Some(start_byte) = start_byte else {
+        return "";
+    };
+    let end_byte = end_byte.unwrap_or_else(|| {
+        if end >= char_count {
+            s.len()
+        } else {
+            start_byte
+        }
+    });
+
+    &s[start_byte..end_byte]
+}
+
+fn char_at(s: &str, index: usize) -> Option<&str> {
+    let (start, ch) = s.char_indices().nth(index)?;
+    let end = start + ch.len_utf8();
+    Some(&s[start..end])
 }
 
 pub(crate) fn string_split(ctx: &mut Context) -> ContextResult<()> {

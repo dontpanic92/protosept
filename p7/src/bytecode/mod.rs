@@ -3,6 +3,7 @@ pub mod codegen;
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::rc::Rc;
 
 use binrw::{BinRead, binrw};
 
@@ -335,6 +336,9 @@ pub struct Module {
     /// Runtime-only module variable name index.
     #[serde(skip)]
     pub module_variable_ids: HashMap<String, u32>,
+    /// Runtime-only shared string constants for allocation-free literal loads.
+    #[serde(skip)]
+    pub shared_string_constants: Vec<Rc<str>>,
 }
 
 impl Module {
@@ -362,6 +366,7 @@ impl Module {
         self.external_var_targets.clear();
         self.external_call_targets.clear();
         self.module_variable_ids.clear();
+        self.shared_string_constants.clear();
 
         let mut cursor = std::io::Cursor::new(&self.instructions);
         while cursor.position() < self.instructions.len() as u64 {
@@ -377,6 +382,7 @@ impl Module {
         self.external_var_targets = vec![None; self.decoded_instructions.len()];
         self.external_call_targets = vec![None; self.decoded_instructions.len()];
         self.rebuild_module_variable_ids();
+        self.rebuild_shared_string_constants();
         self.build_execution_metadata()?;
 
         Ok(())
@@ -448,6 +454,14 @@ impl Module {
             .module_variables
             .iter()
             .map(|var| (var.name.to_string(), var.var_id))
+            .collect();
+    }
+
+    fn rebuild_shared_string_constants(&mut self) {
+        self.shared_string_constants = self
+            .string_constants
+            .iter()
+            .map(|value| Rc::<str>::from(value.as_str()))
             .collect();
     }
 

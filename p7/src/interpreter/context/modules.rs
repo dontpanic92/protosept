@@ -13,7 +13,7 @@ impl Context {
         self.discover_foreign_carriers(module_idx_for_foreign, &module);
 
         // Extract imported modules and init address before pushing the main module
-        let imported_modules = module.imported_modules.clone();
+        let imported_modules = std::mem::take(&mut module.imported_modules);
         let init_address = module.module_init_address;
         module
             .prepare_execution()
@@ -48,7 +48,7 @@ impl Context {
         self.discover_foreign_carriers(module_idx_for_foreign, &module);
 
         // Extract imported modules and init address before pushing this module
-        let imported_modules = module.imported_modules.clone();
+        let imported_modules = std::mem::take(&mut module.imported_modules);
         let init_address = module.module_init_address;
         module
             .prepare_execution()

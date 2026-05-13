@@ -342,7 +342,7 @@ impl Context {
                 Instruction::Lds(string_index) => {
                     let module_idx = self.stack_frame()?.module_idx;
                     let string_const = self.modules[module_idx]
-                        .string_constants
+                        .shared_string_constants
                         .get(string_index as usize)
                         .ok_or_else(|| {
                             RuntimeError::Other(format!(
@@ -353,7 +353,7 @@ impl Context {
                         .clone();
                     self.stack_frame_mut()?
                         .stack
-                        .push(Data::string(string_const));
+                        .push(Data::String(string_const));
                 }
                 Instruction::Ldvar(idx) => {
                     let locals_len = self.stack_frame()?.locals.len();

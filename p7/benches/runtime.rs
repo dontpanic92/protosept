@@ -1,7 +1,11 @@
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
-use p7::{bytecode::Module, interpreter::context::Data};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
+use p7::{
+    InMemoryModuleProvider,
+    bytecode::Module,
+    interpreter::context::{Context, Data},
+};
 
 const NUMERIC_LOOP: &str = include_str!("fixtures/runtime_numeric_loop.p7");
 const FUNCTION_CALLS: &str = include_str!("fixtures/runtime_function_calls.p7");
@@ -20,8 +24,91 @@ const STRINGS: &str = include_str!("fixtures/runtime_strings.p7");
 const CLOSURES: &str = include_str!("fixtures/runtime_closures.p7");
 const GC_BOXES: &str = include_str!("fixtures/runtime_gc_boxes.p7");
 
+const STRING_CHAR_ACCESS: &str = r#"
+fn main() -> int {
+    let text = "αβγδεζηθικλμνξοπρστυφχψωabcdefghijklmnopqrstuvwxyz";
+    let mut total = 0;
+    let mut i = 0;
+    loop {
+        if i >= 40 {
+            break;
+        }
+        total = total + (text.char_at(i) ?? "").len_bytes();
+        total = total + text.substring(i, i + 1).len_bytes();
+        i = i + 1;
+    }
+    total
+}
+"#;
+
+const STRING_SPLIT_TRIM_SEARCH: &str = r#"
+fn main() -> int {
+    let text = "  alpha,beta,gamma,delta,epsilon,zeta,eta,theta  ";
+    let mut total = 0;
+    let mut i = 0;
+    loop {
+        if i >= 120 {
+            break;
+        }
+        let trimmed = text.trim();
+        total = total + trimmed.index_of("gamma");
+        total = total + trimmed.split(",").len();
+        total = total + if trimmed.contains("theta") { 1 } else { 0 };
+        total = total + if trimmed.starts_with("alpha") { 1 } else { 0 };
+        total = total + if trimmed.ends_with("theta") { 1 } else { 0 };
+        i = i + 1;
+    }
+    total
+}
+"#;
+
+const MODULE_LOAD_SHARED: &str = r#"
+import bench.leaf0;
+import bench.leaf1;
+import bench.leaf2;
+import bench.leaf3;
+import bench.leaf4;
+import bench.leaf5;
+
+fn main() -> int {
+    leaf0.value() + leaf1.value() + leaf2.value() + leaf3.value() + leaf4.value() + leaf5.value()
+}
+"#;
+
+const MODULE_LOAD_SHARED_DEP: &str = r#"
+pub let seed: int = 11;
+
+pub fn value() -> int {
+    seed
+}
+"#;
+
 fn compile_fixture(source: &str) -> Module {
     p7::compile(source.to_string()).expect("runtime benchmark fixture should compile")
+}
+
+fn compile_module_load_fixture() -> Module {
+    let mut provider = InMemoryModuleProvider::new();
+    provider.add_module(
+        "bench.shared".to_string(),
+        MODULE_LOAD_SHARED_DEP.to_string(),
+    );
+    for idx in 0..6 {
+        provider.add_module(
+            format!("bench.leaf{idx}"),
+            format!(
+                r#"
+import bench.shared;
+
+pub fn value() -> int {{
+    shared.value() + {idx}
+}}
+"#
+            ),
+        );
+    }
+    p7::compile_with_provider(MODULE_LOAD_SHARED.to_string(), Box::new(provider))
+        .expect("module loading benchmark fixture should compile")
 }
 
 fn run_main(module: &Module) -> Data {
@@ -29,6 +116,9 @@ fn run_main(module: &Module) -> Data {
 }
 
 fn runtime_benches(c: &mut Criterion) {
+    // Focused baselines for module-loading and string runtime work. Compare
+    // run_strings_char_access, run_strings_split_trim_search, and
+    // load_module_shared_import_graph before/after related optimizations.
     let fixtures = [
         ("numeric_loop", NUMERIC_LOOP),
         ("function_calls", FUNCTION_CALLS),
@@ -44,6 +134,8 @@ fn runtime_benches(c: &mut Criterion) {
         ("hashmaps_remove", HASHMAPS_REMOVE),
         ("hashmaps_mixed", HASHMAPS_MIXED),
         ("strings", STRINGS),
+        ("strings_char_access", STRING_CHAR_ACCESS),
+        ("strings_split_trim_search", STRING_SPLIT_TRIM_SEARCH),
         ("closures", CLOSURES),
         ("gc_boxes", GC_BOXES),
     ];
@@ -65,6 +157,20 @@ fn runtime_benches(c: &mut Criterion) {
         })
     });
     end_to_end.finish();
+
+    let mut module_loading = c.benchmark_group("module_loading");
+    module_loading.bench_function("load_module_shared_import_graph", |b| {
+        b.iter_batched(
+            compile_module_load_fixture,
+            |module| {
+                let mut ctx = Context::new();
+                ctx.load_module(black_box(module));
+                black_box(ctx);
+            },
+            BatchSize::SmallInput,
+        )
+    });
+    module_loading.finish();
 }
 
 criterion_group!(benches, runtime_benches);

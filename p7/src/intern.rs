@@ -28,6 +28,11 @@ impl InternedString {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Return true when two interned strings share the same backing allocation.
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 impl std::ops::Deref for InternedString {
@@ -100,6 +105,7 @@ impl From<String> for InternedString {
 }
 
 /// A string interner that deduplicates strings and returns cheap-to-clone handles.
+#[derive(Debug)]
 pub struct StringInterner {
     set: HashSet<Rc<str>>,
 }
