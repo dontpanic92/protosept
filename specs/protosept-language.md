@@ -736,6 +736,11 @@ let y = p.1;  // y has type string, value "test"
 
 - `?T` is either `null` or a non-null `T`.
 - `null` is assignable only to `?T`.
+- A non-null `T` value implicitly widens to `?T` at checking/expected-type
+  sites (assignment to an annotated `?T`, parameter passing, return when the
+  return type is `?T`, struct field initialization, `??` rhs, etc.). The
+  widening is non-lossy and never changes the runtime value semantics — the
+  wrapped value still compares equal to other `?T` values per §15.2.
 - Unwrapping and narrowing rules are in §15.2.
 
 ---
@@ -3057,11 +3062,14 @@ Prelude functions (placeholder names):
 
 #### 15.1.2 Numeric coercions
 - Implicit `int -> float` promotion may occur in arithmetic/comparison.
-- Other numeric conversions require explicit conversion. [[TODO]] specify syntax.
-- `float -> int` is available **only** via a checked prelude function:
+- Explicit `int -> float` conversion uses the cast operator: `x as float`.
+  - `int as int` and `float as float` are accepted no-op casts.
+- `float -> int` is **not** available via `as`. It is provided only by a
+  checked prelude function:
   - `float_to_int_checked(x: float) -> ?int`
   - Returns `null` if `x` is NaN, infinite, or outside the `int` range.
   - Otherwise returns the truncated-to-zero integer value.
+- Other numeric conversions are not specified in v1.
 
 ### 15.2 Nullability
 

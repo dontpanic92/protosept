@@ -1,0 +1,34 @@
+// Tests for `int as float` cast (p7_quirks.md #2, spec §15.1.2).
+import test.test;
+
+fn add_floats(a: float, b: float) -> float { a + b }
+
+@test(expected_type = "float", expected_value = "7.0")
+fn test_cast_let_annotation() -> float {
+    let i: int = 7;
+    let f: float = i as float;
+    f
+}
+
+@test(expected_type = "float", expected_value = "10.5")
+fn test_cast_in_expression() -> float {
+    let i: int = 7;
+    (i as float) + 3.5
+}
+
+@test(expected_type = "float", expected_value = "12.0")
+fn test_cast_function_arg() -> float {
+    add_floats(5 as float, 7 as float)
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_cast_int_to_int_noop() -> int {
+    let x: int = 3;
+    x as int
+}
+
+@test(expected_type = "float", expected_value = "2.5")
+fn test_cast_float_to_float_noop() -> float {
+    let x: float = 2.5;
+    x as float
+}

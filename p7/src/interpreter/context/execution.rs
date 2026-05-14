@@ -559,6 +559,24 @@ impl Context {
                     }
                     vars[var_id as usize] = data;
                 }
+                Instruction::IntToFloat => {
+                    let value = self
+                        .stack_frame_mut()?
+                        .stack
+                        .pop()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    match value {
+                        Data::Int(i) => {
+                            self.stack_frame_mut()?.stack.push(Data::Float(i as f64));
+                        }
+                        other => {
+                            return Err(RuntimeError::Other(format!(
+                                "IntToFloat expected Int, got {:?}",
+                                other
+                            )));
+                        }
+                    }
+                }
                 Instruction::Neg => {
                     if let Some(data) = self.stack_frame_mut()?.stack.pop() {
                         match data {

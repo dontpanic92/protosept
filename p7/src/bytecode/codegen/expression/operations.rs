@@ -1026,6 +1026,27 @@ impl Generator {
             (Type::Reference(inner_ty), Type::Reference(target_inner_ty)) => {
                 self.generate_wrapper_cast(inner_ty, target_inner_ty, false, &target_ty, line, col)
             }
+            // Numeric casts (spec §15.1.2).
+            // - `int as float` lifts via the IntToFloat opcode.
+            // - `int as int` and `float as float` are accepted no-ops for consistency.
+            // - `float as int` is intentionally NOT supported here; callers must use the
+            //   `float_to_int_checked(x: float) -> ?int` prelude function to handle NaN,
+            //   infinity and out-of-range explicitly.
+            (
+                Type::Primitive(PrimitiveType::Int),
+                Type::Primitive(PrimitiveType::Float),
+            ) => {
+                self.builder.int_to_float();
+                Ok(target_ty.clone())
+            }
+            (
+                Type::Primitive(PrimitiveType::Int),
+                Type::Primitive(PrimitiveType::Int),
+            )
+            | (
+                Type::Primitive(PrimitiveType::Float),
+                Type::Primitive(PrimitiveType::Float),
+            ) => Ok(target_ty.clone()),
             _ => Err(SemanticError::Other(format!(
                 "Cast from '{}' to '{}' is not supported at line {} column {}",
                 self.type_to_string(&expr_ty),

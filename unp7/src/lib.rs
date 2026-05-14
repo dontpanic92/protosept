@@ -288,6 +288,7 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
         Instruction::StModVar(var_id) => format!("{}  stmodvar {}", offset_hex, var_id),
         Instruction::LdExtModVar(mod_id, var_id) => format!("{}  ldextmodvar {} {}", offset_hex, mod_id, var_id),
         Instruction::StExtModVar(mod_id, var_id) => format!("{}  stextmodvar {} {}", offset_hex, mod_id, var_id),
+        Instruction::IntToFloat => format!("{}  int_to_float", offset_hex),
     }
 }
 

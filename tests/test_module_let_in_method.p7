@@ -1,0 +1,47 @@
+// Tests that module-level `pub let` constants are visible inside proto-struct
+// method bodies (p7_quirks.md #4).
+import test.test;
+
+pub let CLOSE_CMD_BASE: int = 200000;
+
+pub proto Counter {
+    fn dispatch(self: ref<Counter>, cmd: int) -> int;
+}
+
+pub struct[Counter] D(pub n: int) {
+    pub fn dispatch(self: ref<Self>, cmd: int) -> int {
+        // Reference the module-level constant declared *before* the struct.
+        if cmd >= CLOSE_CMD_BASE {
+            return cmd - CLOSE_CMD_BASE;
+        }
+        // Also reference one declared *after* the struct — module-level binding
+        // lookup is order-independent at the symbol level.
+        if cmd >= OPEN_CMD_BASE() {
+            return cmd;
+        }
+        0
+    }
+}
+
+// Module-level constant declared after the struct that uses it.
+pub let OPEN_CMD_BASE_VALUE: int = 100000;
+
+pub fn OPEN_CMD_BASE() -> int { OPEN_CMD_BASE_VALUE }
+
+@test(expected_type = "int", expected_value = "5")
+fn test_const_before_struct() -> int {
+    let d = D(0);
+    d.dispatch(200005)
+}
+
+@test(expected_type = "int", expected_value = "150000")
+fn test_const_after_struct() -> int {
+    let d = D(0);
+    d.dispatch(150000)
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_below_thresholds() -> int {
+    let d = D(0);
+    d.dispatch(10)
+}

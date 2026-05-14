@@ -1,0 +1,8 @@
+// compile_fail: `float as int` is intentionally NOT supported by the cast
+// operator. Use the `float_to_int_checked` prelude function for the lossy
+// conversion (spec §15.1.2).
+
+fn bad() -> int {
+    let f: float = 2.5;
+    f as int
+}

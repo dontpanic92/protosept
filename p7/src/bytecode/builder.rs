@@ -279,6 +279,11 @@ impl ByteCodeBuilder {
         ));
     }
 
+    /// Convert top-of-stack int value to float (spec §15.1.2, `as float`).
+    pub fn int_to_float(&mut self) {
+        self.add_instruction(Instruction::IntToFloat);
+    }
+
     pub fn get_bytecode(&self) -> Vec<u8> {
         self.writer.get_ref().clone()
     }

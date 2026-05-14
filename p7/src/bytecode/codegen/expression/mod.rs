@@ -193,7 +193,8 @@ impl Generator {
     }
 
     /// Generate an expression with an expected type hint.
-    /// This is used to infer types for empty array literals and null literals.
+    /// This is used to infer types for empty array literals and null literals,
+    /// and to drive checking-context coercions such as `T -> ?T` widening.
     pub(super) fn generate_expression_with_expected_type(
         &mut self,
         expression: Expression,
@@ -229,7 +230,20 @@ impl Generator {
                 self.generate_array_literal(elements, pos, expected_element_type)
             }
             // For all other expressions, delegate to the regular generate_expression
-            other => self.generate_expression(other),
+            // and then apply checking-context coercions based on the expected type.
+            other => {
+                let actual_ty = self.generate_expression(other)?;
+                if let Some(expected_ty) = expected_type
+                    && let Type::Nullable(inner) = expected_ty
+                    && !matches!(actual_ty, Type::Nullable(_))
+                    && self.types_compatible(&actual_ty, inner)
+                {
+                    // Implicit `T -> ?T` widening at checking/expected-type sites.
+                    self.builder.wrap_nullable();
+                    return Ok(expected_ty.clone());
+                }
+                Ok(actual_ty)
+            }
         }
     }
 }

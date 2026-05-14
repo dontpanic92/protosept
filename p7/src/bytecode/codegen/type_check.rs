@@ -176,6 +176,17 @@ impl Generator {
             return true;
         }
 
+        // Allow implicit `T -> ?T` widening at checking/expected-type sites (spec §3.5/§15.2).
+        // Non-nullable values may flow into a nullable expected type when the inner type
+        // matches. Codegen for the widening lives in
+        // generate_expression_with_expected_type, which emits `WrapNullable`.
+        if let Type::Nullable(inner) = expected
+            && !matches!(actual, Type::Nullable(_))
+            && self.types_compatible(actual, inner)
+        {
+            return true;
+        }
+
         false
     }
 

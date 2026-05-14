@@ -305,6 +305,27 @@ impl Generator {
             self.register_function_signature(decl)?;
         }
 
+        // Pass 1a-bis: Register module-level binding signatures (type, mutability, visibility)
+        // before generating any function/method bodies so name lookup in those bodies can find
+        // module-level `pub let` constants regardless of declaration order.
+        for statement in &module_level_lets {
+            if let Statement::Let {
+                is_pub,
+                is_mutable,
+                identifier,
+                type_annotation,
+                ..
+            } = statement
+            {
+                self.register_module_level_binding(
+                    *is_pub,
+                    *is_mutable,
+                    identifier,
+                    type_annotation.as_ref(),
+                )?;
+            }
+        }
+
         // Pass 1b: Resolve type fields/variants/proto methods and generate associated methods.
         for (type_id, statement) in pending_type_decls {
             match statement {
@@ -360,23 +381,8 @@ impl Generator {
             }
         }
         // Pass 1c: Register module-level binding signatures (type, mutability, visibility)
-        for statement in &module_level_lets {
-            if let Statement::Let {
-                is_pub,
-                is_mutable,
-                identifier,
-                type_annotation,
-                ..
-            } = statement
-            {
-                self.register_module_level_binding(
-                    *is_pub,
-                    *is_mutable,
-                    identifier,
-                    type_annotation.as_ref(),
-                )?;
-            }
-        }
+        // Skipped — already done above (Pass 1a-bis) so method bodies in Pass 1b see the bindings.
+        // (Initializers are still generated in Pass 3 below.)
 
         // Pass 2: Generate function bodies
         for decl in function_decls {

@@ -276,6 +276,11 @@ pub enum Instruction {
     /// Parameters: (module_path_string_id, var_name_string_id)
     #[brw(magic = 53u8)]
     StExtModVar(u32, u32),
+
+    /// Convert top-of-stack int value to float (spec §15.1.2, `as float`).
+    /// Expects: [..., Data::Int(i)] -> [..., Data::Float(i as f64)]
+    #[brw(magic = 54u8)]
+    IntToFloat,
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {
