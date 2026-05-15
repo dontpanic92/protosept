@@ -157,13 +157,30 @@ impl Generator {
         // Handle references
         match (actual, expected) {
             (Type::Reference(a), Type::Reference(e)) => {
-                return a == e;
+                if a == e {
+                    return true;
+                }
+                // `ref<T> -> ref<P>` when T conforms to P (§18.5, §18.6).
+                if self.inner_type_conforms_to_proto(a, e) {
+                    return true;
+                }
+                return false;
             }
             (Type::MutableReference(a), Type::MutableReference(e)) => {
                 return a == e;
             }
             (Type::MutableReference(a), Type::Reference(e)) => {
                 return a == e;
+            }
+            (Type::BoxType(a), Type::BoxType(e)) => {
+                if a == e {
+                    return true;
+                }
+                // `box<T> -> box<P>` when T conforms to P (§18.5, §18.6).
+                if self.inner_type_conforms_to_proto(a, e) {
+                    return true;
+                }
+                return false;
             }
             _ => {}
         }
@@ -188,6 +205,26 @@ impl Generator {
         }
 
         false
+    }
+
+    /// Return true when `actual_inner` is a struct or enum that declares
+    /// conformance to the proto in `expected_inner`. Used to recognize
+    /// `box<T> -> box<P>` and `ref<T> -> ref<P>` as compatible after
+    /// `generate_expression_with_expected_type` emits the coercion.
+    fn inner_type_conforms_to_proto(&self, actual_inner: &Type, expected_inner: &Type) -> bool {
+        let Type::Proto(proto_id) = expected_inner else {
+            return false;
+        };
+        let type_id = match actual_inner {
+            Type::Struct(sid) => *sid,
+            Type::Enum(eid) => *eid,
+            _ => return false,
+        };
+        match self.symbol_table.types.get(type_id as usize) {
+            Some(TypeDefinition::Struct(s)) => s.conforming_to.contains(proto_id),
+            Some(TypeDefinition::Enum(e)) => e.conforming_to.contains(proto_id),
+            _ => false,
+        }
     }
 
     pub(super) fn get_semantic_type(&mut self, parsed_type: &ParsedType) -> SaResult<Type> {

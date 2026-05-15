@@ -232,18 +232,110 @@ impl Generator {
             // For all other expressions, delegate to the regular generate_expression
             // and then apply checking-context coercions based on the expected type.
             other => {
-                let actual_ty = self.generate_expression(other)?;
-                if let Some(expected_ty) = expected_type
-                    && let Type::Nullable(inner) = expected_ty
-                    && !matches!(actual_ty, Type::Nullable(_))
-                    && self.types_compatible(&actual_ty, inner)
+                // SAM coercion (§L2): a closure literal at a `box<P>`
+                // expected-type site elaborates to an anonymous
+                // `struct[P]` + impl with the closure body as the proto's
+                // single method. The elaboration emits the method body
+                // out-of-line and leaves the call-site value (a
+                // `box<P>`) on the stack.
+                if let (
+                    Expression::Closure {
+                        parameters,
+                        body,
+                        pos,
+                    },
+                    Some(Type::BoxType(inner)),
+                ) = (&other, expected_type)
+                    && let Type::Proto(proto_id) = inner.as_ref()
                 {
-                    // Implicit `T -> ?T` widening at checking/expected-type sites.
-                    self.builder.wrap_nullable();
-                    return Ok(expected_ty.clone());
+                    let parameters_cloned = parameters.clone();
+                    let body_cloned = (**body).clone();
+                    let pos_cloned = *pos;
+                    let proto_id = *proto_id;
+                    if let Some(ty) = self.try_elaborate_sam_closure(
+                        parameters_cloned,
+                        body_cloned,
+                        pos_cloned,
+                        proto_id,
+                    )? {
+                        return Ok(ty);
+                    }
+                    // Fall through to ordinary closure codegen on
+                    // ineligible target (function-typed expected type,
+                    // multi-method proto, signature mismatch, etc.).
+                }
+                let actual_ty = self.generate_expression(other)?;
+                if let Some(expected_ty) = expected_type {
+                    if let Type::Nullable(inner) = expected_ty
+                        && !matches!(actual_ty, Type::Nullable(_))
+                        && self.types_compatible(&actual_ty, inner)
+                    {
+                        // Implicit `T -> ?T` widening at checking/expected-type sites.
+                        self.builder.wrap_nullable();
+                        return Ok(expected_ty.clone());
+                    }
+
+                    // Implicit `box<T> -> box<P>` / `ref<T> -> ref<P>` coercion at
+                    // checking/expected-type sites when T declares conformance to
+                    // P (§18.5, §18.6). Emits the same instruction as the explicit
+                    // `as` cast so dispatch through the proto box/ref works
+                    // identically.
+                    if let Some(()) =
+                        self.try_emit_implicit_proto_coercion(&actual_ty, expected_ty)?
+                    {
+                        return Ok(expected_ty.clone());
+                    }
                 }
                 Ok(actual_ty)
             }
         }
+    }
+
+    /// Try to emit an implicit `box<T> -> box<P>` or `ref<T> -> ref<P>`
+    /// proto coercion. Returns `Ok(Some(()))` when the coercion was
+    /// emitted, `Ok(None)` when the type pair doesn't match this rule
+    /// (including the case where `T` only *structurally* satisfies `P`
+    /// without declaring it in its conformance bracket — that case
+    /// requires an explicit `as box<P>` cast per the language design).
+    fn try_emit_implicit_proto_coercion(
+        &mut self,
+        actual: &Type,
+        expected: &Type,
+    ) -> SaResult<Option<()>> {
+        let (is_box, actual_inner, expected_inner) = match (actual, expected) {
+            (Type::BoxType(a), Type::BoxType(e)) => (true, a.as_ref(), e.as_ref()),
+            (Type::Reference(a), Type::Reference(e)) => (false, a.as_ref(), e.as_ref()),
+            _ => return Ok(None),
+        };
+
+        let proto_id = match expected_inner {
+            Type::Proto(pid) => *pid,
+            _ => return Ok(None),
+        };
+
+        let type_id = match actual_inner {
+            Type::Struct(sid) => *sid,
+            Type::Enum(eid) => *eid,
+            _ => return Ok(None),
+        };
+
+        // Implicit coercion fires *only* when the type lists `P` in its
+        // conformance bracket (`struct[P] T(...)` / `enum[P] T(...)`),
+        // per §18.5 / §18.6. A type that only *structurally* satisfies
+        // `P` without declaring it must use an explicit `as box<P>` /
+        // `as ref<P>` cast (handled by `generate_cast`, which falls back
+        // to structural conformance check inside
+        // `generate_wrapper_to_proto_cast`).
+        let listed = match self.symbol_table.types.get(type_id as usize) {
+            Some(TypeDefinition::Struct(s)) => s.conforming_to.contains(&proto_id),
+            Some(TypeDefinition::Enum(e)) => e.conforming_to.contains(&proto_id),
+            _ => false,
+        };
+        if !listed {
+            return Ok(None);
+        }
+
+        self.generate_wrapper_to_proto_cast(type_id, proto_id, is_box, 0, 0)?;
+        Ok(Some(()))
     }
 }

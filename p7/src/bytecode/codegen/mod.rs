@@ -32,6 +32,7 @@ mod expression;
 mod helpers;
 mod monomorph;
 mod patterns;
+mod sam;
 mod statement;
 mod structs;
 mod type_check;
@@ -94,6 +95,11 @@ pub struct Generator {
     // Track type_tag uniqueness across @foreign protos in this module.
     // Maps type_tag -> (line, col) of the proto declaration that first claimed it.
     pub(super) seen_foreign_type_tags: std::collections::HashMap<InternedString, (usize, usize)>,
+    // Counter for synthesizing unique names for SAM-coerced anonymous
+    // closure structs (§L2). Reset is not necessary across modules
+    // because struct names live under the current symbol scope's
+    // qualified name.
+    pub(super) sam_anon_counter: u32,
 }
 
 impl Generator {
@@ -171,6 +177,7 @@ impl Generator {
             enclosing_return_types: Vec::new(),
             module_variables: Vec::new(),
             seen_foreign_type_tags: std::collections::HashMap::new(),
+            sam_anon_counter: 0,
         }
     }
 
@@ -893,6 +900,7 @@ impl Generator {
             enclosing_return_types: Vec::new(),
             module_variables: Vec::new(),
             seen_foreign_type_tags: std::collections::HashMap::new(),
+            sam_anon_counter: 0,
         };
         // Override root module metadata with this module_path
         if let Some(root) = generator.symbol_table.symbols.get_mut(0) {
