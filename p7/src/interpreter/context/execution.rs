@@ -69,13 +69,17 @@ impl Context {
             return Err(RuntimeError::EntryPointNotFound);
         }
 
-        let concrete_type_id = match &receiver {
+        let (concrete_type_id, origin_module_idx) = match &receiver {
             Data::ProtoBoxRef {
-                concrete_type_id, ..
+                concrete_type_id,
+                origin_module_idx,
+                ..
             }
             | Data::ProtoRefRef {
-                concrete_type_id, ..
-            } => *concrete_type_id,
+                concrete_type_id,
+                origin_module_idx,
+                ..
+            } => (*concrete_type_id, *origin_module_idx as usize),
             other => {
                 return Err(RuntimeError::Other(format!(
                     "push_proto_method: expected proto receiver for method '{}', got {:?}",
@@ -84,7 +88,17 @@ impl Context {
             }
         };
 
-        let module_idx = self.stack.last().map(|f| f.module_idx).unwrap_or(0);
+        // Resolve the receiver's concrete struct in its origin module — the
+        // module that produced this proto reference. Falling back to the
+        // current frame's module is wrong here: when the host invokes a
+        // method on a script value (no frame at all, or one in an unrelated
+        // sibling module) the `concrete_type_id` is meaningful only relative
+        // to `origin_module_idx`.
+        let module_idx = if origin_module_idx < self.modules.len() {
+            origin_module_idx
+        } else {
+            self.stack.last().map(|f| f.module_idx).unwrap_or(0)
+        };
         let method_hash = Self::hash_method_name(method_name);
         let mut candidate_symbols = Vec::new();
 
@@ -103,7 +117,8 @@ impl Context {
                     .iter()
                     .any(|(name, _, _)| name.as_str() == method_name)
                     && let Some(&symbol_id) =
-                        self.vtable.get(&(concrete_type_id, proto_id, method_hash))
+                        self.vtable
+                            .get(&(module_idx as u32, concrete_type_id, method_hash))
                     && !candidate_symbols.contains(&symbol_id)
                 {
                     candidate_symbols.push(symbol_id);
@@ -111,15 +126,12 @@ impl Context {
             }
         }
 
-        if candidate_symbols.is_empty() {
-            for (&(candidate_type_id, _, candidate_hash), &symbol_id) in &self.vtable {
-                if candidate_type_id == concrete_type_id
-                    && candidate_hash == method_hash
-                    && !candidate_symbols.contains(&symbol_id)
-                {
-                    candidate_symbols.push(symbol_id);
-                }
-            }
+        if candidate_symbols.is_empty()
+            && let Some(&symbol_id) = self
+                .vtable
+                .get(&(module_idx as u32, concrete_type_id, method_hash))
+        {
+            candidate_symbols.push(symbol_id);
         }
 
         let method_symbol_id = match candidate_symbols.as_slice() {
@@ -690,12 +702,15 @@ impl Context {
                 Instruction::Ldfield(field_idx) => {
                     // Expect a StructRef, BoxRef, ProtoRefRef, or Int (enum tag) on the stack.
                     if let Some(data) = self.stack_frame_mut()?.stack.pop() {
-                        // Resolve BoxRef/ProtoBoxRef/ProtoRefRef to the underlying value
+                        // Resolve BoxRef/ProtoBoxRef/ProtoRefRef to the underlying value.
+                        // Generation validation here means a stale cached `Data` (e.g. one
+                        // held in a Rust local across a script call that triggered GC) fails
+                        // fast with `RuntimeError::StaleBoxHandle` instead of silently
+                        // dispatching against a recycled slot.
                         let resolved_data = match &data {
-                            Data::BoxRef(idx) | Data::ProtoBoxRef { box_idx: idx, .. } => {
-                                self.box_heap.get(*idx as usize).cloned().ok_or_else(|| {
-                                    RuntimeError::Other(format!("Invalid box reference: {}", idx))
-                                })?
+                            Data::BoxRef { idx, generation }
+                            | Data::ProtoBoxRef { box_idx: idx, generation, .. } => {
+                                self.box_heap.get(*idx, *generation)?.clone()
                             }
                             Data::ProtoRefRef { ref_idx, .. } => {
                                 // ProtoRefRef points to heap location like StructRef
@@ -756,12 +771,13 @@ impl Context {
                     let field_value = field_value_opt.unwrap();
                     let struct_ref_data = struct_ref_opt.unwrap();
 
-                    // Resolve BoxRef/ProtoBoxRef/ProtoRefRef to the underlying StructRef
+                    // Resolve BoxRef/ProtoBoxRef/ProtoRefRef to the underlying StructRef.
+                    // See `Instruction::Ldfield` above for the rationale behind generation
+                    // validation.
                     let resolved_ref = match &struct_ref_data {
-                        Data::BoxRef(idx) | Data::ProtoBoxRef { box_idx: idx, .. } => {
-                            self.box_heap.get(*idx as usize).cloned().ok_or_else(|| {
-                                RuntimeError::Other(format!("Invalid box reference: {}", idx))
-                            })?
+                        Data::BoxRef { idx, generation }
+                        | Data::ProtoBoxRef { box_idx: idx, generation, .. } => {
+                            self.box_heap.get(*idx, *generation)?.clone()
                         }
                         Data::ProtoRefRef { ref_idx, .. } => Data::StructRef(*ref_idx),
                         other => other.clone(),
@@ -898,9 +914,8 @@ impl Context {
                         .stack
                         .pop()
                         .ok_or(RuntimeError::StackUnderflow)?;
-                    let box_idx = self.box_heap.len() as u32;
-                    self.box_heap.push(value);
-                    self.stack_frame_mut()?.stack.push(Data::BoxRef(box_idx));
+                    let (idx, generation) = self.box_heap.alloc(value);
+                    self.stack_frame_mut()?.stack.push(Data::BoxRef { idx, generation });
 
                     // Trigger GC if threshold is reached
                     self.allocation_count += 1;
@@ -917,14 +932,11 @@ impl Context {
                         .pop()
                         .ok_or(RuntimeError::StackUnderflow)?;
                     match box_ref {
-                        Data::BoxRef(idx) | Data::ProtoBoxRef { box_idx: idx, .. } => {
-                            let value = self
-                                .box_heap
-                                .get(idx as usize)
-                                .ok_or_else(|| {
-                                    RuntimeError::Other(format!("Invalid box reference: {}", idx))
-                                })?
-                                .clone();
+                        Data::BoxRef { idx, generation }
+                        | Data::ProtoBoxRef {
+                            box_idx: idx, generation, ..
+                        } => {
+                            let value = self.box_heap.get(idx, generation)?.clone();
                             self.stack_frame_mut()?.stack.push(value);
                         }
                         _ => {
@@ -937,17 +949,19 @@ impl Context {
                 Instruction::BoxToProto(struct_type_id, _proto_type_id) => {
                     // Convert box<T> to box<P> for dynamic dispatch
                     // Pop BoxRef, push ProtoBoxRef with type info
+                    let origin_module_idx = self.stack_frame()?.module_idx as u32;
                     let box_ref = self
                         .stack_frame_mut()?
                         .stack
                         .pop()
                         .ok_or(RuntimeError::StackUnderflow)?;
 
-                    if let Data::BoxRef(box_idx) = box_ref {
-                        // Create a ProtoBoxRef with the concrete type information
+                    if let Data::BoxRef { idx: box_idx, generation } = box_ref {
                         self.stack_frame_mut()?.stack.push(Data::ProtoBoxRef {
                             box_idx,
+                            generation,
                             concrete_type_id: struct_type_id,
+                            origin_module_idx,
                         });
                     } else {
                         return Err(RuntimeError::Other(format!(
@@ -959,6 +973,7 @@ impl Context {
                 Instruction::RefToProto(struct_type_id, _proto_type_id) => {
                     // Convert ref<T> to ref<P> for dynamic dispatch
                     // Pop StructRef, push ProtoRefRef with type info
+                    let origin_module_idx = self.stack_frame()?.module_idx as u32;
                     let struct_ref = self
                         .stack_frame_mut()?
                         .stack
@@ -966,10 +981,12 @@ impl Context {
                         .ok_or(RuntimeError::StackUnderflow)?;
 
                     if let Data::StructRef(ref_idx) = struct_ref {
-                        // Create a ProtoRefRef with the concrete type information
+                        // Struct heap doesn't have a GC yet, so `generation` is reserved as 0.
                         self.stack_frame_mut()?.stack.push(Data::ProtoRefRef {
                             ref_idx,
+                            generation: 0,
                             concrete_type_id: struct_type_id,
+                            origin_module_idx,
                         });
                     } else {
                         return Err(RuntimeError::Other(format!(
@@ -1003,13 +1020,17 @@ impl Context {
                         .get(receiver_idx)
                         .ok_or(RuntimeError::StackUnderflow)?;
 
-                    let concrete_type_id = match receiver {
+                    let (concrete_type_id, origin_module_idx) = match receiver {
                         Data::ProtoBoxRef {
-                            concrete_type_id, ..
-                        } => *concrete_type_id,
-                        Data::ProtoRefRef {
-                            concrete_type_id, ..
-                        } => *concrete_type_id,
+                            concrete_type_id,
+                            origin_module_idx,
+                            ..
+                        }
+                        | Data::ProtoRefRef {
+                            concrete_type_id,
+                            origin_module_idx,
+                            ..
+                        } => (*concrete_type_id, *origin_module_idx as usize),
                         _ => {
                             return Err(RuntimeError::Other(format!(
                                 "Expected ProtoBoxRef or ProtoRefRef as receiver for proto method call, found {:?}",
@@ -1018,17 +1039,30 @@ impl Context {
                         }
                     };
 
+                    // Dispatch into the receiver's origin module — its
+                    // concrete_type_id is meaningful only there. The call
+                    // site's `proto_id` is a call-site-local id and is not
+                    // a key for cross-module dispatch.
+                    let target_module_idx = if origin_module_idx < self.modules.len() {
+                        origin_module_idx
+                    } else {
+                        module_idx
+                    };
+
                     let method_symbol_id = self
                         .vtable
-                        .get(&(concrete_type_id, proto_id, method_hash))
+                        .get(&(target_module_idx as u32, concrete_type_id, method_hash))
                         .ok_or_else(|| {
                             RuntimeError::Other(format!(
-                                "Method '{}' not found in vtable for type {} implementing proto {}",
-                                method_meta.method_name, concrete_type_id, proto_id
+                                "Method '{}' not found in vtable for type {} (origin module {}) implementing proto {}",
+                                method_meta.method_name,
+                                concrete_type_id,
+                                target_module_idx,
+                                proto_id
                             ))
                         })?;
 
-                    let dispatch_kind = self.modules[module_idx]
+                    let dispatch_kind = self.modules[target_module_idx]
                         .symbol_dispatch(*method_symbol_id)
                         .ok_or(RuntimeError::FunctionNotFound)?
                         .clone();
@@ -1039,7 +1073,7 @@ impl Context {
                             args_len,
                         } => {
                             let mut new_frame = StackFrame::new();
-                            new_frame.module_idx = module_idx;
+                            new_frame.module_idx = target_module_idx;
                             let stack = &mut self.stack_frame_mut()?.stack;
                             new_frame.params = stack.split_off(stack.len() - args_len);
                             new_frame.pc = target_pc;

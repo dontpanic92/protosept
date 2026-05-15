@@ -101,10 +101,8 @@ pub(crate) fn hashmap_set(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match box_ref {
-        Data::BoxRef(box_idx) => {
-            let boxed_data = ctx.box_heap.get_mut(box_idx as usize).ok_or_else(|| {
-                RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
-            })?;
+        Data::BoxRef { idx: box_idx, generation } => {
+            let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
             match boxed_data {
                 Data::Map(map) => {
                     std::rc::Rc::make_mut(map).insert(key, value)?;
@@ -134,10 +132,8 @@ pub(crate) fn hashmap_remove(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match box_ref {
-        Data::BoxRef(box_idx) => {
-            let boxed_data = ctx.box_heap.get_mut(box_idx as usize).ok_or_else(|| {
-                RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
-            })?;
+        Data::BoxRef { idx: box_idx, generation } => {
+            let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
             match boxed_data {
                 Data::Map(map) => {
                     match std::rc::Rc::make_mut(map).remove(&key)? {
@@ -217,7 +213,7 @@ pub(crate) fn hashmap_values(ctx: &mut Context) -> ContextResult<()> {
     }
 }
 
-/// Index into a map — used for map[key] syntax. Traps if key not found.
+/// Index into a map �?used for map[key] syntax. Traps if key not found.
 pub(crate) fn hashmap_index(ctx: &mut Context) -> ContextResult<()> {
     let key = ctx
         .stack_frame_mut()?

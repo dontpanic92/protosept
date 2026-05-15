@@ -216,11 +216,9 @@ pub(crate) fn array_push(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match box_ref {
-        Data::BoxRef(box_idx) => {
+        Data::BoxRef { idx: box_idx, generation } => {
             // Get the boxed array
-            let boxed_data = ctx.box_heap.get_mut(box_idx as usize).ok_or_else(|| {
-                RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
-            })?;
+            let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
 
             // Ensure it's an array
             match boxed_data {
@@ -249,11 +247,9 @@ pub(crate) fn array_clear(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match box_ref {
-        Data::BoxRef(box_idx) => {
+        Data::BoxRef { idx: box_idx, generation } => {
             // Get the boxed array
-            let boxed_data = ctx.box_heap.get_mut(box_idx as usize).ok_or_else(|| {
-                RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
-            })?;
+            let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
 
             // Ensure it's an array and clear it
             match boxed_data {
@@ -282,10 +278,8 @@ pub(crate) fn array_pop(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match box_ref {
-        Data::BoxRef(box_idx) => {
-            let boxed_data = ctx.box_heap.get_mut(box_idx as usize).ok_or_else(|| {
-                RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
-            })?;
+        Data::BoxRef { idx: box_idx, generation } => {
+            let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
 
             match boxed_data {
                 Data::Array(elements) => {
@@ -331,10 +325,8 @@ pub(crate) fn array_set(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match (box_ref, index) {
-        (Data::BoxRef(box_idx), Data::Int(idx)) => {
-            let boxed_data = ctx.box_heap.get_mut(box_idx as usize).ok_or_else(|| {
-                RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
-            })?;
+        (Data::BoxRef { idx: box_idx, generation }, Data::Int(idx)) => {
+            let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
 
             match boxed_data {
                 Data::Array(elements) => {
@@ -353,7 +345,7 @@ pub(crate) fn array_set(ctx: &mut Context) -> ContextResult<()> {
                 )),
             }
         }
-        (Data::BoxRef(_), _) => Err(RuntimeError::Other(
+        (Data::BoxRef { .. }, _) => Err(RuntimeError::Other(
             "array.set: index must be an integer".to_string(),
         )),
         _ => Err(RuntimeError::Other(
@@ -380,10 +372,8 @@ pub(crate) fn array_insert(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match (box_ref, index) {
-        (Data::BoxRef(box_idx), Data::Int(idx)) => {
-            let boxed_data = ctx.box_heap.get_mut(box_idx as usize).ok_or_else(|| {
-                RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
-            })?;
+        (Data::BoxRef { idx: box_idx, generation }, Data::Int(idx)) => {
+            let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
             match boxed_data {
                 Data::Array(elements) => {
                     let elements = std::rc::Rc::make_mut(elements);
@@ -416,10 +406,8 @@ pub(crate) fn array_remove(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match (box_ref, index) {
-        (Data::BoxRef(box_idx), Data::Int(idx)) => {
-            let boxed_data = ctx.box_heap.get_mut(box_idx as usize).ok_or_else(|| {
-                RuntimeError::Other(format!("Invalid box reference: {}", box_idx))
-            })?;
+        (Data::BoxRef { idx: box_idx, generation }, Data::Int(idx)) => {
+            let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
             match boxed_data {
                 Data::Array(elements) => {
                     let elements = std::rc::Rc::make_mut(elements);

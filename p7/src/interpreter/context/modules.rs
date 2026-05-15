@@ -8,8 +8,8 @@ use super::data::{Data, StackFrame};
 impl Context {
     pub fn load_module(&mut self, mut module: Module) {
         // Push the main module first to ensure it's at index 0
-        self.build_vtable(&module);
         let module_idx_for_foreign = self.modules.len();
+        self.build_vtable(module_idx_for_foreign, &module);
         self.discover_foreign_carriers(module_idx_for_foreign, &module);
 
         // Extract imported modules and init address before pushing the main module
@@ -43,8 +43,8 @@ impl Context {
     /// Helper to load a module and recursively load its dependencies.
     /// Registers each module in imported_modules if not already present.
     fn load_module_internal(&mut self, mut module: Module) {
-        self.build_vtable(&module);
         let module_idx_for_foreign = self.modules.len();
+        self.build_vtable(module_idx_for_foreign, &module);
         self.discover_foreign_carriers(module_idx_for_foreign, &module);
 
         // Extract imported modules and init address before pushing this module
@@ -133,10 +133,11 @@ impl Context {
                     }
                 }
 
-                // Maintain the per-type-tag method index and emit cross-module
-                // vtable entries so that a foreign value stamped with another
-                // module's carrier_type_id still dispatches correctly when its
-                // method is called from this module (and vice versa).
+                // Track every (module, carrier, proto) tuple for diagnostics
+                // and so foreign value boxing can pick a registered carrier
+                // for an arbitrary frame. With origin_module_idx-keyed vtable
+                // dispatch the receiver always resolves in its own module, so
+                // no cross-module vtable entries are required here.
                 {
                     let new_rows: Vec<ForeignCarrierMethod> = method_rows
                         .iter()
@@ -148,45 +149,6 @@ impl Context {
                             method_symbol_id,
                         })
                         .collect();
-
-                    let prior_rows: Vec<ForeignCarrierMethod> = self
-                        .foreign_carrier_methods
-                        .get(&tag)
-                        .cloned()
-                        .unwrap_or_default();
-
-                    // Cross-emit vtable entries between every prior row and
-                    // every new row sharing the same method_hash.
-                    for new_row in &new_rows {
-                        for prior in &prior_rows {
-                            if prior.method_hash != new_row.method_hash {
-                                continue;
-                            }
-                            // foreign value stamped with the prior carrier
-                            // dispatches in the new module's context using
-                            // the new module's symbol
-                            self.vtable.insert(
-                                (
-                                    prior.carrier_type_id,
-                                    new_row.proto_type_id,
-                                    new_row.method_hash,
-                                ),
-                                new_row.method_symbol_id,
-                            );
-                            // and the reverse: foreign value stamped with
-                            // the new carrier dispatches in the prior
-                            // module's context using the prior module's
-                            // symbol
-                            self.vtable.insert(
-                                (
-                                    new_row.carrier_type_id,
-                                    prior.proto_type_id,
-                                    prior.method_hash,
-                                ),
-                                prior.method_symbol_id,
-                            );
-                        }
-                    }
 
                     let bucket = self.foreign_carrier_methods.entry(tag).or_default();
                     bucket.extend(new_rows);
@@ -359,7 +321,9 @@ impl Context {
     }
 
     /// Build vtable for dynamic dispatch by mapping (concrete_type_id, proto_id, method_name) -> symbol_id
-    fn build_vtable(&mut self, module: &Module) {
+    /// Build vtable for dynamic dispatch by mapping
+    /// (origin_module_idx, concrete_type_id, method_name) -> symbol_id.
+    fn build_vtable(&mut self, module_idx: usize, module: &Module) {
         use crate::semantic::{SymbolKind, TypeDefinition};
 
         let type_symbols: std::collections::HashMap<u32, _> = module
@@ -390,10 +354,9 @@ impl Context {
                                     // Hash the method name for fast lookup
                                     let method_hash = Self::hash_method_name(method_name);
 
-                                    // Store in vtable: (struct_type_id, proto_id, method_hash) -> method_symbol_id
                                     self.vtable.insert(
-                                        (struct_type_id, proto_id, method_hash),
-                                        method_symbol_id
+                                        (module_idx as u32, struct_type_id, method_hash),
+                                        method_symbol_id,
                                     );
                                 }
                             }

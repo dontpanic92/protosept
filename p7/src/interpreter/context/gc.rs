@@ -5,14 +5,19 @@ use super::data::Data;
 use crate::errors::RuntimeError;
 
 impl Context {
-    /// Mark-and-sweep garbage collector for box heap
-    /// This method performs a full GC cycle
+    /// Mark-and-sweep garbage collector for the box heap.
+    ///
+    /// Storage is a stable-handle slab ([`super::BoxHeap`]); the sweep
+    /// frees unmarked slots in place rather than compacting. Each freed
+    /// slot's generation is bumped, so any outstanding `Data::*BoxRef`
+    /// (in Rust locals or anywhere else GC can't reach) fails fast on
+    /// dereference instead of silently aliasing the slot's next occupant.
     pub fn collect_garbage(&mut self) -> Result<(), RuntimeError> {
         // Mark phase: identify all reachable boxes
         let mut marked = HashSet::new();
         self.mark_reachable(&mut marked);
 
-        // Sweep phase: remove unreachable boxes and compact the heap
+        // Sweep phase: free unmarked slots and run finalizers
         self.sweep(&marked)
     }
 
@@ -58,13 +63,15 @@ impl Context {
     /// Recursively mark a data value and any boxes it references
     fn mark_data(&self, data: &Data, marked: &mut HashSet<u32>) {
         match data {
-            Data::BoxRef(idx) | Data::ProtoBoxRef { box_idx: idx, .. } => {
-                // If we haven't marked this box yet, mark it and recursively mark its contents
-                if marked.insert(*idx) {
-                    // Get the box contents and recursively mark
-                    if let Some(box_data) = self.box_heap.get(*idx as usize) {
-                        self.mark_data(box_data, marked);
-                    }
+            Data::BoxRef { idx, .. }
+            | Data::ProtoBoxRef { box_idx: idx, .. } => {
+                // If we haven't marked this box yet, mark it and recursively mark its contents.
+                // We use `get_unchecked` here: the mark phase walks live reachable references,
+                // and a stale handle reachable from a dead struct would simply not find a slot.
+                if marked.insert(*idx)
+                    && let Some(box_data) = self.box_heap.get_unchecked(*idx)
+                {
+                    self.mark_data(box_data, marked);
                 }
             }
             Data::StructRef(idx) => {
@@ -102,45 +109,43 @@ impl Context {
         }
     }
 
-    /// Sweep phase: remove unmarked boxes and update all references.
-    /// Owned `Data::Foreign` cells trigger their proto's registered
-    /// finalizer host fn with type_tag and handle metadata.
+    /// Sweep phase: free unmarked slots in place. Owned `Data::Foreign`
+    /// cells trigger their proto's registered finalizer host fn with
+    /// type_tag and handle metadata.
+    ///
+    /// Slot indices are stable; freeing only bumps the generation and
+    /// pushes the slot onto the free list for future allocations.
+    /// References elsewhere in the graph need no rewriting.
     fn sweep(&mut self, marked: &HashSet<u32>) -> Result<(), RuntimeError> {
-        // Build a mapping from old indices to new indices
-        let mut index_map: Vec<Option<u32>> = vec![None; self.box_heap.len()];
-        let mut new_heap = Vec::new();
-        let mut new_idx = 0u32;
-        // Collect finalizers to invoke after compaction.
         let mut pending_finalizers: Vec<(String, String, i64)> = Vec::new();
 
-        for (old_idx, box_data) in self.box_heap.iter().enumerate() {
-            if marked.contains(&(old_idx as u32)) {
-                // This box is reachable, keep it
-                index_map[old_idx] = Some(new_idx);
-                new_heap.push(box_data.clone());
-                new_idx += 1;
-            } else {
-                // This box is garbage and will be removed.
-                // If it carries an owned foreign handle, schedule the
-                // finalizer call for after compaction.
-                if let Data::Foreign {
-                    type_tag,
-                    handle,
-                    owned: true,
-                } = box_data
-                    && let Some(reg) = self.foreign_types.get(type_tag.as_str())
-                    && let Some(name) = &reg.finalizer
-                {
-                    pending_finalizers.push((name.clone(), type_tag.clone(), *handle));
+        // Walk the live slots and identify those not in the mark set.
+        let to_free: Vec<u32> = self
+            .box_heap
+            .iter_live()
+            .filter_map(|(idx, _)| {
+                if marked.contains(&idx) {
+                    None
+                } else {
+                    Some(idx)
                 }
+            })
+            .collect();
+
+        for idx in to_free {
+            // Capture finalizer metadata before freeing the slot.
+            if let Some(Data::Foreign {
+                type_tag,
+                handle,
+                owned: true,
+            }) = self.box_heap.get_unchecked(idx)
+                && let Some(reg) = self.foreign_types.get(type_tag.as_str())
+                && let Some(name) = &reg.finalizer
+            {
+                pending_finalizers.push((name.clone(), type_tag.clone(), *handle));
             }
+            self.box_heap.free(idx);
         }
-
-        // Replace the old heap with the compacted heap
-        self.box_heap = new_heap;
-
-        // Update all BoxRef references to point to new indices
-        self.update_box_refs(&index_map);
 
         // Fire finalizers in collection order. Each finalizer is an
         // ordinary host fn registered via `register_host_function`; it
@@ -170,114 +175,5 @@ impl Context {
             }
         }
         Ok(())
-    }
-
-    /// Update all BoxRef references after compaction
-    fn update_box_refs(&mut self, index_map: &[Option<u32>]) {
-        // Update references in stack frames
-        for frame in &mut self.stack {
-            Self::update_data_vec(&mut frame.stack, index_map);
-            Self::update_data_vec(&mut frame.locals, index_map);
-            Self::update_data_vec(&mut frame.params, index_map);
-        }
-
-        // Update references in module-level variables
-        for vars in &mut self.module_vars {
-            Self::update_data_vec(vars, index_map);
-        }
-
-        for root in &mut self.external_roots {
-            if let Some(data) = root {
-                Self::update_data(data, index_map);
-            }
-        }
-
-        // Update references in heap structs
-        for struct_obj in &mut self.heap {
-            Self::update_data_vec(&mut struct_obj.fields, index_map);
-        }
-
-        // Update references in box_heap itself (boxes can contain boxes)
-        for box_data in &mut self.box_heap {
-            Self::update_data(box_data, index_map);
-        }
-    }
-
-    /// Update a vector of Data values with new box indices
-    fn update_data_vec(data_vec: &mut [Data], index_map: &[Option<u32>]) {
-        for data in data_vec {
-            Self::update_data(data, index_map);
-        }
-    }
-
-    /// Update a single Data value with new box index
-    fn update_data(data: &mut Data, index_map: &[Option<u32>]) {
-        match data {
-            Data::BoxRef(old_idx) => {
-                match index_map.get(*old_idx as usize) {
-                    Some(Some(new_idx)) => {
-                        *old_idx = *new_idx;
-                    }
-                    Some(None) => {
-                        // This box was garbage collected, but we're trying to update a reference to it.
-                        // This should never happen if mark phase is correct.
-                        panic!(
-                            "BUG: Attempted to update reference to garbage-collected box at index {}",
-                            old_idx
-                        );
-                    }
-                    None => {
-                        // Index out of bounds - this should never happen
-                        panic!(
-                            "BUG: BoxRef index {} is out of bounds (heap size: {})",
-                            old_idx,
-                            index_map.len()
-                        );
-                    }
-                }
-            }
-            Data::ProtoBoxRef {
-                box_idx: old_idx,
-                concrete_type_id: _concrete_type_id,
-            } => match index_map.get(*old_idx as usize) {
-                Some(Some(new_idx)) => {
-                    *old_idx = *new_idx;
-                }
-                Some(None) => {
-                    panic!(
-                        "BUG: Attempted to update reference to garbage-collected proto box at index {}",
-                        old_idx
-                    );
-                }
-                None => {
-                    panic!(
-                        "BUG: ProtoBoxRef index {} is out of bounds (heap size: {})",
-                        old_idx,
-                        index_map.len()
-                    );
-                }
-            },
-            Data::Array(elements) => {
-                let elements = std::rc::Rc::make_mut(elements);
-                Self::update_data_vec(elements.as_mut_slice(), index_map);
-            }
-            Data::Some(inner) => {
-                Self::update_data(std::rc::Rc::make_mut(inner), index_map);
-            }
-            Data::Closure { captures, .. } => {
-                let captures = std::rc::Rc::make_mut(captures);
-                Self::update_data_vec(captures.as_mut_slice(), index_map);
-            }
-            Data::Tuple(elements) => {
-                let elements = std::rc::Rc::make_mut(elements);
-                Self::update_data_vec(elements.as_mut_slice(), index_map);
-            }
-            Data::Map(map) => {
-                for value in std::rc::Rc::make_mut(map).values_mut() {
-                    Self::update_data(value, index_map);
-                }
-            }
-            _ => {}
-        }
     }
 }

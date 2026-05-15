@@ -224,6 +224,15 @@ pub enum RuntimeError {
     UnexpectedStructRef(String),
     FunctionNotFound,
     VariableNotFound(String),
+    /// Dereference of a `box_idx` whose slot has been freed and possibly
+    /// reused. The carried generation does not match the slot's current
+    /// generation. This typically indicates that a Rust-owned `Data`
+    /// value was held across a script call that triggered GC.
+    StaleBoxHandle {
+        idx: u32,
+        expected_gen: u32,
+        actual_gen: u32,
+    },
     Other(String),
 }
 
@@ -240,6 +249,15 @@ impl fmt::Display for RuntimeError {
             }
             RuntimeError::FunctionNotFound => write!(f, "Function not found"),
             RuntimeError::VariableNotFound(detail) => write!(f, "Variable not found: {}", detail),
+            RuntimeError::StaleBoxHandle {
+                idx,
+                expected_gen,
+                actual_gen,
+            } => write!(
+                f,
+                "Stale box handle: box {} expected generation {} but slot is at generation {} (the slot was freed by GC and possibly reused)",
+                idx, expected_gen, actual_gen
+            ),
             RuntimeError::Other(msg) => write!(f, "Runtime error: {}", msg),
         }
     }

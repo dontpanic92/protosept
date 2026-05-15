@@ -48,7 +48,7 @@ impl MapKey {
             Data::StructRef(_) => Err(RuntimeError::Other(
                 "HashMap key type is not hashable at runtime: struct reference".to_string(),
             )),
-            Data::BoxRef(_) | Data::ProtoBoxRef { .. } | Data::ProtoRefRef { .. } => {
+            Data::BoxRef { .. } | Data::ProtoBoxRef { .. } | Data::ProtoRefRef { .. } => {
                 Err(RuntimeError::Other(
                     "HashMap key type is not hashable at runtime: box/proto reference".to_string(),
                 ))
@@ -300,18 +300,37 @@ pub enum Data {
     String(SharedStr),
     /// Reference to a heap-allocated struct (index into Context.heap).
     StructRef(u32),
-    /// Reference to a heap-allocated box (index into Context.box_heap).
-    /// For box<proto>, stores both the box index and the concrete type_id for dynamic dispatch.
-    BoxRef(u32),
-    /// Proto box reference: stores box index and concrete struct type_id for dynamic dispatch
+    /// Reference to a heap-allocated box (slab handle into Context.box_heap).
+    /// `generation` is the slot generation at allocation time; it is validated on
+    /// every dereference so that handles to freed (and possibly reused)
+    /// slots fail fast instead of silently aliasing.
+    BoxRef { idx: u32, generation: u32 },
+    /// Proto box reference: stores box slab handle and concrete struct
+    /// type_id for dynamic dispatch.
+    ///
+    /// `origin_module_idx` records the module that produced this reference
+    /// (i.e. the module whose `types[concrete_type_id]` is the concrete
+    /// struct). Lookups that consult `Context::modules` to resolve method
+    /// dispatch must use this module index; the executing frame's module
+    /// may not own the receiver's type.
+    ///
+    /// `generation` is the slot generation at allocation time; see [`Data::BoxRef`].
     ProtoBoxRef {
         box_idx: u32,
+        generation: u32,
         concrete_type_id: u32,
+        origin_module_idx: u32,
     },
-    /// Proto ref reference: stores ref index and concrete struct type_id for dynamic dispatch
+    /// Proto ref reference: stores struct heap index and concrete struct
+    /// type_id for dynamic dispatch. `generation` is reserved (currently always 0)
+    /// because the struct heap does not yet have a GC; included for symmetry
+    /// and to make stale-handle detection a uniform concern.
+    /// See [`Data::ProtoBoxRef`] for the meaning of `origin_module_idx`.
     ProtoRefRef {
         ref_idx: u32,
+        generation: u32,
         concrete_type_id: u32,
+        origin_module_idx: u32,
     },
     /// Exception value (enum variant ID) - used for try-catch as special return value
     Exception(i64),
@@ -476,7 +495,7 @@ macro_rules! arithmetic_op {
                     r
                 )));
             }
-            (Data::BoxRef(_), _) | (_, Data::BoxRef(_))
+            (Data::BoxRef { .. }, _) | (_, Data::BoxRef { .. })
             | (Data::ProtoBoxRef { .. }, _) | (_, Data::ProtoBoxRef { .. })
             | (Data::ProtoRefRef { .. }, _) | (_, Data::ProtoRefRef { .. }) => {
                 // Arithmetic on box/proto references is invalid.
@@ -552,7 +571,7 @@ macro_rules! comparison_op {
                     r
                 )));
             }
-            (Data::BoxRef(_), _) | (_, Data::BoxRef(_))
+            (Data::BoxRef { .. }, _) | (_, Data::BoxRef { .. })
             | (Data::ProtoBoxRef { .. }, _) | (_, Data::ProtoBoxRef { .. })
             | (Data::ProtoRefRef { .. }, _) | (_, Data::ProtoRefRef { .. }) => {
                 return Err(RuntimeError::Other("Comparison on box/proto reference".to_string()));

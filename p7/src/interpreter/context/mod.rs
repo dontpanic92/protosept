@@ -5,11 +5,13 @@ use crate::errors::RuntimeError;
 
 #[macro_use]
 mod data;
+mod box_heap;
 mod execution;
 pub use execution::encode_return_ty;
 mod gc;
 mod modules;
 
+pub use box_heap::BoxHeap;
 pub use data::*;
 
 /// Registration metadata for an `@foreign` proto. Created via
@@ -37,11 +39,14 @@ pub struct Context {
     pub stack: Vec<StackFrame>,
     modules: Vec<Module>,
     pub heap: Vec<Struct>,
-    pub box_heap: Vec<Data>,
+    pub box_heap: BoxHeap,
     // GC state
     allocation_count: usize,
     gc_threshold: usize,
-    // Vtable for dynamic dispatch: (concrete_type_id, proto_id, method_name_hash) -> symbol_id
+    // Vtable for dynamic dispatch: (origin_module_idx, concrete_type_id, method_name_hash) -> symbol_id.
+    // `origin_module_idx` is the module that defined `concrete_type_id`; both numeric ids are
+    // meaningful only within that module, so the key must include the module to avoid collisions
+    // across sibling modules.
     vtable: HashMap<(u32, u32, u32), u32>,
     // Host function registry: function_name -> host function
     host_functions: HashMap<String, HostFunction>,
@@ -96,7 +101,7 @@ impl Context {
             stack: vec![StackFrame::new()],
             modules: Vec::new(),
             heap: Vec::new(),
-            box_heap: Vec::new(),
+            box_heap: BoxHeap::new(),
             allocation_count: 0,
             gc_threshold: 100, // Run GC after every 100 allocations
             vtable: HashMap::new(),
@@ -235,14 +240,15 @@ impl Context {
         owned: bool,
     ) -> ContextResult<()> {
         let module_idx = self.stack_frame()?.module_idx;
-        let carrier_type_id = self
+        let (carrier_module_idx, carrier_type_id) = self
             .foreign_types
             .get(type_tag)
             .and_then(|reg| {
                 reg.carrier_type_ids
                     .iter()
-                    .find_map(|(m, t)| if *m == module_idx { Some(*t) } else { None })
-                    .or_else(|| reg.carrier_type_ids.first().map(|(_, t)| *t))
+                    .find(|(m, _)| *m == module_idx)
+                    .copied()
+                    .or_else(|| reg.carrier_type_ids.first().copied())
             })
             .ok_or_else(|| {
                 RuntimeError::Other(format!(
@@ -258,13 +264,14 @@ impl Context {
             handle,
             owned,
         };
-        let box_idx = self.box_heap.len() as u32;
-        self.box_heap.push(payload);
+        let (box_idx, generation) = self.box_heap.alloc(payload);
         self.allocation_count += 1;
 
         self.stack_frame_mut()?.stack.push(Data::ProtoBoxRef {
             box_idx,
+            generation,
             concrete_type_id: carrier_type_id,
+            origin_module_idx: carrier_module_idx as u32,
         });
         Ok(())
     }
@@ -307,16 +314,25 @@ impl Context {
             .pop()
             .ok_or(RuntimeError::StackUnderflow)?;
 
-        let (box_idx, _ctid) = match v {
+        // The receiver is a box-bearing reference; either a ProtoBoxRef
+        // (the foreign carrier wrapping the host handle), a ProtoRefRef
+        // (a ref-typed view onto the same), or a raw BoxRef (untyped
+        // box). All three carry a stable `(idx, generation)` pair we use to
+        // dereference into the box heap below.
+        let (box_idx, generation, _ctid) = match v {
             Data::ProtoBoxRef {
                 box_idx,
+                generation,
                 concrete_type_id,
-            } => (box_idx, concrete_type_id),
+                ..
+            } => (box_idx, generation, concrete_type_id),
             Data::ProtoRefRef {
                 ref_idx,
+                generation,
                 concrete_type_id,
-            } => (ref_idx, concrete_type_id),
-            Data::BoxRef(idx) => (idx, 0),
+                ..
+            } => (ref_idx, generation, concrete_type_id),
+            Data::BoxRef { idx, generation } => (idx, generation, 0),
             other => {
                 return Err(RuntimeError::Other(format!(
                     "pop_foreign: expected a foreign-bearing reference, got {:?}",
@@ -325,10 +341,7 @@ impl Context {
             }
         };
 
-        let payload = self
-            .box_heap
-            .get(box_idx as usize)
-            .ok_or_else(|| RuntimeError::Other("pop_foreign: invalid box index".to_string()))?;
+        let payload = self.box_heap.get(box_idx, generation)?;
 
         match payload {
             Data::Foreign {
