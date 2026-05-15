@@ -133,16 +133,17 @@ impl Generator {
             }
         }
 
-        // Reject captures that hold non-escapable ref types — these can't
-        // become struct fields (same restriction as ordinary structs).
-        for (name, ty, _) in &free_vars {
-            if matches!(ty, Type::Reference(_) | Type::MutableReference(_)) {
-                return Err(SemanticError::Other(format!(
-                    "SAM-coerced closure cannot capture ref-typed variable '{}'",
-                    name
-                )));
-            }
-        }
+        // Captures by value across the SAM boundary. `ref<T>` is
+        // permitted because the synthesized struct's lifetime is
+        // strictly bounded by the enclosing method's frame: the
+        // `box<F>` host value collects when its `ComRc` drops at the
+        // end of the receiving host method's call, which is itself
+        // nested inside the call that elaborated this closure. Storing
+        // a `ref<T>` view as a field therefore cannot let the view
+        // escape its original frame in v1.
+        // (The general `struct[F] X(...)` rule still forbids `ref<T>`
+        //  fields; SAM is exempt because its struct is invisible to
+        //  user code.)
 
         // 4. Synthesize anonymous struct type listing F in its
         //    conformance bracket, with captures as fields.
@@ -265,6 +266,25 @@ impl Generator {
         self.loop_context_stack = saved_loop_ctx;
 
         let body_type = body_codegen_result?;
+
+        // Pad unit body to match int-typed proto method return. The
+        // crosscom IDL→p7 generator maps `void` to `int` (every COM
+        // method returns *something* through libffi), so script-side
+        // pairing widgets like `ui.window_centered(..., () => {...})`
+        // routinely have unit bodies declared as returning `int`. We
+        // emit `ldi 0` here to bridge the gap rather than forcing
+        // every user-written closure body to end with a trailing `0`.
+        let body_type = if matches!(body_type, Type::Primitive(PrimitiveType::Unit))
+            && matches!(
+                method_return_resolved,
+                Type::Primitive(PrimitiveType::Int)
+            ) {
+            self.builder.ldi(0);
+            Type::Primitive(PrimitiveType::Int)
+        } else {
+            body_type
+        };
+
         if !self.types_compatible(&body_type, &method_return_resolved) {
             // Pop the method + struct symbols before erroring out so the
             // symbol chain stays balanced.

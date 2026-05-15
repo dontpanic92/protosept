@@ -212,6 +212,36 @@ impl Context {
         self.foreign_uuids.get(type_tag).map(String::as_str)
     }
 
+    /// Returns the `type_tag` of the first `@foreign` proto that the
+    /// struct `(module_idx, type_id)` lists in its conformance bracket
+    /// (i.e. `struct[F] X(...)` with `F` carrying `@foreign(type_tag=...)`).
+    /// Used by the crosscom dispatcher to wrap script-impl-of-foreign-proto
+    /// values into Rust-side CCWs when they cross the C-ABI boundary as
+    /// `box<F>` arguments to host methods.
+    ///
+    /// Returns `None` if `(module_idx, type_id)` is out of range, names a
+    /// non-struct type, or names a struct that conforms to no foreign
+    /// protos.
+    pub fn struct_first_foreign_proto_tag(
+        &self,
+        module_idx: usize,
+        type_id: u32,
+    ) -> Option<&str> {
+        use crate::semantic::TypeDefinition;
+        let module = self.modules.get(module_idx)?;
+        let TypeDefinition::Struct(s) = module.types.get(type_id as usize)? else {
+            return None;
+        };
+        for &proto_id in &s.conforming_to {
+            if let Some(TypeDefinition::Proto(p)) = module.types.get(proto_id as usize)
+                && let Some(tag) = &p.foreign_type_tag
+            {
+                return Some(tag.as_str());
+            }
+        }
+        None
+    }
+
     /// Push an owning foreign value onto the current stack frame.
     ///
     /// The runtime allocates a box on `box_heap` containing
@@ -239,16 +269,58 @@ impl Context {
         handle: i64,
         owned: bool,
     ) -> ContextResult<()> {
-        let module_idx = self.stack_frame()?.module_idx;
+        let data = self.alloc_foreign_inner(type_tag, handle, owned)?;
+        self.stack_frame_mut()?.stack.push(data);
+        Ok(())
+    }
+
+    /// Construct a `Data::ProtoBoxRef` wrapping a foreign value without
+    /// pushing it onto the active stack frame. Used by hosts that need
+    /// to materialise a `box<F>` value *before* calling
+    /// [`Context::push_function`] or [`Context::push_proto_method`] —
+    /// e.g. to pass `box<IUiHost>` as the first argument to a script's
+    /// `render(self, ui: box<IUiHost>, dt: float)`.
+    ///
+    /// When invoked outside any active frame, the carrier type id is
+    /// resolved from the first module that registered a carrier for
+    /// `type_tag` (the entry-point module is the typical site, since
+    /// `@foreign` protos are declared once per module).
+    pub fn alloc_foreign(&mut self, type_tag: &str, handle: i64) -> ContextResult<Data> {
+        self.alloc_foreign_inner(type_tag, handle, true)
+    }
+
+    /// Like [`Context::alloc_foreign`], but marks the foreign payload
+    /// as borrowed (`owned: false`), suppressing the carrier's
+    /// finalizer when the box is reclaimed by GC.
+    pub fn alloc_foreign_ref(&mut self, type_tag: &str, handle: i64) -> ContextResult<Data> {
+        self.alloc_foreign_inner(type_tag, handle, false)
+    }
+
+    fn alloc_foreign_inner(
+        &mut self,
+        type_tag: &str,
+        handle: i64,
+        owned: bool,
+    ) -> ContextResult<Data> {
+        // When there is no active frame (e.g. host is preparing args
+        // before push_function), fall back to the first registered
+        // carrier. With an active frame, prefer the carrier that lives
+        // in the calling frame's module so that dispatch keys back to
+        // it.
+        let module_idx = self.stack.last().map(|f| f.module_idx);
         let (carrier_module_idx, carrier_type_id) = self
             .foreign_types
             .get(type_tag)
             .and_then(|reg| {
-                reg.carrier_type_ids
-                    .iter()
-                    .find(|(m, _)| *m == module_idx)
-                    .copied()
-                    .or_else(|| reg.carrier_type_ids.first().copied())
+                if let Some(midx) = module_idx {
+                    reg.carrier_type_ids
+                        .iter()
+                        .find(|(m, _)| *m == midx)
+                        .copied()
+                        .or_else(|| reg.carrier_type_ids.first().copied())
+                } else {
+                    reg.carrier_type_ids.first().copied()
+                }
             })
             .ok_or_else(|| {
                 RuntimeError::Other(format!(
@@ -267,13 +339,12 @@ impl Context {
         let (box_idx, generation) = self.box_heap.alloc(payload);
         self.allocation_count += 1;
 
-        self.stack_frame_mut()?.stack.push(Data::ProtoBoxRef {
+        Ok(Data::ProtoBoxRef {
             box_idx,
             generation,
             concrete_type_id: carrier_type_id,
             origin_module_idx: carrier_module_idx as u32,
-        });
-        Ok(())
+        })
     }
 
     /// Push `Some(box<F>)` or `Null` based on an `Option<i64>` handle, for
