@@ -389,15 +389,42 @@ impl Generator {
                 for (i, (expected_type, actual_type)) in
                     param_types.iter().zip(method_params.iter()).enumerate()
                 {
-                    // For the first parameter (self), check if both are reference types
-                    // The proto has `self: ref<Proto>` and the type has `self: ref<Type>`
-                    // These should be considered compatible for conformance checking
+                    // For the first parameter (self), receivers must match by
+                    // form (`ref self`, `ref mut self`, or `box self`) with the
+                    // proto's `Self` substituted by the implementing type:
+                    //
+                    //   proto      | required impl receiver
+                    //   -----------+------------------------
+                    //   ref<P>     | ref<T>
+                    //   ref_mut<P> | ref_mut<T>
+                    //   box<P>     | box<T>
+                    //
+                    // A weaker impl receiver (e.g. `ref self` for a `ref mut
+                    // self` proto method) breaks the proto contract; a stronger
+                    // impl receiver (e.g. `ref mut self` for a `ref self`
+                    // proto method) breaks dispatch via `ref<P>`. Require an
+                    // exact form match here.
                     if i == 0 {
-                        let proto_is_ref_to_proto = matches!(expected_type, Type::Reference(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id));
-                        let type_is_ref_to_self = matches!(actual_type, Type::Reference(inner) if matches!(**inner, Type::Struct(sid) if sid == type_id) || matches!(**inner, Type::Enum(eid) if eid == type_id));
-
-                        if proto_is_ref_to_proto && type_is_ref_to_self {
-                            // Both are reference types to their respective types, this is correct
+                        let inner_is_self = |inner: &Type| -> bool {
+                            matches!(inner, Type::Struct(sid) if *sid == type_id)
+                                || matches!(inner, Type::Enum(eid) if *eid == type_id)
+                        };
+                        let inner_is_proto = |inner: &Type| -> bool {
+                            matches!(inner, Type::Proto(pid) if *pid == proto_id)
+                        };
+                        let receiver_forms_match = match (expected_type, actual_type) {
+                            (Type::Reference(e), Type::Reference(a)) => {
+                                inner_is_proto(e) && inner_is_self(a)
+                            }
+                            (Type::MutableReference(e), Type::MutableReference(a)) => {
+                                inner_is_proto(e) && inner_is_self(a)
+                            }
+                            (Type::BoxType(e), Type::BoxType(a)) => {
+                                inner_is_proto(e) && inner_is_self(a)
+                            }
+                            _ => false,
+                        };
+                        if receiver_forms_match {
                             continue;
                         }
                     }

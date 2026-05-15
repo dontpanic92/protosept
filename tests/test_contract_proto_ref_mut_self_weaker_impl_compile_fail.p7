@@ -1,0 +1,15 @@
+// compile_fail: an impl whose receiver form is weaker than the proto
+// requirement does not satisfy conformance (spec §11.4, §18.3). Here the
+// proto requires `ref mut self` but the impl provides `ref self`.
+
+proto Ticker {
+    fn tick(ref mut self);
+}
+
+struct[Ticker] Tally(pub n: int) {
+    pub fn tick(ref self) -> unit { }
+}
+
+fn main() -> int {
+    return 0;
+}

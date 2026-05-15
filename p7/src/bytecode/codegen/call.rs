@@ -708,7 +708,7 @@ impl Generator {
             return Ok(None);
         };
 
-        let result = self.generate_proto_dispatch(proto_id, field, arguments)?;
+        let result = self.generate_proto_dispatch(proto_id, object_ty, field, arguments)?;
         Ok(Some(result))
     }
 
@@ -716,6 +716,7 @@ impl Generator {
     fn generate_proto_dispatch(
         &mut self,
         proto_id: u32,
+        object_ty: &Type,
         field: &Identifier,
         arguments: CallArgs,
     ) -> SaResult<Type> {
@@ -733,6 +734,52 @@ impl Generator {
                 name: format!("proto method {}", field.name),
                 pos: field.pos(),
             })?;
+
+        // Enforce receiver-kind compatibility (spec §18.4.1, §18.7):
+        //
+        //   proto method receiver | allowed caller object types
+        //   ----------------------+----------------------------------
+        //   ref<P>     (ref self) | box<P>, ref<P>
+        //   ref_mut<P> (ref mut)  | box<P>           (ref<P> is ERROR)
+        //   box<P>     (box self) | box<P>           (ref<P> is ERROR)
+        //
+        // The receiver type is the proto method's first declared parameter,
+        // expressed as the appropriate wrapper around `Type::Proto(proto_id)`.
+        if let Some(receiver_ty) = method_params.first() {
+            let object_is_box = matches!(object_ty, Type::BoxType(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id));
+            let object_is_ref = matches!(object_ty, Type::Reference(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id));
+            let allowed = match receiver_ty {
+                Type::Reference(inner)
+                    if matches!(**inner, Type::Proto(pid) if pid == proto_id) =>
+                {
+                    object_is_box || object_is_ref
+                }
+                Type::MutableReference(inner)
+                    if matches!(**inner, Type::Proto(pid) if pid == proto_id) =>
+                {
+                    object_is_box
+                }
+                Type::BoxType(inner)
+                    if matches!(**inner, Type::Proto(pid) if pid == proto_id) =>
+                {
+                    object_is_box
+                }
+                // Any other receiver shape is invalid for proto methods; the
+                // proto-declaration validator catches this, but be defensive.
+                _ => true,
+            };
+            if !allowed {
+                return Err(SemanticError::TypeMismatch {
+                    lhs: format!(
+                        "proto method '{}' receiver {}",
+                        field.name,
+                        self.type_to_string(receiver_ty)
+                    ),
+                    rhs: format!("caller expression {}", self.type_to_string(object_ty)),
+                    pos: SourcePos::at(field.line, field.col),
+                });
+            }
+        }
 
         let expected_params = method_params.get(1..).unwrap_or(&[]);
         let ordered_exprs = self.process_positional_arguments(

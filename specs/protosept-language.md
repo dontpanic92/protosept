@@ -3182,7 +3182,7 @@ Protos are categorized as:
 
 A proto is an **object proto** iff all its methods are object-safe:
 - `Self` MUST NOT appear in parameter types or return types except as the receiver.
-- The receiver must be explicit: either `ref self` (shorthand for `self: ref<Self>`) or `box self` (shorthand for `self: box<Self>`).
+- The receiver must be explicit and one of: `ref self` (shorthand for `self: ref<Self>`), `ref mut self` (ephemeral mutable-borrowed receiver, §11.4), or `box self` (shorthand for `self: box<Self>`).
 - Generic methods in object protos are ERROR in v1.
 
 Otherwise, the proto is a **static proto**.
@@ -3217,13 +3217,21 @@ proto Printable {
 proto Mutator {
   fn mutate(box self);
 }
+
+proto Counter {
+  fn tick(ref mut self);
+  fn value(ref self) -> int;
+}
 ```
 
 **Receiver requirements:**
 
 Proto methods may declare receivers as defined in §11.4:
 - `self: ref<Self>` (or shorthand `ref self`) – borrowed receiver
+- `ref mut self` – ephemeral mutable-borrowed receiver (§11.4)
 - `self: box<Self>` (or shorthand `box self`) – boxed receiver
+
+Receivers `self` (by-value) and `robox self` are NOT permitted in proto methods.
 
 **Default implementations:**
 
@@ -3275,6 +3283,7 @@ Static protos MUST NOT appear as `box<P>` or `ref<P>`.
 
 **Method-call restriction:**
 - `ref<P>` can call only proto methods whose receiver is `ref self`.
+- Calling a proto method with a `ref mut self` receiver on `ref<P>` is ERROR (`ref<T>` is a read-only view; §3.6).
 - Calling a proto method with a `box self` receiver on `ref<P>` is ERROR (see §18.7).
 
 
@@ -3352,11 +3361,18 @@ Calling a proto method on `box<P>` or `ref<P>` performs dynamic dispatch:
 
 For `box<P>`:
 - For methods with `ref self` receivers: the proto box handle is passed and dereferenced to obtain a `ref<T>` view of the boxed contents.
+- For methods with `ref mut self` receivers: the proto box handle is dereferenced to obtain an ephemeral mutable borrow of the boxed contents (`ref_mut(*recv)` per §11.3.2). The mutable borrow exists only for the duration of the call and never escapes; this preserves the read-only invariant of `ref<T>` because no first-class mutable-reference value is produced.
 - For methods with `box self` receivers: the proto box handle itself is passed (as `box<P>`), aliasing the original box. The method receives a boxed handle, which satisfies `Copy`; multiple calls do not move the box.
 
 For `ref<P>`:
 - For methods with `ref self` receivers: the borrowed proto handle is passed directly as a `ref<T>` view to the underlying object.
+- For methods with `ref mut self` receivers: calling such methods on `ref<P>` is ERROR (see §18.4.1).
 - For methods with `box self` receivers: calling such methods on `ref<P>` is ERROR (see §18.4.1).
+
+For `robox<P>`:
+- For methods with `ref self` receivers: allowed (auto-borrow `ref(*rb)`, mirroring §3.8).
+- For methods with `ref mut self` receivers: ERROR (`*rb` is not a mutable place when `rb: robox<T>`; §11.3.2).
+- For methods with `box self` receivers: ERROR (capability mismatch).
 
 Example:
 ```p7
@@ -3373,6 +3389,33 @@ struct Counter(count: int) {
 let b: box<Mutator> = box(Counter(0)) as box<Mutator>;
 b.mutate();  // dispatches to Counter.mutate; box handle satisfies Copy
 b.mutate();  // ok: can call again
+```
+
+Example with `ref mut self` in a proto:
+```p7
+proto Ticker {
+  fn tick(ref mut self);
+  fn value(ref self) -> int;
+}
+
+struct[Ticker] Tally(pub n: int) {
+  pub fn tick(ref mut self) { self.n = self.n + 1; }
+  pub fn value(ref self) -> int { self.n }
+}
+
+// Direct call on a mutable place (no proto handle involved)
+let mut t = Tally(0);
+t.tick();                          // ok: §11.3.2 auto-borrow
+
+// Dynamic dispatch via box<P>
+let bp: box<Ticker> = ^Tally(0);
+bp.tick();                          // ok: ref mut self auto-borrows *bp
+let v = bp.value();                 // ok: ref self
+
+// Dynamic dispatch via ref<P> is read-only
+let rp: ref<Ticker> = ref(t);
+// rp.tick();                       // ERROR: ref<P> cannot call ref mut self (§18.4.1)
+let w = rp.value();                 // ok
 ```
 
 ### 18.8 Downcasting / type tests
