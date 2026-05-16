@@ -782,18 +782,33 @@ impl Generator {
         true
     }
 
-    /// Resolve a protocol identifier to its TypeId
+    /// Resolve a protocol identifier to its TypeId.
+    ///
+    /// Dotted names like `radiance.IDirector` are routed through
+    /// `resolve_qualified_type_name`, which walks the import chain,
+    /// imports the type into the current module if needed, and inserts
+    /// a qualified-name symbol. Without this, struct conformance lists
+    /// (`struct[radiance.IDirector] X { ... }`) fail with
+    /// `TypeNotFound` unless an unrelated typed site forces the
+    /// import first.
     pub(super) fn resolve_proto_identifier(
-        &self,
+        &mut self,
         proto_name: &Identifier,
     ) -> SaResult<crate::semantic::TypeId> {
-        let proto_type = self
-            .symbol_table
-            .find_type_in_scope(&proto_name.name)
-            .ok_or_else(|| SemanticError::TypeNotFound {
-                name: proto_name.name.to_string(),
-                pos: proto_name.pos(),
-            })?;
+        let proto_type = if proto_name.name.contains('.') {
+            self.resolve_qualified_type_name(
+                &proto_name.name,
+                proto_name.line,
+                proto_name.col,
+            )?
+        } else {
+            self.symbol_table
+                .find_type_in_scope(&proto_name.name)
+                .ok_or_else(|| SemanticError::TypeNotFound {
+                    name: proto_name.name.to_string(),
+                    pos: proto_name.pos(),
+                })?
+        };
 
         match proto_type {
             Type::Proto(proto_id) => Ok(proto_id),
