@@ -216,7 +216,10 @@ pub(crate) fn array_push(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match box_ref {
-        Data::BoxRef { idx: box_idx, generation } => {
+        Data::BoxRef {
+            idx: box_idx,
+            generation,
+        } => {
             // Get the boxed array
             let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
 
@@ -247,7 +250,10 @@ pub(crate) fn array_clear(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match box_ref {
-        Data::BoxRef { idx: box_idx, generation } => {
+        Data::BoxRef {
+            idx: box_idx,
+            generation,
+        } => {
             // Get the boxed array
             let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
 
@@ -278,7 +284,10 @@ pub(crate) fn array_pop(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match box_ref {
-        Data::BoxRef { idx: box_idx, generation } => {
+        Data::BoxRef {
+            idx: box_idx,
+            generation,
+        } => {
             let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
 
             match boxed_data {
@@ -325,7 +334,13 @@ pub(crate) fn array_set(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match (box_ref, index) {
-        (Data::BoxRef { idx: box_idx, generation }, Data::Int(idx)) => {
+        (
+            Data::BoxRef {
+                idx: box_idx,
+                generation,
+            },
+            Data::Int(idx),
+        ) => {
             let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
 
             match boxed_data {
@@ -372,7 +387,13 @@ pub(crate) fn array_insert(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match (box_ref, index) {
-        (Data::BoxRef { idx: box_idx, generation }, Data::Int(idx)) => {
+        (
+            Data::BoxRef {
+                idx: box_idx,
+                generation,
+            },
+            Data::Int(idx),
+        ) => {
             let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
             match boxed_data {
                 Data::Array(elements) => {
@@ -406,7 +427,13 @@ pub(crate) fn array_remove(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match (box_ref, index) {
-        (Data::BoxRef { idx: box_idx, generation }, Data::Int(idx)) => {
+        (
+            Data::BoxRef {
+                idx: box_idx,
+                generation,
+            },
+            Data::Int(idx),
+        ) => {
             let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
             match boxed_data {
                 Data::Array(elements) => {

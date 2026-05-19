@@ -209,10 +209,9 @@ impl RuntimeMap {
             RuntimeMapStorage::Small(entries) => {
                 entries.iter_mut().map(|entry| &mut entry.value).collect()
             }
-            RuntimeMapStorage::Large(entries) => entries
-                .values_mut()
-                .map(|entry| &mut entry.value)
-                .collect(),
+            RuntimeMapStorage::Large(entries) => {
+                entries.values_mut().map(|entry| &mut entry.value).collect()
+            }
         }
     }
 
@@ -304,7 +303,10 @@ pub enum Data {
     /// `generation` is the slot generation at allocation time; it is validated on
     /// every dereference so that handles to freed (and possibly reused)
     /// slots fail fast instead of silently aliasing.
-    BoxRef { idx: u32, generation: u32 },
+    BoxRef {
+        idx: u32,
+        generation: u32,
+    },
     /// Proto box reference: stores box slab handle and concrete struct
     /// type_id for dynamic dispatch.
     ///

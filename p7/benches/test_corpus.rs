@@ -1,6 +1,6 @@
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use p7::InMemoryModuleProvider;
 
 const TEST_MODULE_SOURCE: &str = r#"

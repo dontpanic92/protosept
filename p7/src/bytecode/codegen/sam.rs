@@ -150,8 +150,7 @@ impl Generator {
         let counter = self.sam_anon_counter;
         self.sam_anon_counter += 1;
         let local_name = InternedString::from(format!("__anon_closure_{}", counter));
-        let struct_qualified_name =
-            self.symbol_table.get_new_symbol_qualified_name(&local_name);
+        let struct_qualified_name = self.symbol_table.get_new_symbol_qualified_name(&local_name);
 
         let fields: Vec<(InternedString, Type)> = free_vars
             .iter()
@@ -174,7 +173,9 @@ impl Generator {
             methods: Vec::new(),
             source_module: None,
         };
-        let struct_type_id = self.symbol_table.add_type(TypeDefinition::Struct(struct_def));
+        let struct_type_id = self
+            .symbol_table
+            .add_type(TypeDefinition::Struct(struct_def));
 
         // Register the struct symbol as a child of whatever is current in
         // the symbol chain. `build_vtable` iterates `module.symbols`
@@ -193,10 +194,8 @@ impl Generator {
         let method_body_addr = self.builder.next_address();
 
         // 6. Synthesize the proto method on the struct.
-        let method_qualified_name = InternedString::from(format!(
-            "{}.{}",
-            struct_qualified_name, method_name
-        ));
+        let method_qualified_name =
+            InternedString::from(format!("{}.{}", struct_qualified_name, method_name));
 
         let self_var = Variable {
             name: InternedString::from("self"),
@@ -250,11 +249,10 @@ impl Generator {
             free_vars.iter().map(|(n, _, _)| n.clone()).collect();
         let rewritten_body = rewrite_captures(body, &capture_names);
 
-        self.enclosing_return_types.push(method_return_resolved.clone());
-        let body_codegen_result = self.generate_expression_with_expected_type(
-            rewritten_body,
-            Some(&method_return_resolved),
-        );
+        self.enclosing_return_types
+            .push(method_return_resolved.clone());
+        let body_codegen_result = self
+            .generate_expression_with_expected_type(rewritten_body, Some(&method_return_resolved));
         self.enclosing_return_types.pop();
 
         // Always restore state, even on body codegen error, before
@@ -275,10 +273,8 @@ impl Generator {
         // emit `ldi 0` here to bridge the gap rather than forcing
         // every user-written closure body to end with a trailing `0`.
         let body_type = if matches!(body_type, Type::Primitive(PrimitiveType::Unit))
-            && matches!(
-                method_return_resolved,
-                Type::Primitive(PrimitiveType::Int)
-            ) {
+            && matches!(method_return_resolved, Type::Primitive(PrimitiveType::Int))
+        {
             self.builder.ldi(0);
             Type::Primitive(PrimitiveType::Int)
         } else {
@@ -312,7 +308,8 @@ impl Generator {
 
         // Patch the skip-over jmp.
         let after_method = self.builder.next_address();
-        self.builder.patch_jump_address(jmp_placeholder, after_method);
+        self.builder
+            .patch_jump_address(jmp_placeholder, after_method);
 
         // 8. Emit the call-site code: push captures, NewStruct, BoxAlloc,
         //    BoxToProto. (No conditional GC barrier: BoxAlloc handles

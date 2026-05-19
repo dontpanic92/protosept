@@ -293,12 +293,16 @@ impl Context {
             })?;
             Ok(*method_sym_id)
         } else {
-            root_symbol.children.get(symbol_name).copied().ok_or_else(|| {
-                RuntimeError::Other(format!(
-                    "Symbol '{}' not found in module '{}'",
-                    symbol_name, module_path
-                ))
-            })
+            root_symbol
+                .children
+                .get(symbol_name)
+                .copied()
+                .ok_or_else(|| {
+                    RuntimeError::Other(format!(
+                        "Symbol '{}' not found in module '{}'",
+                        symbol_name, module_path
+                    ))
+                })
         }
     }
 
@@ -350,7 +354,9 @@ impl Context {
                             // Find the struct's symbol and look for this method
                             if let Some(struct_symbol) = type_symbols.get(&struct_type_id) {
                                 // Look for the method in the struct's children
-                                if let Some(&method_symbol_id) = struct_symbol.children.get(method_name) {
+                                if let Some(&method_symbol_id) =
+                                    struct_symbol.children.get(method_name)
+                                {
                                     // Hash the method name for fast lookup
                                     let method_hash = Self::hash_method_name(method_name);
 

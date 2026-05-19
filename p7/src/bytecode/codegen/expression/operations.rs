@@ -1032,21 +1032,14 @@ impl Generator {
             // - `float as int` is intentionally NOT supported here; callers must use the
             //   `float_to_int_checked(x: float) -> ?int` prelude function to handle NaN,
             //   infinity and out-of-range explicitly.
-            (
-                Type::Primitive(PrimitiveType::Int),
-                Type::Primitive(PrimitiveType::Float),
-            ) => {
+            (Type::Primitive(PrimitiveType::Int), Type::Primitive(PrimitiveType::Float)) => {
                 self.builder.int_to_float();
                 Ok(target_ty.clone())
             }
-            (
-                Type::Primitive(PrimitiveType::Int),
-                Type::Primitive(PrimitiveType::Int),
-            )
-            | (
-                Type::Primitive(PrimitiveType::Float),
-                Type::Primitive(PrimitiveType::Float),
-            ) => Ok(target_ty.clone()),
+            (Type::Primitive(PrimitiveType::Int), Type::Primitive(PrimitiveType::Int))
+            | (Type::Primitive(PrimitiveType::Float), Type::Primitive(PrimitiveType::Float)) => {
+                Ok(target_ty.clone())
+            }
             _ => Err(SemanticError::Other(format!(
                 "Cast from '{}' to '{}' is not supported at line {} column {}",
                 self.type_to_string(&expr_ty),

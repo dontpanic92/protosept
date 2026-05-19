@@ -76,9 +76,10 @@ impl BoxHeap {
     /// typically because the slot was freed (and possibly reused) since
     /// the handle was minted.
     pub fn get(&self, idx: u32, generation: u32) -> ContextResult<&Data> {
-        let slot = self.slots.get(idx as usize).ok_or_else(|| {
-            RuntimeError::Other(format!("box index {} out of bounds", idx))
-        })?;
+        let slot = self
+            .slots
+            .get(idx as usize)
+            .ok_or_else(|| RuntimeError::Other(format!("box index {} out of bounds", idx)))?;
         let actual_gen = self.gens[idx as usize];
         if actual_gen != generation {
             return Err(RuntimeError::StaleBoxHandle {
@@ -96,9 +97,10 @@ impl BoxHeap {
 
     /// Mutable counterpart to [`BoxHeap::get`].
     pub fn get_mut(&mut self, idx: u32, generation: u32) -> ContextResult<&mut Data> {
-        let actual_gen = *self.gens.get(idx as usize).ok_or_else(|| {
-            RuntimeError::Other(format!("box index {} out of bounds", idx))
-        })?;
+        let actual_gen = *self
+            .gens
+            .get(idx as usize)
+            .ok_or_else(|| RuntimeError::Other(format!("box index {} out of bounds", idx)))?;
         if actual_gen != generation {
             return Err(RuntimeError::StaleBoxHandle {
                 idx,

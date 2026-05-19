@@ -27,11 +27,16 @@ pub fn encode_return_ty(rt: &crate::semantic::HostReturnTy) -> Data {
 
 impl Context {
     pub fn push_function(&mut self, name: &str, params: Vec<Data>) {
+        self.push_module_function("$root", name, params)
+    }
+
+    pub fn push_module_function(&mut self, module_path: &str, name: &str, params: Vec<Data>) {
         if self.modules.is_empty() {
             panic!();
         }
 
-        let addr = self.modules[0]
+        let module_idx = self.module_index(module_path).unwrap();
+        let addr = self.modules[module_idx]
             .get_function(name)
             .unwrap()
             .get_function_address()
@@ -39,9 +44,10 @@ impl Context {
 
         let mut stack_frame = StackFrame::new();
         stack_frame.params = params;
-        stack_frame.pc = self.modules[0]
+        stack_frame.pc = self.modules[module_idx]
             .bytecode_address_to_instruction_index(addr)
             .expect("function address should point to a decoded instruction");
+        stack_frame.module_idx = module_idx;
 
         self.stack.push(stack_frame);
     }
@@ -51,10 +57,21 @@ impl Context {
     /// callbacks (e.g. `activate`) without provoking the
     /// `push_function` panic on missing names.
     pub fn has_function(&self, name: &str) -> bool {
-        self.modules
-            .first()
+        self.has_module_function("$root", name)
+    }
+
+    pub fn has_module_function(&self, module_path: &str, name: &str) -> bool {
+        self.module_index(module_path)
+            .and_then(|idx| self.modules.get(idx))
             .and_then(|m| m.get_function(name))
             .is_some()
+    }
+
+    fn module_index(&self, module_path: &str) -> Option<usize> {
+        if module_path == "$root" {
+            return (!self.modules.is_empty()).then_some(0);
+        }
+        self.imported_modules.get(module_path).copied()
     }
 
     /// Push a script-defined proto method call so the host can invoke a method
@@ -127,9 +144,9 @@ impl Context {
         }
 
         if candidate_symbols.is_empty()
-            && let Some(&symbol_id) = self
-                .vtable
-                .get(&(module_idx as u32, concrete_type_id, method_hash))
+            && let Some(&symbol_id) =
+                self.vtable
+                    .get(&(module_idx as u32, concrete_type_id, method_hash))
         {
             candidate_symbols.push(symbol_id);
         }
@@ -709,9 +726,11 @@ impl Context {
                         // dispatching against a recycled slot.
                         let resolved_data = match &data {
                             Data::BoxRef { idx, generation }
-                            | Data::ProtoBoxRef { box_idx: idx, generation, .. } => {
-                                self.box_heap.get(*idx, *generation)?.clone()
-                            }
+                            | Data::ProtoBoxRef {
+                                box_idx: idx,
+                                generation,
+                                ..
+                            } => self.box_heap.get(*idx, *generation)?.clone(),
                             Data::ProtoRefRef { ref_idx, .. } => {
                                 // ProtoRefRef points to heap location like StructRef
                                 Data::StructRef(*ref_idx)
@@ -776,9 +795,11 @@ impl Context {
                     // validation.
                     let resolved_ref = match &struct_ref_data {
                         Data::BoxRef { idx, generation }
-                        | Data::ProtoBoxRef { box_idx: idx, generation, .. } => {
-                            self.box_heap.get(*idx, *generation)?.clone()
-                        }
+                        | Data::ProtoBoxRef {
+                            box_idx: idx,
+                            generation,
+                            ..
+                        } => self.box_heap.get(*idx, *generation)?.clone(),
                         Data::ProtoRefRef { ref_idx, .. } => Data::StructRef(*ref_idx),
                         other => other.clone(),
                     };
@@ -915,7 +936,9 @@ impl Context {
                         .pop()
                         .ok_or(RuntimeError::StackUnderflow)?;
                     let (idx, generation) = self.box_heap.alloc(value);
-                    self.stack_frame_mut()?.stack.push(Data::BoxRef { idx, generation });
+                    self.stack_frame_mut()?
+                        .stack
+                        .push(Data::BoxRef { idx, generation });
 
                     // Trigger GC if threshold is reached
                     self.allocation_count += 1;
@@ -934,7 +957,9 @@ impl Context {
                     match box_ref {
                         Data::BoxRef { idx, generation }
                         | Data::ProtoBoxRef {
-                            box_idx: idx, generation, ..
+                            box_idx: idx,
+                            generation,
+                            ..
                         } => {
                             let value = self.box_heap.get(idx, generation)?.clone();
                             self.stack_frame_mut()?.stack.push(value);
@@ -956,7 +981,11 @@ impl Context {
                         .pop()
                         .ok_or(RuntimeError::StackUnderflow)?;
 
-                    if let Data::BoxRef { idx: box_idx, generation } = box_ref {
+                    if let Data::BoxRef {
+                        idx: box_idx,
+                        generation,
+                    } = box_ref
+                    {
                         self.stack_frame_mut()?.stack.push(Data::ProtoBoxRef {
                             box_idx,
                             generation,

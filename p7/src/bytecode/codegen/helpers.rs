@@ -796,11 +796,7 @@ impl Generator {
         proto_name: &Identifier,
     ) -> SaResult<crate::semantic::TypeId> {
         let proto_type = if proto_name.name.contains('.') {
-            self.resolve_qualified_type_name(
-                &proto_name.name,
-                proto_name.line,
-                proto_name.col,
-            )?
+            self.resolve_qualified_type_name(&proto_name.name, proto_name.line, proto_name.col)?
         } else {
             self.symbol_table
                 .find_type_in_scope(&proto_name.name)

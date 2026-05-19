@@ -749,19 +749,13 @@ impl Generator {
             let object_is_box = matches!(object_ty, Type::BoxType(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id));
             let object_is_ref = matches!(object_ty, Type::Reference(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id));
             let allowed = match receiver_ty {
-                Type::Reference(inner)
-                    if matches!(**inner, Type::Proto(pid) if pid == proto_id) =>
-                {
+                Type::Reference(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id) => {
                     object_is_box || object_is_ref
                 }
-                Type::MutableReference(inner)
-                    if matches!(**inner, Type::Proto(pid) if pid == proto_id) =>
-                {
+                Type::MutableReference(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id) => {
                     object_is_box
                 }
-                Type::BoxType(inner)
-                    if matches!(**inner, Type::Proto(pid) if pid == proto_id) =>
-                {
+                Type::BoxType(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id) => {
                     object_is_box
                 }
                 // Any other receiver shape is invalid for proto methods; the

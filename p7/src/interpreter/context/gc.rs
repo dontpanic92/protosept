@@ -63,8 +63,7 @@ impl Context {
     /// Recursively mark a data value and any boxes it references
     fn mark_data(&self, data: &Data, marked: &mut HashSet<u32>) {
         match data {
-            Data::BoxRef { idx, .. }
-            | Data::ProtoBoxRef { box_idx: idx, .. } => {
+            Data::BoxRef { idx, .. } | Data::ProtoBoxRef { box_idx: idx, .. } => {
                 // If we haven't marked this box yet, mark it and recursively mark its contents.
                 // We use `get_unchecked` here: the mark phase walks live reachable references,
                 // and a stale handle reachable from a dead struct would simply not find a slot.

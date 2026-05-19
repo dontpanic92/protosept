@@ -101,7 +101,10 @@ pub(crate) fn hashmap_set(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match box_ref {
-        Data::BoxRef { idx: box_idx, generation } => {
+        Data::BoxRef {
+            idx: box_idx,
+            generation,
+        } => {
             let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
             match boxed_data {
                 Data::Map(map) => {
@@ -132,7 +135,10 @@ pub(crate) fn hashmap_remove(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match box_ref {
-        Data::BoxRef { idx: box_idx, generation } => {
+        Data::BoxRef {
+            idx: box_idx,
+            generation,
+        } => {
             let boxed_data = ctx.box_heap.get_mut(box_idx, generation)?;
             match boxed_data {
                 Data::Map(map) => {
@@ -227,18 +233,16 @@ pub(crate) fn hashmap_index(ctx: &mut Context) -> ContextResult<()> {
         .ok_or(RuntimeError::StackUnderflow)?;
 
     match map_val {
-        Data::Map(map) => {
-            match map.get(&key)?.cloned() {
-                Some(v) => {
-                    ctx.stack_frame_mut()?.stack.push(v);
-                    Ok(())
-                }
-                None => Err(RuntimeError::Other(format!(
-                    "Key not found in HashMap: {:?}",
-                    key
-                ))),
+        Data::Map(map) => match map.get(&key)?.cloned() {
+            Some(v) => {
+                ctx.stack_frame_mut()?.stack.push(v);
+                Ok(())
             }
-        }
+            None => Err(RuntimeError::Other(format!(
+                "Key not found in HashMap: {:?}",
+                key
+            ))),
+        },
         _ => Err(RuntimeError::Other(
             "hashmap.index: expected map".to_string(),
         )),

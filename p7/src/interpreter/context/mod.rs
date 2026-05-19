@@ -222,11 +222,7 @@ impl Context {
     /// Returns `None` if `(module_idx, type_id)` is out of range, names a
     /// non-struct type, or names a struct that conforms to no foreign
     /// protos.
-    pub fn struct_first_foreign_proto_tag(
-        &self,
-        module_idx: usize,
-        type_id: u32,
-    ) -> Option<&str> {
+    pub fn struct_first_foreign_proto_tag(&self, module_idx: usize, type_id: u32) -> Option<&str> {
         use crate::semantic::TypeDefinition;
         let module = self.modules.get(module_idx)?;
         let TypeDefinition::Struct(s) = module.types.get(type_id as usize)? else {
