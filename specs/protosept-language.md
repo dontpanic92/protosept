@@ -1789,6 +1789,121 @@ This desugaring is normative; implementations MAY optimize but MUST preserve the
 
 ---
 
+### 9.5.1 `for-in` statement
+
+Form (value-only):
+```p7
+for x in iterable { body }
+```
+Form (indexed):
+```p7
+for i, x in iterable { body }
+```
+
+Rules:
+- `iterable` MUST be one of:
+  - an array (`array<T>`, `ref<array<T>>`, or `box<array<T>>`); **OR**
+  - a value conforming to the `builtin.Iterable` proto — verified structurally by the compiler (see *Iteration protocol* below).
+- `i` and `x` MUST be distinct identifiers when the indexed form is used.
+- `for-in` is a statement that yields `unit` when used in a block.
+
+Bindings (per iteration):
+- `i` (when present) is an `int` bound to the 0-based iteration counter.
+- `x` is bound to the current element:
+  - **Array fast path** (iterable is an `array<T>`/`ref<array<T>>`/`box<array<T>>`):
+    - **by value** when the element type `T` is *Copy-treated* (§6.3);
+    - **as `ref<T>`** otherwise (auto-borrow). The body can read fields via `x.field` without an explicit `ref(...)` wrapper.
+  - **Proto path** (iterable conforms to `Iterable`): `x` is bound **by value** to whatever the iterator's `next` method returns inside the `?T` payload. Authors who want references opt in explicitly by writing an iterator whose `next` returns `?ref<T>`.
+
+Semantics:
+- `iterable` is evaluated **exactly once** at loop entry.
+- **Array fast path**: the array length is **snapshotted** at loop entry; pushes/pops during iteration are not observed.
+- **Proto path**: iteration ends when `next()` returns `null`. The iterator's behaviour under mid-loop mutation of the source is defined by the iterator implementation, not by `for-in`.
+- The source binding of `iterable` is not marked moved by `for-in`; the caller may continue to use it after the loop.
+
+Control flow:
+- `break` exits the loop.
+- `continue` advances the index counter (when present) and resumes from the appropriate place (snapshot's `$i = $i + 1` on the array fast path; the next `next()` call on the proto path). `continue` never causes an infinite loop in `for-in`.
+
+#### Iteration protocol
+
+The builtin package declares two marker protos:
+
+```p7
+proto Iterable {}
+proto Iterator {}
+```
+
+Conformance is verified **structurally** at each `for-in` call site (the protos are non-generic markers — p7 does not yet support generic protos). A type conforms to `Iterable` iff it has a method
+
+```p7
+fn iter(ref self) -> box<I>
+```
+
+for some concrete type `I` that itself has a method
+
+```p7
+fn next(box self) -> ?T
+```
+
+for some element type `T`. The element type `T` flows to the `x` binding.
+
+Authors may add `[Iterable]` / `[Iterator]` to the conformance list of their structs for explicit opt-in; the compiler does not require it.
+
+#### Built-in iterables
+
+The builtin package ships `array<T>`, `Range`, and `RangeIncl`:
+
+- `array<T>.iter()` returns a `box<ArrayIter<T>>` (intrinsic-backed).
+- `Range(start: int, end: int)` is the half-open range `[start, end)`; iteration yields `start`, `start+1`, …, `end-1`.
+- `RangeIncl(start: int, end: int)` is the closed range `[start, end]`.
+
+`Range`/`RangeIncl` values are **immutable**. Each call to `iter()` returns a fresh `RangeIter`/`RangeInclIter` cursor; iterating the same `Range` value twice produces the same sequence twice, and the range's `start`/`end` fields are unchanged after the loop.
+
+`Range` and `RangeIncl` are reached as `builtin.Range(0, n)` / `builtin.RangeIncl(0, n)`; the `builtin` module symbol is auto-imported, so no `import builtin;` line is required.
+
+**Normative desugaring** (array fast path; element-binding mode follows the Copy/non-Copy rule above):
+```p7
+for i, x in iterable { body }
+```
+behaves as if written:
+```p7
+{
+    let $arr = iterable;          // evaluated once
+    let $len = $arr.len();        // snapshot
+    let mut $i = 0;
+    while $i < $len {
+        let i = $i;                // present only in the indexed form
+        let x = $arr[$i];          // or `ref($arr[$i])` for non-Copy T
+        body;
+        $i = $i + 1;
+    }
+}
+```
+
+**Normative desugaring** (proto path):
+```p7
+for i, x in iterable { body }
+```
+behaves as if written:
+```p7
+{
+    let $iter = iterable.iter();
+    let mut $i = 0;               // present only in the indexed form
+    loop {
+        let $cur = $iter.next();
+        if $cur == null { break; }
+        let i = $i;                // present only in the indexed form
+        let x = $cur!;
+        body;
+        $i = $i + 1;               // present only in the indexed form
+    }
+}
+```
+`continue` inside `body` MUST behave as a jump to the increment block (the line(s) following `body` in the desugaring above), not to the loop's resumption point.
+
+---
+
 ### 9.6 `match` expression
 
 `match` selects the first matching arm from an ordered list.

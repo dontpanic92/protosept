@@ -160,6 +160,13 @@ impl Generator {
                 body,
                 pos,
             } => self.generate_while(*condition, *body, pos),
+            Expression::ForIn {
+                index_var,
+                value_var,
+                iterable,
+                body,
+                pos,
+            } => self.generate_for_in(index_var, value_var, *iterable, *body, pos),
             Expression::Break { value, pos } => self.generate_break(value, pos),
             Expression::Continue { pos } => self.generate_continue(pos),
             Expression::ArrayLiteral { elements, pos } => {

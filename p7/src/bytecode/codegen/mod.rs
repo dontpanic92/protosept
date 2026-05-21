@@ -100,6 +100,9 @@ pub struct Generator {
     // because struct names live under the current symbol scope's
     // qualified name.
     pub(super) sam_anon_counter: u32,
+    // Counter for synthesizing unique hidden-local names in `for-in` loops
+    // (`$for_arr_N`, `$for_len_N`, `$for_i_N`).
+    pub(super) for_in_counter: u32,
 }
 
 impl Generator {
@@ -178,6 +181,7 @@ impl Generator {
             module_variables: Vec::new(),
             seen_foreign_type_tags: std::collections::HashMap::new(),
             sam_anon_counter: 0,
+            for_in_counter: 0,
         }
     }
 
@@ -760,7 +764,7 @@ impl Generator {
 
     /// Import top-level public intrinsic functions from the builtin module into
     /// the main generator's symbol table so they are callable without a module
-    /// qualifier (e.g. `__script_dir__()`).
+    /// qualifier (e.g. `__script_dir__()`, `range(0, n)`).
     fn import_builtin_functions(&mut self, module: &Module) {
         let Some(root) = module.symbols.first() else {
             return;
@@ -793,6 +797,21 @@ impl Generator {
             );
             self.symbol_table.insert_symbol(new_symbol);
         }
+
+        // Also expose the `builtin` module itself as a symbol so user code
+        // can write `builtin.Range(0, n)` etc. without an explicit
+        // `import builtin;` line. (Cross-module method calls on the
+        // returned struct then dispatch through the existing
+        // `resolve_external_method` path.)
+        let module_id = self
+            .symbol_table
+            .register_module(InternedString::from("builtin"), 0);
+        let module_symbol = crate::semantic::Symbol::new(
+            InternedString::from("builtin"),
+            InternedString::from("builtin"),
+            SymbolKind::Module(module_id),
+        );
+        self.symbol_table.insert_symbol(module_symbol);
     }
 
     /// Helper method to compile an imported module
@@ -887,6 +906,7 @@ impl Generator {
             module_variables: Vec::new(),
             seen_foreign_type_tags: std::collections::HashMap::new(),
             sam_anon_counter: 0,
+            for_in_counter: 0,
         };
         // Override root module metadata with this module_path
         if let Some(root) = generator.symbol_table.symbols.get_mut(0) {

@@ -1,0 +1,309 @@
+// Tests for `for x in arr` / `for i, x in arr` loops (§9.5.1).
+// Covers both the array fast path and the Iterable proto path
+// (via `builtin.Range` / `builtin.RangeIncl` and a user-defined
+// iterable via structural conformance).
+import test.test;
+
+// ===== Array fast path: by-value element binding =====
+
+@test(expected_type = "int", expected_value = "15")
+fn test_for_in_sums_int_array() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    let mut sum = 0;
+    for x in arr {
+        sum = sum + x;
+    }
+    sum
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_for_in_empty_array_skips_body() -> int {
+    let arr: array<int> = [];
+    let mut visited = 0;
+    for x in arr {
+        visited = visited + 1;
+    }
+    visited
+}
+
+@test(expected_type = "int", expected_value = "1")
+fn test_for_in_single_element_array() -> int {
+    let arr = [42];
+    let mut count = 0;
+    for x in arr {
+        count = count + 1;
+    }
+    count
+}
+
+// ===== Array fast path: indexed form =====
+
+@test(expected_type = "int", expected_value = "360")
+fn test_for_in_indexed_form() -> int {
+    let arr = [10, 20, 30];
+    let mut acc = 0;
+    for i, x in arr {
+        // i ∈ {0,1,2}; x ∈ {10,20,30}
+        acc = acc + i * 100 + x;
+    }
+    // i*100: 0 + 100 + 200 = 300; x sum: 10+20+30 = 60; total 360
+    acc
+}
+
+@test(expected_type = "int", expected_value = "3")
+fn test_for_in_indexed_form_counts_iterations() -> int {
+    let arr = [7, 8, 9];
+    let mut last_i = -1;
+    for i, x in arr {
+        last_i = i;
+    }
+    last_i + 1
+}
+
+// ===== Array fast path: length snapshot semantics =====
+
+@test(expected_type = "int", expected_value = "3")
+fn test_for_in_length_snapshot_ignores_mid_loop_push() -> int {
+    // Pushes through a `box<array<...>>` handle during iteration must
+    // NOT extend the loop's iteration count — the length is snapshotted
+    // at loop entry.
+    let arr: box<array<int>> = box([1, 2, 3]);
+    let mut visited = 0;
+    for x in arr {
+        visited = visited + 1;
+        arr.push(99);
+    }
+    visited
+}
+
+// ===== Array fast path: nested loops don't collide hidden locals =====
+
+@test(expected_type = "int", expected_value = "102")
+fn test_for_in_nested_loops() -> int {
+    let outer = [1, 2, 3];
+    let inner = [10, 20];
+    let mut sum = 0;
+    for a in outer {
+        for b in inner {
+            sum = sum + a + b;
+        }
+    }
+    // (1+10)+(1+20)+(2+10)+(2+20)+(3+10)+(3+20) = 102
+    sum
+}
+
+// ===== Array fast path: break and continue =====
+
+@test(expected_type = "int", expected_value = "6")
+fn test_for_in_break_exits_early() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    let mut sum = 0;
+    for x in arr {
+        if x == 4 { break; }
+        sum = sum + x;
+    }
+    sum
+}
+
+@test(expected_type = "int", expected_value = "12")
+fn test_for_in_continue_skips_iteration() -> int {
+    let arr = [1, 2, 3, 4, 5];
+    let mut sum = 0;
+    for x in arr {
+        if x == 3 { continue; }
+        sum = sum + x;
+    }
+    sum
+}
+
+@test(expected_type = "int", expected_value = "4")
+fn test_for_in_continue_advances_index() -> int {
+    // The indexed counter MUST advance on continue (else infinite loop).
+    // After visiting all 5 elements, the last visited `i` is 4.
+    let arr = [0, 1, 2, 3, 4];
+    let mut last_i = -1;
+    for i, x in arr {
+        if x == 2 { continue; }
+        last_i = i;
+    }
+    last_i
+}
+
+// ===== Array fast path: box / ref unwrap =====
+
+@test(expected_type = "int", expected_value = "21")
+fn test_for_in_over_box_array() -> int {
+    let arr: box<array<int>> = box([5, 7, 9]);
+    let mut sum = 0;
+    for x in arr {
+        sum = sum + x;
+    }
+    sum
+}
+
+// ===== Array fast path: non-Copy element auto-ref binding =====
+
+struct Tag(pub v: int);
+
+@test(expected_type = "int", expected_value = "6")
+fn test_for_in_non_copy_struct_binds_as_ref() -> int {
+    // `Tag` is not Copy-treated, so `x` is bound as `ref<Tag>` and
+    // `x.v` reads through the ref (mirrors the existing
+    // `let t = ref(self.tabs[i]); t.label` idiom).
+    let arr = [Tag(1), Tag(2), Tag(3)];
+    let mut sum = 0;
+    for x in arr {
+        sum = sum + x.v;
+    }
+    sum
+}
+
+// ===== Iterable proto path: builtin.Range =====
+
+@test(expected_type = "int", expected_value = "10")
+fn test_for_in_range_half_open() -> int {
+    let mut sum = 0;
+    for i in builtin.Range(0, 5) {
+        sum = sum + i;
+    }
+    // 0+1+2+3+4 = 10
+    sum
+}
+
+@test(expected_type = "int", expected_value = "0")
+fn test_for_in_empty_range() -> int {
+    let mut visited = 0;
+    for i in builtin.Range(5, 5) {
+        visited = visited + 1;
+    }
+    for j in builtin.Range(7, 3) {
+        visited = visited + 1;
+    }
+    visited
+}
+
+@test(expected_type = "int", expected_value = "6")
+fn test_for_in_range_incl_includes_endpoint() -> int {
+    let mut sum = 0;
+    for i in builtin.RangeIncl(1, 3) {
+        sum = sum + i;
+    }
+    // 1+2+3 = 6
+    sum
+}
+
+@test(expected_type = "int", expected_value = "333")
+fn test_for_in_indexed_form_over_range() -> int {
+    let mut acc = 0;
+    for idx, x in builtin.Range(10, 13) {
+        // idx ∈ {0,1,2}; x ∈ {10,11,12}
+        acc = acc + idx * 100 + x;
+    }
+    // idx*100: 0+100+200 = 300; x sum: 10+11+12 = 33; total 333
+    acc
+}
+
+@test(expected_type = "int", expected_value = "8")
+fn test_for_in_range_break_and_continue() -> int {
+    let mut sum = 0;
+    for i in builtin.Range(0, 10) {
+        if i == 5 { break; }
+        if i == 2 { continue; }
+        sum = sum + i;
+    }
+    // 0+1+3+4 = 8 (skip 2, stop at 5)
+    sum
+}
+
+@test(expected_type = "int", expected_value = "660")
+fn test_for_in_range_is_reusable() -> int {
+    // Iterating the same `Range` value twice yields the same sequence
+    // because `iter()` returns a fresh `RangeIter`. The Range itself
+    // is immutable: `r.start` is unchanged after both loops.
+    let r = builtin.Range(0, 4);
+    let mut a = 0;
+    for i in r { a = a + i; }
+    let mut b = 0;
+    for j in r { b = b + j; }
+    a * 100 + b * 10 + r.start
+    // a = b = 0+1+2+3 = 6; r.start still 0; → 600 + 60 + 0 = 660
+}
+
+@test(expected_type = "int", expected_value = "-6")
+fn test_for_in_range_with_negative_start() -> int {
+    let mut sum = 0;
+    for i in builtin.Range(-3, 0) {
+        sum = sum + i;
+    }
+    // -3 + -2 + -1 = -6
+    sum
+}
+
+// ===== Iterable proto path: user-defined iterable via structural conformance =====
+
+struct Counter(cur: int, end: int) {
+    pub fn next(box self) -> ?int {
+        if self.cur >= self.end { return null; }
+        let v = self.cur;
+        self.cur = v + 1;
+        return v;
+    }
+}
+
+struct Source(limit: int) {
+    pub fn iter(ref self) -> box<Counter> {
+        box(Counter(0, self.limit))
+    }
+}
+
+@test(expected_type = "int", expected_value = "6")
+fn test_for_in_user_defined_iterable() -> int {
+    // No `[Iterable]` / `[Iterator]` conformance declared — structural
+    // matching of the `iter` / `next` method signatures is sufficient.
+    let s = Source(4);
+    let mut sum = 0;
+    for x in s {
+        sum = sum + x;
+    }
+    // 0+1+2+3 = 6
+    sum
+}
+
+@test(expected_type = "int", expected_value = "10")
+fn test_for_in_user_defined_iterable_with_break() -> int {
+    let s = Source(100);
+    let mut sum = 0;
+    for x in s {
+        if x == 5 { break; }
+        sum = sum + x;
+    }
+    // 0+1+2+3+4 = 10
+    sum
+}
+
+@test(expected_type = "int", expected_value = "8")
+fn test_for_in_user_defined_iterable_with_continue() -> int {
+    let s = Source(5);
+    let mut sum = 0;
+    for x in s {
+        if x == 2 { continue; }
+        sum = sum + x;
+    }
+    // x ∈ {0,1,2,3,4}; skip x==2; sum = 0+1+3+4 = 8.
+    sum
+}
+
+@test(expected_type = "int", expected_value = "9")
+fn test_for_in_user_defined_iterable_indexed_form() -> int {
+    // The proto path also supports the indexed form; `i` is an
+    // external counter maintained by the for-in codegen, not the
+    // iterator's internal cursor.
+    let s = Source(3);
+    let mut acc = 0;
+    for i, x in s {
+        // i ∈ {0,1,2}; x ∈ {0,1,2}
+        acc = acc + i + x * 2;
+    }
+    // i sum: 0+1+2 = 3; x*2 sum: 0+2+4 = 6 → 9.
+    acc
+}

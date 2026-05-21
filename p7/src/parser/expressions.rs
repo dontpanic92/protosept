@@ -178,6 +178,9 @@ impl Parser {
                 TokenType::While => {
                     return self.parse_while_expression();
                 }
+                TokenType::For => {
+                    return self.parse_for_in_expression();
+                }
                 TokenType::Break => {
                     return self.parse_break_expression();
                 }
@@ -534,6 +537,7 @@ impl Parser {
             | TokenType::Import
             | TokenType::If
             | TokenType::While
+            | TokenType::For
             | TokenType::Loop
             | TokenType::Match
             | TokenType::Try
@@ -686,6 +690,37 @@ impl Parser {
             condition: Box::new(condition),
             body: Box::new(body),
             pos: while_pos,
+        })
+    }
+
+    fn parse_for_in_expression(&mut self) -> ParseResult<Expression> {
+        let for_pos = self.consume_expecting(TokenType::For)?;
+        let first_ident = self.parse_identifier()?;
+        let (index_var, value_var) = if self.peek_match(TokenType::Comma) {
+            self.consume(); // consume ','
+            let second_ident = self.parse_identifier()?;
+            if first_ident.name == second_ident.name {
+                return Err(ParseError::UnexpectedToken {
+                    found: format!(
+                        "for-in index and value bindings must have different names (both '{}')",
+                        first_ident.name
+                    ),
+                    pos: SourcePos::at(second_ident.line, second_ident.col),
+                });
+            }
+            (Some(first_ident), second_ident)
+        } else {
+            (None, first_ident)
+        };
+        self.consume_match(TokenType::In)?;
+        let iterable = self.parse_expression()?;
+        let body = self.parse_expression()?;
+        Ok(Expression::ForIn {
+            index_var,
+            value_var,
+            iterable: Box::new(iterable),
+            body: Box::new(body),
+            pos: for_pos,
         })
     }
 

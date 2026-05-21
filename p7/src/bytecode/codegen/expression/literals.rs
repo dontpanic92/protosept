@@ -562,6 +562,10 @@ impl Generator {
             Expression::Loop { body, .. } | Expression::While { body, .. } => {
                 Self::collect_identifiers_recursive(body, names);
             }
+            Expression::ForIn { iterable, body, .. } => {
+                Self::collect_identifiers_recursive(iterable, names);
+                Self::collect_identifiers_recursive(body, names);
+            }
             Expression::Closure { body, .. } => {
                 Self::collect_identifiers_recursive(body, names);
             }

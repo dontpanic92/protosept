@@ -20,6 +20,32 @@ proto Eq {
     fn eq(ref self, other: ref<Eq>) -> bool;
 }
 
+// Marker proto for types whose iteration state and cursor live in a
+// separate iterator value. See `protosept-language.md` §9.5.1.
+//
+// Conformance contract (verified structurally by the compiler at each
+// `for-in` call site, not by the proto signature itself — p7 does not
+// yet support generic protos):
+//
+//     fn iter(ref self) -> box<X>
+//
+// where `X` is some concrete type that itself conforms to `Iterator`
+// (i.e. has `fn next(box self) -> ?T` for some element type `T`).
+//
+// Built-in conforming types: `array<T>`, `Range`, `RangeIncl`. User
+// types may add `[Iterable]` to opt-in explicitly or rely on
+// structural conformance.
+proto Iterable {}
+
+// Marker proto for iterator-cursor types. Conformance contract
+// (verified structurally at each `for-in` call site):
+//
+//     fn next(box self) -> ?T
+//
+// for some element type `T`. `null` signals end-of-iteration; the
+// element type `T` is inferred from the method's return type.
+proto Iterator {}
+
 @builtin()
 pub struct string() {
 
@@ -204,6 +230,49 @@ pub struct HashMap<K: Hash + Eq, V>() {
     // Return all values as an array.
     @intrinsic(name="hashmap.values")
     pub fn values(ref self) -> array<V>;
+}
+
+// ============================================================
+// for-in iteration support (§9.5.1)
+// ============================================================
+//
+// `Range` and `RangeIncl` are immutable value descriptions; iteration
+// state lives in a separate `RangeIter` / `RangeInclIter` returned
+// fresh by each `iter()` call. Iterating the same range twice yields
+// the same sequence twice.
+//
+// Both conform to `Iterable` (marker proto); their iterator types
+// conform to `Iterator`. The compiler verifies the actual `iter`/`next`
+// method signatures structurally at each `for-in` call site.
+
+pub struct[Iterator] RangeIter(pub cur: int, pub end: int) {
+    pub fn next(box self) -> ?int {
+        if self.cur >= self.end { return null; }
+        let v = self.cur;
+        self.cur = v + 1;
+        return v;
+    }
+}
+
+pub struct[Iterable] Range(pub start: int, pub end: int) {
+    pub fn iter(ref self) -> box<RangeIter> {
+        box(RangeIter(self.start, self.end))
+    }
+}
+
+pub struct[Iterator] RangeInclIter(pub cur: int, pub end: int) {
+    pub fn next(box self) -> ?int {
+        if self.cur > self.end { return null; }
+        let v = self.cur;
+        self.cur = v + 1;
+        return v;
+    }
+}
+
+pub struct[Iterable] RangeIncl(pub start: int, pub end: int) {
+    pub fn iter(ref self) -> box<RangeInclIter> {
+        box(RangeInclIter(self.start, self.end))
+    }
 }
 
 // Return the containing directory of the entry script, or null if the script

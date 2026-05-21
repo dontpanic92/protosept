@@ -243,6 +243,18 @@ pub enum Expression {
         pos: (usize, usize),
     },
 
+    // For-in expression: `for x in arr { ... }` or `for i, x in arr { ... }`.
+    // Iterates over an array, binding the element by value when the element
+    // type is Copy-treated, otherwise as `ref<T>`. If `index_var` is present,
+    // it is bound to the 0-based iteration counter.
+    ForIn {
+        index_var: Option<Identifier>,
+        value_var: Identifier,
+        iterable: Box<Expression>,
+        body: Box<Expression>,
+        pos: (usize, usize),
+    },
+
     // Break expression (with optional value for future use)
     Break {
         value: Option<Box<Expression>>,
@@ -432,6 +444,7 @@ impl Expression {
             }
             Expression::Loop { .. } => "loop".to_string(),
             Expression::While { .. } => "while".to_string(),
+            Expression::ForIn { .. } => "for".to_string(),
             Expression::Break { .. } => "break".to_string(),
             Expression::Continue { .. } => "continue".to_string(),
             Expression::TupleLiteral { .. } => "tuple".to_string(),
@@ -452,6 +465,7 @@ impl Expression {
             Expression::Cast { expression, .. } => expression.get_pos(),
             Expression::Loop { pos, .. } => *pos,
             Expression::While { pos, .. } => *pos,
+            Expression::ForIn { pos, .. } => *pos,
             Expression::Break { pos, .. } => *pos,
             Expression::Continue { pos, .. } => *pos,
             Expression::TupleLiteral { pos, .. } => *pos,

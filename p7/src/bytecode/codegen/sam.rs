@@ -411,6 +411,16 @@ fn collect_identifiers_rec(expr: &Expression, names: &mut Vec<InternedString>) {
             collect_identifiers_rec(condition, names);
             collect_identifiers_rec(body, names);
         }
+        Expression::ForIn {
+            index_var: _,
+            value_var: _,
+            iterable,
+            body,
+            ..
+        } => {
+            collect_identifiers_rec(iterable, names);
+            collect_identifiers_rec(body, names);
+        }
         Expression::Closure { body, .. } => collect_identifiers_rec(body, names),
         Expression::Try {
             try_block,
@@ -571,6 +581,19 @@ fn rewrite_captures(expr: Expression, captures: &HashSet<InternedString>) -> Exp
             pos,
         } => Expression::While {
             condition: Box::new(rewrite_captures(*condition, captures)),
+            body: Box::new(rewrite_captures(*body, captures)),
+            pos,
+        },
+        Expression::ForIn {
+            index_var,
+            value_var,
+            iterable,
+            body,
+            pos,
+        } => Expression::ForIn {
+            index_var,
+            value_var,
+            iterable: Box::new(rewrite_captures(*iterable, captures)),
             body: Box::new(rewrite_captures(*body, captures)),
             pos,
         },

@@ -17,18 +17,15 @@ but explicit `*boxed` doesn't. This blocks patterns like `(*boxed)[i]`.
 **Workaround:** `boxed[i]` works directly (compiler special-cases indexing on
 boxed arrays). Method calls also work via auto-borrow.
 
-### 2. No `for` loop with index
-**Impact: MEDIUM** — Every array iteration requires:
-```p7
-var i = 0;
-while i < count {
-    let item = arr[i];
-    // ...
-    i = i + 1;
-}
-```
-An indexed `for` (e.g., `for item in arr { ... }` or `for i, item in arr { ... }`)
-would eliminate most `while` loops and the manual index boilerplate.
+### 2. No `for` loop with index — RESOLVED (array form)
+**Status: shipped (`for x in arr`, `for i, x in arr`).** See the “Iteration”
+section of `protosept-language.md`. The element binding is by value when the
+element type is Copy-treated and `ref<T>` otherwise (matching the existing
+`let t = ref(self.tabs[i]);` idiom). Length is snapshotted at loop entry, so
+mid-loop pushes are not visited. Iterating over a `box<...>`/`ref<...>` array
+unwraps one layer automatically.
+
+Range form (`for i in 0..n`) is still open — see item #6.
 
 ### 3. No type aliases
 **Impact: LOW** — `box<array<string>>` appears 30+ times in function signatures.
@@ -46,9 +43,13 @@ cursor_col = cursor_col + 1;  // instead of cursor_col += 1;
 ```
 Very common pattern in the editor event loop.
 
-### 6. No `for` loop over ranges
-**Impact: MEDIUM** — Counting loops require manual `while` with a counter variable.
-A `for i in 0..n { ... }` range syntax would be cleaner and less error-prone.
+### 6. No `for` loop over ranges — RESOLVED
+**Status: shipped.** `builtin.Range(start, end)` (half-open) and
+`builtin.RangeIncl(start, end)` (closed) are first-class iterables in
+the builtin package; both conform to `Iterable` and produce a fresh
+`Iterator` from `.iter()`. `for i in builtin.Range(0, n) { ... }` is the
+canonical counting loop. The `builtin` module symbol is auto-imported,
+so no explicit `import builtin;` line is needed.
 
 ### 7. No `int.to_string()` / `int.display()` method
 **Impact: LOW** — Cannot convert int to string except via string interpolation
