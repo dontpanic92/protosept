@@ -2854,7 +2854,7 @@ struct Handle;
 
 **Rules for `@builtin()` structs (v1):**
 
-- The struct MUST NOT declare concrete fields in the source. Field declarations are not applicable to `@builtin()` structs.
+- The struct MUST NOT declare concrete fields in the source. Field declarations are not applicable to `@builtin()` structs. This rule is enforced at parse time: declaring fields on a `@builtin()` struct produces a `ParseError::Other` that names both the struct and the `@builtin` attribute.
 - The struct is a nominal type with compiler-defined representation.
 - Construction `Handle(...)` is ERROR unless provided by the compiler via intrinsics or FFI.
 - Field access `h.field` is not applicable (no fields are accessible).

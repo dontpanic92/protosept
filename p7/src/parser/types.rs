@@ -132,8 +132,8 @@ impl Parser {
                         // Handle empty type argument list: identifier<>
                         if self.peek_match(TokenType::GreaterThan) {
                             self.consume(); // consume '>'
-                            return Err(ParseError::UnexpectedToken {
-                                found: "empty type argument list".to_string(),
+                            return Err(ParseError::Other {
+                                message: "empty type argument list".to_string(),
                                 pos: Some(SourcePos {
                                     line: ident.line,
                                     col: ident.col,
@@ -197,8 +197,8 @@ impl Parser {
 
         // Consume the '<'
         if !self.peek_match(TokenType::LessThan) {
-            return Err(ParseError::UnexpectedToken {
-                found: "not <".to_string(),
+            return Err(ParseError::Other {
+                message: "expected '<' to open type arguments".to_string(),
                 pos: None,
             });
         }
@@ -208,8 +208,8 @@ impl Parser {
         // This is not allowed (consistent with parse_type behavior)
         if self.peek_match(TokenType::GreaterThan) {
             self.position = saved_pos;
-            return Err(ParseError::UnexpectedToken {
-                found: "empty type argument list".to_string(),
+            return Err(ParseError::Other {
+                message: "empty type argument list".to_string(),
                 pos: None,
             });
         }
@@ -225,8 +225,8 @@ impl Parser {
                     // Failed to parse type - this might be a comparison operator
                     // Restore position and fail gracefully
                     self.position = saved_pos;
-                    return Err(ParseError::UnexpectedToken {
-                        found: "not a type argument".to_string(),
+                    return Err(ParseError::Other {
+                        message: "expected a type argument".to_string(),
                         pos: None,
                     });
                 }
@@ -242,8 +242,8 @@ impl Parser {
         // Must end with '>'
         if !self.peek_match(TokenType::GreaterThan) {
             self.position = saved_pos;
-            return Err(ParseError::UnexpectedToken {
-                found: "expected '>' to close type arguments".to_string(),
+            return Err(ParseError::Other {
+                message: "expected '>' to close type arguments".to_string(),
                 pos: None,
             });
         }
@@ -279,8 +279,8 @@ impl Parser {
                     let bound = self.parse_identifier()?;
                     // Check for duplicate bounds (spec §20.5: listing same proto twice is ERROR)
                     if bounds.iter().any(|b| b.name == bound.name) {
-                        return Err(ParseError::UnexpectedToken {
-                            found: format!(
+                        return Err(ParseError::Other {
+                            message: format!(
                                 "duplicate bound '{}' on type parameter '{}'",
                                 bound.name, name.name
                             ),

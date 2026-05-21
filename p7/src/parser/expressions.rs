@@ -301,8 +301,8 @@ impl Parser {
 
     fn parse_interpolated_expression(&mut self, source: String) -> ParseResult<Expression> {
         if source.trim().is_empty() {
-            return Err(ParseError::UnexpectedToken {
-                found: "empty interpolation expression".to_string(),
+            return Err(ParseError::Other {
+                message: "empty interpolation expression".to_string(),
                 pos: None,
             });
         }
@@ -320,8 +320,8 @@ impl Parser {
         }
 
         if let Some(err) = lexer.errors.first() {
-            return Err(ParseError::UnexpectedToken {
-                found: format!("interpolated expression lexer error: {}", err),
+            return Err(ParseError::Other {
+                message: format!("interpolated expression lexer error: {}", err),
                 pos: None,
             });
         }
@@ -700,8 +700,8 @@ impl Parser {
             self.consume(); // consume ','
             let second_ident = self.parse_identifier()?;
             if first_ident.name == second_ident.name {
-                return Err(ParseError::UnexpectedToken {
-                    found: format!(
+                return Err(ParseError::Other {
+                    message: format!(
                         "for-in index and value bindings must have different names (both '{}')",
                         first_ident.name
                     ),

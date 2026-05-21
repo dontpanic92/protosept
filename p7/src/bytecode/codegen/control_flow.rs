@@ -12,13 +12,11 @@ use super::Generator;
 #[derive(Clone)]
 pub(crate) struct LoopContext {
     pub(crate) break_patches: Vec<u32>, // Addresses of break jumps to patch
-    /// Continue target: `Some(addr)` for loops where the target is known when
-    /// the LoopContext is pushed (e.g. `while`/`loop`); `None` for loops where
-    /// the target must be filled in *after* the body has been generated (e.g.
-    /// `for-in`, which jumps to the increment block, not the condition check).
-    pub(crate) continue_target: Option<u32>,
-    /// Pending continue jumps to be patched at `finalize_loop_context` when
-    /// `continue_target` was `None` at the point each `continue;` was emitted.
+    /// Pending `continue` jumps. Every `continue;` emits a placeholder
+    /// `jmp(0)` and records the patch address here. Each loop generator is
+    /// responsible for calling `finalize_continue_patches_to(target)` with
+    /// its chosen continue target (e.g. `loop_start` for `loop`/`while`, or
+    /// the increment block for `for-in`) before `finalize_loop_context`.
     pub(crate) continue_patches: Vec<u32>,
 }
 
@@ -28,12 +26,12 @@ impl Generator {
 
         self.loop_context_stack.push(LoopContext {
             break_patches: Vec::new(),
-            continue_target: Some(loop_start),
             continue_patches: Vec::new(),
         });
 
         self.generate_expression(body)?;
 
+        self.finalize_continue_patches_to(loop_start);
         self.builder.jmp(loop_start);
 
         self.finalize_loop_context();
@@ -51,7 +49,6 @@ impl Generator {
 
         self.loop_context_stack.push(LoopContext {
             break_patches: Vec::new(),
-            continue_target: Some(loop_start),
             continue_patches: Vec::new(),
         });
 
@@ -64,6 +61,7 @@ impl Generator {
 
         self.generate_expression(body)?;
 
+        self.finalize_continue_patches_to(loop_start);
         self.builder.jmp(loop_start);
 
         let loop_end = self.builder.next_address();
@@ -111,34 +109,38 @@ impl Generator {
             )));
         }
 
-        match self.loop_context_stack.last().unwrap().continue_target {
-            Some(target) => {
-                self.builder.jmp(target);
-            }
-            None => {
-                let patch_addr = self.builder.next_address();
-                self.builder.jmp(0);
-                self.loop_context_stack
-                    .last_mut()
-                    .unwrap()
-                    .continue_patches
-                    .push(patch_addr);
-            }
-        }
+        let patch_addr = self.builder.next_address();
+        self.builder.jmp(0);
+        self.loop_context_stack
+            .last_mut()
+            .unwrap()
+            .continue_patches
+            .push(patch_addr);
 
         Ok(Type::Primitive(PrimitiveType::Unit))
     }
 
-    /// Patches break + continue statements and cleans up loop context
+    /// Drain pending `continue` patches on the top `LoopContext` and point
+    /// them at `target`. Every loop generator must call this once, with its
+    /// chosen continue target, before `finalize_loop_context`.
+    fn finalize_continue_patches_to(&mut self, target: u32) {
+        let patches = std::mem::take(
+            &mut self.loop_context_stack.last_mut().unwrap().continue_patches,
+        );
+        for addr in patches {
+            self.builder.patch_jump_address(addr, target);
+        }
+    }
+
+    /// Patches break statements and cleans up loop context. The caller is
+    /// expected to have already drained `continue_patches` via
+    /// `finalize_continue_patches_to`; any leftovers indicate a codegen bug.
     fn finalize_loop_context(&mut self) {
         let loop_end = self.builder.next_address();
         if let Some(ctx) = self.loop_context_stack.pop() {
             for break_addr in &ctx.break_patches {
                 self.builder.patch_jump_address(*break_addr, loop_end);
             }
-            // `continue_patches` will have been drained by `finalize_continue_patches_to`
-            // before this function is called for the deferred-target case; any
-            // remaining entries here would be a bug.
             debug_assert!(
                 ctx.continue_patches.is_empty(),
                 "unresolved continue patches at loop finalization"
@@ -311,7 +313,6 @@ impl Generator {
         let loop_start = self.builder.next_address();
         self.loop_context_stack.push(LoopContext {
             break_patches: Vec::new(),
-            continue_target: None,
             continue_patches: Vec::new(),
         });
 
@@ -357,13 +358,7 @@ impl Generator {
 
         // Increment block — the continue target.
         let inc_addr = self.builder.next_address();
-        let pending_continues = std::mem::take(
-            &mut self.loop_context_stack.last_mut().unwrap().continue_patches,
-        );
-        for addr in pending_continues {
-            self.builder.patch_jump_address(addr, inc_addr);
-        }
-        self.loop_context_stack.last_mut().unwrap().continue_target = Some(inc_addr);
+        self.finalize_continue_patches_to(inc_addr);
 
         self.builder.ldvar(i_var_id);
         self.builder.ldi(1);
@@ -533,7 +528,6 @@ impl Generator {
         let loop_start = self.builder.next_address();
         self.loop_context_stack.push(LoopContext {
             break_patches: Vec::new(),
-            continue_target: None,
             continue_patches: Vec::new(),
         });
 
@@ -541,13 +535,7 @@ impl Generator {
 
         // Increment block — continue target.
         let inc_addr = self.builder.next_address();
-        let pending_continues = std::mem::take(
-            &mut self.loop_context_stack.last_mut().unwrap().continue_patches,
-        );
-        for addr in pending_continues {
-            self.builder.patch_jump_address(addr, inc_addr);
-        }
-        self.loop_context_stack.last_mut().unwrap().continue_target = Some(inc_addr);
+        self.finalize_continue_patches_to(inc_addr);
 
         if has_index {
             // $for_idx_N = $for_idx_N + 1

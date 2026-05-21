@@ -373,8 +373,8 @@ impl Parser {
         match self.peek().map(|t| t.token_type.clone()) {
             Some(TokenType::Import) => {
                 if is_pub {
-                    return Err(ParseError::UnexpectedToken {
-                        found: "pub keyword on import statement".to_string(),
+                    return Err(ParseError::Other {
+                        message: "`pub` is not allowed on import statements".to_string(),
                         pos: self.peek().map(|t| SourcePos {
                             line: t.line,
                             col: t.col,
@@ -383,8 +383,8 @@ impl Parser {
                     });
                 }
                 if !attributes.is_empty() {
-                    return Err(ParseError::UnexpectedToken {
-                        found: "attributes on import statement".to_string(),
+                    return Err(ParseError::Other {
+                        message: "attributes are not allowed on import statements".to_string(),
                         pos: Some(SourcePos {
                             line: attributes[0].name.line,
                             col: attributes[0].name.col,
@@ -403,8 +403,8 @@ impl Parser {
             // Some(TokenType::If) => self.parse_if_expression().map(Statement::Expression),
             Some(TokenType::Return) => {
                 if is_pub {
-                    return Err(ParseError::UnexpectedToken {
-                        found: "pub keyword on return statement".to_string(),
+                    return Err(ParseError::Other {
+                        message: "`pub` is not allowed on return statements".to_string(),
                         pos: self.peek().map(|t| SourcePos {
                             line: t.line,
                             col: t.col,
@@ -413,8 +413,8 @@ impl Parser {
                     });
                 }
                 if !attributes.is_empty() {
-                    return Err(ParseError::UnexpectedToken {
-                        found: "attributes on return statement".to_string(),
+                    return Err(ParseError::Other {
+                        message: "attributes are not allowed on return statements".to_string(),
                         pos: Some(SourcePos {
                             line: attributes[0].name.line,
                             col: attributes[0].name.col,
@@ -453,8 +453,8 @@ impl Parser {
             }
             Some(TokenType::Throw) => {
                 if is_pub {
-                    return Err(ParseError::UnexpectedToken {
-                        found: "pub keyword on throw statement".to_string(),
+                    return Err(ParseError::Other {
+                        message: "`pub` is not allowed on throw statements".to_string(),
                         pos: self.peek().map(|t| SourcePos {
                             line: t.line,
                             col: t.col,
@@ -463,8 +463,8 @@ impl Parser {
                     });
                 }
                 if !attributes.is_empty() {
-                    return Err(ParseError::UnexpectedToken {
-                        found: "attributes on throw statement".to_string(),
+                    return Err(ParseError::Other {
+                        message: "attributes are not allowed on throw statements".to_string(),
                         pos: Some(SourcePos {
                             line: attributes[0].name.line,
                             col: attributes[0].name.col,
@@ -479,8 +479,8 @@ impl Parser {
             }
             Some(TokenType::Let) => {
                 if !attributes.is_empty() {
-                    return Err(ParseError::UnexpectedToken {
-                        found: "attributes on let statement".to_string(),
+                    return Err(ParseError::Other {
+                        message: "attributes are not allowed on let statements".to_string(),
                         pos: Some(SourcePos {
                             line: attributes[0].name.line,
                             col: attributes[0].name.col,
@@ -580,8 +580,8 @@ impl Parser {
             }
             _ => {
                 if is_pub {
-                    return Err(ParseError::UnexpectedToken {
-                        found: "pub keyword on expression statement".to_string(),
+                    return Err(ParseError::Other {
+                        message: "`pub` is not allowed on expression statements".to_string(),
                         pos: self.peek().map(|t| SourcePos {
                             line: t.line,
                             col: t.col,
@@ -590,8 +590,8 @@ impl Parser {
                     });
                 }
                 if !attributes.is_empty() {
-                    return Err(ParseError::UnexpectedToken {
-                        found: "attributes on expression statement".to_string(),
+                    return Err(ParseError::Other {
+                        message: "attributes are not allowed on expression statements".to_string(),
                         pos: Some(SourcePos {
                             line: attributes[0].name.line,
                             col: attributes[0].name.col,

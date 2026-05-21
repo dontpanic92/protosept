@@ -432,6 +432,31 @@ impl Parser {
             vec![]
         };
 
+        // Spec §12.6: `@builtin()` structs MUST NOT declare concrete fields.
+        // Catch this at parse time so authors get a clear, attribute-aware
+        // diagnostic instead of the misleading "expected 0 args, N provided"
+        // error that fires later at the constructor call site.
+        if !fields.is_empty()
+            && attributes
+                .iter()
+                .any(|a| a.name.name.as_str() == "builtin")
+        {
+            return Err(ParseError::Other {
+                message: format!(
+                    "@builtin() struct '{}' must not declare fields; \
+                     @builtin() types have compiler-defined representation. \
+                     Remove the field list, or drop the @builtin() attribute \
+                     to make it a regular struct.",
+                    name.name.as_str()
+                ),
+                pos: Some(SourcePos {
+                    line: name.line,
+                    col: name.col,
+                    module: None,
+                }),
+            });
+        }
+
         match_token! {
             self.peek(),
             TokenType::Semicolon => {

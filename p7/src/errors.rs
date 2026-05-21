@@ -93,6 +93,10 @@ pub enum ParseError {
     UnexpectedEof {
         pos: Option<SourcePos>,
     },
+    Other {
+        message: String,
+        pos: Option<SourcePos>,
+    },
 }
 
 impl std::error::Error for ParseError {}
@@ -113,6 +117,9 @@ impl fmt::Display for ParseError {
             ),
             ParseError::UnexpectedEof { pos } => {
                 format_error_with_pos!("Unexpected end of file", pos)
+            }
+            ParseError::Other { message, pos } => {
+                format_error_with_pos!(message.as_str(), pos)
             }
         };
         write!(f, "{}", msg)
