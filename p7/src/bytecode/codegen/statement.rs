@@ -593,7 +593,41 @@ impl Generator {
         values: Vec<EnumVariant>,
         methods: Vec<StructMethod>,
     ) -> SaResult<Type> {
-        Self::validate_no_intrinsic_or_foreign_attr(&attributes, "enum")?;
+        self.resolve_enum_shape(
+            type_id,
+            is_pub,
+            &name,
+            &attributes,
+            &conformance,
+            &type_parameters,
+            values,
+        )?;
+        self.register_enum_methods(type_id, &type_parameters, &methods)?;
+        self.generate_enum_method_bodies_and_check_conformance(
+            type_id,
+            &name,
+            &type_parameters,
+            methods,
+        )?;
+        Ok(Type::Primitive(PrimitiveType::Unit))
+    }
+
+    /// Pass 1b-shape: resolve enum variants, conformance list, and write
+    /// the type definition to the symbol table. No method registration or
+    /// body generation. Required as the first sub-pass before any method
+    /// signature registration so that variant payloads referencing later
+    /// types resolve correctly.
+    pub(super) fn resolve_enum_shape(
+        &mut self,
+        type_id: TypeId,
+        is_pub: bool,
+        name: &Identifier,
+        attributes: &[Attribute],
+        conformance: &[Identifier],
+        type_parameters: &[TypeParameter],
+        values: Vec<EnumVariant>,
+    ) -> SaResult<()> {
+        Self::validate_no_intrinsic_or_foreign_attr(attributes, "enum")?;
 
         let symbol_id = self
             .symbol_table
@@ -641,7 +675,7 @@ impl Generator {
             (resolved_variants, None)
         };
 
-        let conforming_to = self.resolve_conformances(&conformance)?;
+        let conforming_to = self.resolve_conformances(conformance)?;
 
         let type_param_names: Vec<InternedString> = type_parameters
             .iter()
@@ -654,46 +688,73 @@ impl Generator {
             .collect();
 
         let ty = Enum {
-            qualified_name: qualified_name.clone(),
+            qualified_name,
             is_pub,
             variants,
-            attributes: attributes.clone(),
-            type_parameters: type_param_names.clone(),
-            type_param_bounds: type_param_bounds_list.clone(),
+            attributes: attributes.to_vec(),
+            type_parameters: type_param_names,
+            type_param_bounds: type_param_bounds_list,
             generic_variant_types,
             monomorphization: None,
-            conforming_to: conforming_to.clone(),
+            conforming_to,
             methods: Vec::new(),
             source_module: None,
         };
         self.symbol_table
             .update_type(type_id, TypeDefinition::Enum(ty));
 
-        let prev_enclosing_type_params =
-            std::mem::replace(&mut self.enclosing_type_params, type_param_names);
-        let prev_enclosing_type_param_bounds = std::mem::replace(
-            &mut self.enclosing_type_param_bounds,
-            type_param_bounds_list,
-        );
-
-        let mut method_decls = Vec::new();
-        for method in methods {
-            self.register_function_signature(&method.function)?;
-            method_decls.push(method.function);
-        }
-        for decl in method_decls {
-            self.generate_function_body(decl)?;
-        }
-
-        self.enclosing_type_params = prev_enclosing_type_params;
-        self.enclosing_type_param_bounds = prev_enclosing_type_param_bounds;
-
-        self.check_struct_conformance(type_id, &conforming_to, name.line, name.col)?;
-
-        let _ = is_pub;
-
         self.symbol_table.pop_symbol();
-        Ok(Type::Primitive(PrimitiveType::Unit))
+        Ok(())
+    }
+
+    /// Pass 1b-method-sigs: register every enum method's signature so that
+    /// method-body generation in any same-module type can resolve qualified
+    /// calls regardless of declaration order. Must run after every type's
+    /// shape has been resolved.
+    pub(super) fn register_enum_methods(
+        &mut self,
+        type_id: TypeId,
+        type_parameters: &[TypeParameter],
+        methods: &[StructMethod],
+    ) -> SaResult<()> {
+        self.with_type_method_scope(type_id, type_parameters, |this| {
+            for method in methods {
+                this.register_function_signature(&method.function)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Pass 1b-method-bodies: generate each enum method body and then run
+    /// the conformance check (which only requires registered signatures,
+    /// not bodies).
+    pub(super) fn generate_enum_method_bodies_and_check_conformance(
+        &mut self,
+        type_id: TypeId,
+        name: &Identifier,
+        type_parameters: &[TypeParameter],
+        methods: Vec<StructMethod>,
+    ) -> SaResult<()> {
+        self.with_type_method_scope(type_id, type_parameters, |this| {
+            for method in methods {
+                this.generate_function_body(method.function)?;
+            }
+            Ok(())
+        })?;
+        let conforming_to = match self.symbol_table.get_type(type_id) {
+            TypeDefinition::Enum(e) => e.conforming_to.clone(),
+            _ => Vec::new(),
+        };
+        let symbol_id = self
+            .symbol_table
+            .find_symbol_for_type(type_id)
+            .ok_or_else(|| {
+                SemanticError::Other(format!("Type symbol not found for enum '{}'", name.name))
+            })?;
+        self.symbol_table.push_existing_symbol(symbol_id);
+        let result = self.check_struct_conformance(type_id, &conforming_to, name.line, name.col);
+        self.symbol_table.pop_symbol();
+        result
     }
 
     pub(super) fn generate_struct_decl(
@@ -790,7 +851,41 @@ impl Generator {
         fields: Vec<StructField>,
         methods: Vec<StructMethod>,
     ) -> SaResult<Type> {
-        Self::validate_no_intrinsic_or_foreign_attr(&attributes, "struct")?;
+        self.resolve_struct_shape(
+            type_id,
+            is_pub,
+            &name,
+            &attributes,
+            &conformance,
+            &type_parameters,
+            &fields,
+        )?;
+        self.register_struct_methods(type_id, &type_parameters, &methods)?;
+        self.generate_struct_method_bodies_and_check_conformance(
+            type_id,
+            &name,
+            &type_parameters,
+            methods,
+        )?;
+        Ok(Type::Primitive(PrimitiveType::Unit))
+    }
+
+    /// Pass 1b-shape: resolve struct fields and conformance, then write the
+    /// final type definition (with empty `methods`) to the symbol table.
+    /// Method registration and body generation are split off so that all
+    /// same-module types reach this point before any of their method
+    /// bodies are lowered.
+    pub(super) fn resolve_struct_shape(
+        &mut self,
+        type_id: TypeId,
+        is_pub: bool,
+        name: &Identifier,
+        attributes: &[Attribute],
+        conformance: &[Identifier],
+        type_parameters: &[TypeParameter],
+        fields: &[StructField],
+    ) -> SaResult<()> {
+        Self::validate_no_intrinsic_or_foreign_attr(attributes, "struct")?;
 
         let symbol_id = self
             .symbol_table
@@ -886,51 +981,116 @@ impl Generator {
         };
 
         let field_defaults = fields.iter().map(|f| f.default_value.clone()).collect();
-        let conforming_to = self.resolve_conformances(&conformance)?;
+        let conforming_to = self.resolve_conformances(conformance)?;
 
         let ty = Struct {
-            qualified_name: qualified_name.clone(),
+            qualified_name,
             is_pub,
             fields: fields_with_types,
             field_visibility,
             field_defaults,
-            attributes: attributes.clone(),
-            type_parameters: type_param_names.clone(),
-            type_param_bounds: type_param_bounds_list.clone(),
+            attributes: attributes.to_vec(),
+            type_parameters: type_param_names,
+            type_param_bounds: type_param_bounds_list,
             generic_field_types,
             monomorphization: None,
-            conforming_to: conforming_to.clone(),
+            conforming_to,
             methods: Vec::new(),
             source_module: None,
         };
         self.symbol_table
             .update_type(type_id, TypeDefinition::Struct(ty));
 
-        let prev_enclosing_type_params =
-            std::mem::replace(&mut self.enclosing_type_params, type_param_names);
-        let prev_enclosing_type_param_bounds = std::mem::replace(
+        self.symbol_table.pop_symbol();
+        Ok(())
+    }
+
+    /// Pass 1b-method-sigs: register every struct method's signature.
+    pub(super) fn register_struct_methods(
+        &mut self,
+        type_id: TypeId,
+        type_parameters: &[TypeParameter],
+        methods: &[StructMethod],
+    ) -> SaResult<()> {
+        self.with_type_method_scope(type_id, type_parameters, |this| {
+            for method in methods {
+                this.register_function_signature(&method.function)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Pass 1b-method-bodies: generate each struct method body, then run
+    /// the conformance check (which only consults signatures via
+    /// `find_type_method`, not bodies).
+    pub(super) fn generate_struct_method_bodies_and_check_conformance(
+        &mut self,
+        type_id: TypeId,
+        name: &Identifier,
+        type_parameters: &[TypeParameter],
+        methods: Vec<StructMethod>,
+    ) -> SaResult<()> {
+        self.with_type_method_scope(type_id, type_parameters, |this| {
+            for method in methods {
+                this.generate_function_body(method.function)?;
+            }
+            Ok(())
+        })?;
+        let conforming_to = match self.symbol_table.get_type(type_id) {
+            TypeDefinition::Struct(s) => s.conforming_to.clone(),
+            _ => Vec::new(),
+        };
+        let symbol_id = self
+            .symbol_table
+            .find_symbol_for_type(type_id)
+            .ok_or_else(|| {
+                SemanticError::Other(format!("Type symbol not found for struct '{}'", name.name))
+            })?;
+        self.symbol_table.push_existing_symbol(symbol_id);
+        let result = self.check_struct_conformance(type_id, &conforming_to, name.line, name.col);
+        self.symbol_table.pop_symbol();
+        result
+    }
+
+    /// Push the type's symbol onto the chain and swap enclosing type
+    /// parameters for the duration of `f`, then restore. Shared helper
+    /// for the method-sig and method-body sub-passes.
+    fn with_type_method_scope<R>(
+        &mut self,
+        type_id: TypeId,
+        type_parameters: &[TypeParameter],
+        f: impl FnOnce(&mut Self) -> SaResult<R>,
+    ) -> SaResult<R> {
+        let symbol_id = self
+            .symbol_table
+            .find_symbol_for_type(type_id)
+            .ok_or_else(|| {
+                SemanticError::Other(format!("Type symbol not found for type id {}", type_id))
+            })?;
+        self.symbol_table.push_existing_symbol(symbol_id);
+
+        let type_param_names: Vec<InternedString> = type_parameters
+            .iter()
+            .map(|tp| tp.name.name.clone())
+            .collect();
+        let type_param_bounds_list: Vec<Vec<InternedString>> = type_parameters
+            .iter()
+            .map(|tp| tp.bounds.iter().map(|b| b.name.clone()).collect())
+            .collect();
+
+        let prev_p = std::mem::replace(&mut self.enclosing_type_params, type_param_names);
+        let prev_b = std::mem::replace(
             &mut self.enclosing_type_param_bounds,
             type_param_bounds_list,
         );
 
-        let mut method_decls = Vec::new();
-        for method in methods {
-            self.register_function_signature(&method.function)?;
-            method_decls.push(method.function);
-        }
-        for decl in method_decls {
-            self.generate_function_body(decl)?;
-        }
+        let result = f(self);
 
-        self.enclosing_type_params = prev_enclosing_type_params;
-        self.enclosing_type_param_bounds = prev_enclosing_type_param_bounds;
-
-        self.check_struct_conformance(type_id, &conforming_to, name.line, name.col)?;
-
-        let _ = is_pub;
-
+        self.enclosing_type_params = prev_p;
+        self.enclosing_type_param_bounds = prev_b;
         self.symbol_table.pop_symbol();
-        Ok(Type::Primitive(PrimitiveType::Unit))
+
+        result
     }
 
     pub(super) fn generate_proto_decl(

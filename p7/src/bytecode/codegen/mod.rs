@@ -2,7 +2,10 @@ use core::panic;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
-    ast::{Expression, FunctionDeclaration, Statement},
+    ast::{
+        Attribute, EnumVariant, Expression, FunctionDeclaration, Identifier, ProtoMethod,
+        Statement, StructField, StructMethod, TypeParameter,
+    },
     bytecode::builder::ByteCodeBuilder,
     intern::InternedString,
     semantic::{
@@ -40,6 +43,43 @@ mod type_check;
 use crate::errors::{SemanticError, SourcePos};
 
 pub type SaResult<T> = Result<T, SemanticError>;
+
+/// State carried between the three Pass 1b sub-passes (shape resolution,
+/// method-signature registration, and method-body generation).
+///
+/// Splitting the per-type data this way lets every same-module type reach
+/// the method-body sub-pass with full visibility into every other type's
+/// shape and method signatures, so constructors and cross-type method
+/// calls can be lowered regardless of declaration order.
+enum PendingType {
+    Struct {
+        type_id: TypeId,
+        is_pub: bool,
+        name: Identifier,
+        attributes: Vec<Attribute>,
+        conformance: Vec<Identifier>,
+        type_parameters: Vec<TypeParameter>,
+        fields: Vec<StructField>,
+        methods: Vec<StructMethod>,
+    },
+    Enum {
+        type_id: TypeId,
+        is_pub: bool,
+        name: Identifier,
+        attributes: Vec<Attribute>,
+        conformance: Vec<Identifier>,
+        type_parameters: Vec<TypeParameter>,
+        values: Vec<EnumVariant>,
+        methods: Vec<StructMethod>,
+    },
+    Proto {
+        type_id: TypeId,
+        is_pub: bool,
+        name: Identifier,
+        attributes: Vec<Attribute>,
+        methods: Vec<ProtoMethod>,
+    },
+}
 
 // Synthetic position values for compiler-generated code (e.g., monomorphization)
 pub(super) const SYNTHETIC_LINE: usize = 0;
@@ -222,7 +262,7 @@ impl Generator {
         // Type names are reserved before resolving fields/variants/method signatures so recursive
         // and mutually-recursive declarations can refer to each other.
         let mut function_decls = Vec::new();
-        let mut pending_type_decls: Vec<(TypeId, Statement)> = Vec::new();
+        let mut pending_type_decls: Vec<PendingType> = Vec::new();
         for statement in declarations {
             match statement {
                 Statement::Import { module_path, alias } => {
@@ -244,18 +284,16 @@ impl Generator {
                         conformance.clone(),
                         type_parameters.clone(),
                     )?;
-                    pending_type_decls.push((
+                    pending_type_decls.push(PendingType::Struct {
                         type_id,
-                        Statement::StructDeclaration {
-                            is_pub,
-                            name,
-                            attributes,
-                            conformance,
-                            type_parameters,
-                            fields,
-                            methods,
-                        },
-                    ));
+                        is_pub,
+                        name,
+                        attributes,
+                        conformance,
+                        type_parameters,
+                        fields,
+                        methods,
+                    });
                 }
                 Statement::EnumDeclaration {
                     is_pub,
@@ -273,18 +311,16 @@ impl Generator {
                         conformance.clone(),
                         type_parameters.clone(),
                     )?;
-                    pending_type_decls.push((
+                    pending_type_decls.push(PendingType::Enum {
                         type_id,
-                        Statement::EnumDeclaration {
-                            is_pub,
-                            name,
-                            attributes,
-                            conformance,
-                            type_parameters,
-                            values,
-                            methods,
-                        },
-                    ));
+                        is_pub,
+                        name,
+                        attributes,
+                        conformance,
+                        type_parameters,
+                        values,
+                        methods,
+                    });
                 }
                 Statement::ProtoDeclaration {
                     is_pub,
@@ -294,15 +330,13 @@ impl Generator {
                 } => {
                     let type_id =
                         self.register_proto_decl(is_pub, name.clone(), attributes.clone())?;
-                    pending_type_decls.push((
+                    pending_type_decls.push(PendingType::Proto {
                         type_id,
-                        Statement::ProtoDeclaration {
-                            is_pub,
-                            name,
-                            attributes,
-                            methods,
-                        },
-                    ));
+                        is_pub,
+                        name,
+                        attributes,
+                        methods,
+                    });
                 }
                 Statement::FunctionDeclaration(decl) => {
                     function_decls.push(decl);
@@ -337,58 +371,145 @@ impl Generator {
             }
         }
 
-        // Pass 1b: Resolve type fields/variants/proto methods and generate associated methods.
-        for (type_id, statement) in pending_type_decls {
-            match statement {
-                Statement::StructDeclaration {
+        // Pass 1b is split into three sub-passes so forward references between
+        // same-module struct/enum constructors and method calls resolve
+        // regardless of declaration order:
+        //
+        //   1b-shape:        resolve fields / variants / proto methods and
+        //                    write the final shape (with empty `methods`) to
+        //                    the symbol table.
+        //   1b-method-sigs:  register every struct/enum method signature.
+        //   1b-method-bodies: generate every struct/enum method body, then
+        //                    run conformance checking (which queries
+        //                    signatures via `find_type_method`, not bodies).
+        for pending in &pending_type_decls {
+            match pending {
+                PendingType::Struct {
+                    type_id,
                     is_pub,
                     name,
                     attributes,
                     conformance,
                     type_parameters,
                     fields,
-                    methods,
+                    ..
                 } => {
-                    self.resolve_struct_decl(
-                        type_id,
-                        is_pub,
+                    self.resolve_struct_shape(
+                        *type_id,
+                        *is_pub,
                         name,
                         attributes,
                         conformance,
                         type_parameters,
                         fields,
-                        methods,
                     )?;
                 }
-                Statement::EnumDeclaration {
-                    is_pub,
+                PendingType::Enum { .. } | PendingType::Proto { .. } => {}
+            }
+        }
+        // Resolve enums after structs so enum variant payloads referencing
+        // struct types see them fully shape-resolved. Resolve protos last so
+        // any synthesized foreign carrier struct lands after user types.
+        for pending in &mut pending_type_decls {
+            if let PendingType::Enum {
+                type_id,
+                is_pub,
+                name,
+                attributes,
+                conformance,
+                type_parameters,
+                values,
+                ..
+            } = pending
+            {
+                self.resolve_enum_shape(
+                    *type_id,
+                    *is_pub,
                     name,
                     attributes,
                     conformance,
                     type_parameters,
-                    values,
+                    std::mem::take(values),
+                )?;
+            }
+        }
+        for pending in &mut pending_type_decls {
+            if let PendingType::Proto {
+                type_id,
+                is_pub,
+                name,
+                attributes,
+                methods,
+            } = pending
+            {
+                self.resolve_proto_decl(
+                    *type_id,
+                    *is_pub,
+                    name.clone(),
+                    std::mem::take(attributes),
+                    std::mem::take(methods),
+                )?;
+            }
+        }
+
+        // Pass 1b-method-sigs: every type's shape is now visible, so method
+        // signatures can refer to any same-module type, and qualified
+        // cross-type calls in method bodies will resolve in the next pass.
+        for pending in &pending_type_decls {
+            match pending {
+                PendingType::Struct {
+                    type_id,
+                    type_parameters,
                     methods,
+                    ..
                 } => {
-                    self.resolve_enum_decl(
+                    self.register_struct_methods(*type_id, type_parameters, methods)?;
+                }
+                PendingType::Enum {
+                    type_id,
+                    type_parameters,
+                    methods,
+                    ..
+                } => {
+                    self.register_enum_methods(*type_id, type_parameters, methods)?;
+                }
+                PendingType::Proto { .. } => {}
+            }
+        }
+
+        // Pass 1b-method-bodies: every method signature is registered, so
+        // bodies can construct or call into any same-module type freely.
+        for pending in pending_type_decls {
+            match pending {
+                PendingType::Struct {
+                    type_id,
+                    name,
+                    type_parameters,
+                    methods,
+                    ..
+                } => {
+                    self.generate_struct_method_bodies_and_check_conformance(
                         type_id,
-                        is_pub,
-                        name,
-                        attributes,
-                        conformance,
-                        type_parameters,
-                        values,
+                        &name,
+                        &type_parameters,
                         methods,
                     )?;
                 }
-                Statement::ProtoDeclaration {
-                    is_pub,
+                PendingType::Enum {
+                    type_id,
                     name,
-                    attributes,
+                    type_parameters,
                     methods,
+                    ..
                 } => {
-                    self.resolve_proto_decl(type_id, is_pub, name, attributes, methods)?;
+                    self.generate_enum_method_bodies_and_check_conformance(
+                        type_id,
+                        &name,
+                        &type_parameters,
+                        methods,
+                    )?;
                 }
-                _ => unreachable!(),
+                PendingType::Proto { .. } => {}
             }
         }
         // Pass 1c: Register module-level binding signatures (type, mutability, visibility)
