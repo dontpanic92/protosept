@@ -236,25 +236,80 @@ fn main() -> int {
 
 #[test]
 fn for_in_user_defined_iterable_explicit_conformance_with_qualified_proto() {
-    // p7 today does not resolve `struct[Iterator]` (or `[builtin.Iterator]`)
-    // in the conformance list against protos from the builtin module —
-    // conformance-name resolution happens before the cross-module type
-    // table is consulted. Until that gap is closed, authors who want
-    // explicit-conformance opt-in declare the proto locally and dispatch
-    // continues to work via structural conformance (covered by the test
-    // above). This test documents the current limitation behaviourally
-    // by asserting the parse-time error remains observable.
+    // Authors opt in to the iteration protocol explicitly by listing
+    // the proto via its qualified path: `[builtin.Iterable]` /
+    // `[builtin.Iterator]`. The compiler resolves the qualified name
+    // through the standard cross-module type lookup; structural
+    // conformance is still enforced at the `for-in` call site.
     let src = r#"
-import builtin;
-
-struct[Iterator] Counter(cur: int, end: int) {
-    pub fn next(box self) -> ?int { return null; }
+struct[builtin.Iterator] Counter(cur: int, end: int) {
+    pub fn next(box self) -> ?int {
+        if self.cur >= self.end { return null; }
+        let v = self.cur;
+        self.cur = v + 1;
+        return v;
+    }
 }
 
-fn main() -> int { 0 }
+struct[builtin.Iterable] Source(limit: int) {
+    pub fn iter(ref self) -> box<Counter> {
+        box(Counter(0, self.limit))
+    }
+}
+
+fn main() -> int {
+    let s = Source(4);
+    let mut sum = 0;
+    for x in s {
+        sum = sum + x;
+    }
+    sum
+}
 "#;
-    let result = p7::compile(src.to_string());
-    assert!(result.is_err(), "explicit conformance to builtin.Iterator should fail until cross-module proto resolution lands");
+    // 0+1+2+3 = 6
+    assert_eq!(
+        p7::compile_and_run(src.to_string(), "main").unwrap(),
+        Data::Int(6)
+    );
+}
+
+#[test]
+fn unqualified_iterable_works_thanks_to_builtin_auto_import() {
+    // The `builtin` module is a prelude: its public, non-`@builtin()`,
+    // non-generic types — including the marker protos `Iterable` /
+    // `Iterator` — are auto-imported into root scope under their bare
+    // short name. So `struct[Iterable] Source(...)` resolves without
+    // any `import` line and without the `builtin.` qualifier.
+    let src = r#"
+struct[Iterator] Counter(cur: int, end: int) {
+    pub fn next(box self) -> ?int {
+        if self.cur >= self.end { return null; }
+        let v = self.cur;
+        self.cur = v + 1;
+        return v;
+    }
+}
+
+struct[Iterable] Source(limit: int) {
+    pub fn iter(ref self) -> box<Counter> {
+        box(Counter(0, self.limit))
+    }
+}
+
+fn main() -> int {
+    let s = Source(4);
+    let mut sum = 0;
+    for x in s {
+        sum = sum + x;
+    }
+    sum
+}
+"#;
+    // 0+1+2+3 = 6
+    assert_eq!(
+        p7::compile_and_run(src.to_string(), "main").unwrap(),
+        Data::Int(6)
+    );
 }
 
 #[test]

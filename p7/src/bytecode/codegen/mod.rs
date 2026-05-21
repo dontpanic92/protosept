@@ -741,10 +741,11 @@ impl Generator {
         if let Some(source) = self.module_provider.load_module(MODULE_PATH) {
             match self.compile_module(MODULE_PATH, source) {
                 Ok(module) => {
-                    // Import top-level public functions from the builtin module
-                    // into the main symbol table so they can be called without
-                    // a module qualifier (e.g. `__script_dir__()`).
-                    self.import_builtin_functions(&module);
+                    // Import top-level public intrinsic functions and public
+                    // type aliases from the builtin module into the main
+                    // symbol table so they can be referenced without a
+                    // module qualifier (e.g. `__script_dir__()`, `Range(0, n)`).
+                    self.import_builtin_symbols(&module);
 
                     // Store the compiled module
                     self.imported_modules
@@ -762,10 +763,20 @@ impl Generator {
         }
     }
 
-    /// Import top-level public intrinsic functions from the builtin module into
-    /// the main generator's symbol table so they are callable without a module
-    /// qualifier (e.g. `__script_dir__()`, `range(0, n)`).
-    fn import_builtin_functions(&mut self, module: &Module) {
+    /// Import top-level public intrinsic functions and public type aliases
+    /// from the builtin module into the main generator's symbol table so they
+    /// are callable / referenceable without a module qualifier
+    /// (e.g. `__script_dir__()`, `min(a, b)`, `Range(0, n)`,
+    /// `struct[Iterable] X { ... }`).
+    ///
+    /// Type aliases use the same import pipeline as qualified-name access:
+    /// `import_type_from_module` reserves a local `TypeId`, remaps fields /
+    /// conformance, and tags the import with `source_module = Some("builtin")`
+    /// so subsequent method calls (`r.iter()`) dispatch through
+    /// `resolve_external_method` → `CallExternal`. A second symbol with the
+    /// short name is then inserted in addition to the qualified-name symbol
+    /// that `import_type_from_module` registers.
+    fn import_builtin_symbols(&mut self, module: &Module) {
         let Some(root) = module.symbols.first() else {
             return;
         };
@@ -812,6 +823,90 @@ impl Generator {
             SymbolKind::Module(module_id),
         );
         self.symbol_table.insert_symbol(module_symbol);
+
+        // Auto-import public type aliases as bare-name shortcuts.
+        // Eligibility:
+        //   * `pub` (private types are not part of the prelude),
+        //   * NOT marked `@builtin()` (those types use type-form syntax such
+        //     as `[1, 2, 3]` / `"…"` and have no positional constructor),
+        //   * no type parameters (generic types can't be referenced bare —
+        //     `HashMap(...)` would need monomorphization at the alias site).
+        //
+        // The qualified `builtin.<Name>` form continues to work via the
+        // module-symbol registered above.
+        let mut type_map = std::collections::HashMap::new();
+        let type_children: Vec<(InternedString, u32)> = root
+            .children
+            .iter()
+            .filter_map(|(name, id)| {
+                let sym = module.symbols.get(*id as usize)?;
+                match sym.kind {
+                    SymbolKind::Type(tid) => Some((name.clone(), tid)),
+                    _ => None,
+                }
+            })
+            .collect();
+
+        for (short_name, type_id) in type_children {
+            let Some(type_def) = module.types.get(type_id as usize) else {
+                continue;
+            };
+
+            let (is_pub, attributes, has_type_params) = match type_def {
+                TypeDefinition::Struct(s) => (
+                    s.is_pub,
+                    s.attributes.as_slice(),
+                    !s.type_parameters.is_empty(),
+                ),
+                TypeDefinition::Enum(e) => (
+                    e.is_pub,
+                    e.attributes.as_slice(),
+                    !e.type_parameters.is_empty(),
+                ),
+                TypeDefinition::Proto(p) => (p.is_pub, p.attributes.as_slice(), false),
+            };
+            if !is_pub || has_type_params {
+                continue;
+            }
+            if attributes
+                .iter()
+                .any(|a| a.name.name.as_str() == "builtin")
+            {
+                continue;
+            }
+
+            // If the short name is already in scope (e.g. another builtin
+            // symbol of the same name, or a user pre-load), skip — avoid
+            // shadowing whatever was registered first.
+            if self
+                .symbol_table
+                .find_symbol_in_scope(short_name.as_str())
+                .is_some()
+            {
+                continue;
+            }
+
+            let new_id = match self.import_type_from_module(module, type_id, &mut type_map) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+
+            // Look up the qualified name we just materialised so the
+            // bare-name alias points at the canonical entry.
+            let qualified_name = match self.symbol_table.get_type_checked(new_id) {
+                Some(TypeDefinition::Struct(s)) => s.qualified_name.clone(),
+                Some(TypeDefinition::Enum(e)) => e.qualified_name.clone(),
+                Some(TypeDefinition::Proto(p)) => p.qualified_name.clone(),
+                None => continue,
+            };
+
+            let alias_symbol = crate::semantic::Symbol::new(
+                short_name,
+                qualified_name,
+                SymbolKind::Type(new_id),
+            );
+            self.symbol_table.insert_symbol(alias_symbol);
+        }
     }
 
     /// Helper method to compile an imported module

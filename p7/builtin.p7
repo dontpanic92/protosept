@@ -35,7 +35,7 @@ proto Eq {
 // Built-in conforming types: `array<T>`, `Range`, `RangeIncl`. User
 // types may add `[Iterable]` to opt-in explicitly or rely on
 // structural conformance.
-proto Iterable {}
+pub proto Iterable {}
 
 // Marker proto for iterator-cursor types. Conformance contract
 // (verified structurally at each `for-in` call site):
@@ -44,7 +44,7 @@ proto Iterable {}
 //
 // for some element type `T`. `null` signals end-of-iteration; the
 // element type `T` is inferred from the method's return type.
-proto Iterator {}
+pub proto Iterator {}
 
 @builtin()
 pub struct string() {

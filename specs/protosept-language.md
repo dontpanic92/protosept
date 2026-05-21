@@ -206,6 +206,22 @@ helpers.private_helper();  // ERROR
 
 Name resolution determines which declaration a given identifier refers to. Protosept uses two distinct namespaces and employs lexical scoping with module-level imports.
 
+#### 1.2.0 The `builtin` prelude
+
+The `builtin` module is implicitly available in every compilation unit; no `import builtin;` line is required. Its top-level declarations are exposed at two levels:
+
+1. **Qualified access**: every `pub` declaration is reachable as `builtin.<Name>` (e.g. `builtin.Range(0, n)`, `builtin.Iterable`). The module symbol `builtin` is always in scope.
+2. **Bare-name aliases**: a curated subset of `builtin`'s declarations is auto-imported into root scope under its short name, behaving like a Rust-style prelude. A declaration is aliased iff **all** of:
+   - it is `pub`;
+   - it is NOT marked `@builtin()` (those types use type-form syntax such as `"…"`, `[…]`, and have no positional constructor);
+   - it has no type parameters (generic types cannot be referenced bare).
+
+   All `pub` intrinsic functions (e.g. `min`, `__entry_script_dir__`) are also aliased into root scope.
+
+A user declaration with the same short name shadows the alias for the rest of the compilation unit; the qualified `builtin.<Name>` form remains valid as a disambiguator.
+
+The prelude is a property of `builtin` specifically. For ordinary user modules, `import M;` brings only the module name `M` into scope; members continue to require `M.X` qualification.
+
 #### 1.2.1 Two namespaces
 
 Protosept maintains two separate namespaces:
@@ -1848,7 +1864,7 @@ fn next(box self) -> ?T
 
 for some element type `T`. The element type `T` flows to the `x` binding.
 
-Authors may add `[Iterable]` / `[Iterator]` to the conformance list of their structs for explicit opt-in; the compiler does not require it.
+Authors may add `[Iterable]` / `[Iterator]` to the conformance list of their structs for explicit opt-in; the compiler does not require it. Conformance entries resolve through the standard type-lookup path, which includes the **builtin prelude** (see §1.2.0) — so bare `[Iterable]` works, and `[builtin.Iterable]` continues to work as a disambiguator when a user type shadows the prelude alias.
 
 #### Built-in iterables
 
@@ -1860,7 +1876,7 @@ The builtin package ships `array<T>`, `Range`, and `RangeIncl`:
 
 `Range`/`RangeIncl` values are **immutable**. Each call to `iter()` returns a fresh `RangeIter`/`RangeInclIter` cursor; iterating the same `Range` value twice produces the same sequence twice, and the range's `start`/`end` fields are unchanged after the loop.
 
-`Range` and `RangeIncl` are reached as `builtin.Range(0, n)` / `builtin.RangeIncl(0, n)`; the `builtin` module symbol is auto-imported, so no `import builtin;` line is required.
+`Range` and `RangeIncl` are reached as bare `Range(0, n)` / `RangeIncl(0, n)` (the `builtin` module is the prelude — see §1.2.0); the qualified `builtin.Range(0, n)` form remains valid and is the disambiguator when a user struct shadows the alias.
 
 **Normative desugaring** (array fast path; element-binding mode follows the Copy/non-Copy rule above):
 ```p7
@@ -3457,7 +3473,7 @@ enum[Printable, Copy] Status(
 ```
 
 Rules:
-- Each name in `struct[...]` or `enum[...]` MUST be the name of a proto.
+- Each name in `struct[...]` or `enum[...]` MUST be the name of a proto. Names are resolved through the same lookup path as type annotations (§5): unqualified names resolve against the current scope (which includes the **builtin prelude** — see §1.2.0); dotted names (`module.Proto`) route through the cross-module type table and are subject to the `pub`-visibility check of the proto in its source module. Example: `struct[Iterable] Source(...)` (bare, via prelude) or `struct[builtin.Iterable] Source(...)` (qualified, always valid).
 - The compiler MUST check structural satisfaction after injection.
 - Listing a proto enables implicit behaviors described by this spec:
   - Default method injection from the proto (§18.3).
