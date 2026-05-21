@@ -91,7 +91,7 @@ impl Generator {
         };
 
         if !conforms {
-            self.check_struct_conformance(type_id, &[proto_id], line, col)?;
+            self.check_struct_conformance(type_id, &[proto_id], &[Vec::new()], line, col)?;
         }
 
         // Generate appropriate instruction
@@ -317,6 +317,7 @@ impl Generator {
 
         let proto_id = match expected_inner {
             Type::Proto(pid) => *pid,
+            Type::ProtoGeneric { base, .. } => *base,
             _ => return Ok(None),
         };
 

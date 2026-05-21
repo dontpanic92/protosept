@@ -523,14 +523,31 @@ impl Module {
             let crate::semantic::TypeDefinition::Proto(proto) = ty else {
                 continue;
             };
-            for (method_name, params, _) in &proto.methods {
-                self.proto_method_metas.insert(
-                    (proto_id as u32, hash_method_name(method_name)),
-                    ProtoMethodMeta {
-                        method_name: method_name.to_string(),
-                        param_count: params.len(),
-                    },
-                );
+            // Non-generic protos populate `methods`; generic protos populate
+            // `method_templates` only, since their parameter types are not
+            // resolvable without per-use-site type args. Both lists carry
+            // the same method names and parameter counts, so use whichever
+            // is populated to seed the runtime dispatch metadata.
+            if !proto.methods.is_empty() {
+                for (method_name, params, _) in &proto.methods {
+                    self.proto_method_metas.insert(
+                        (proto_id as u32, hash_method_name(method_name)),
+                        ProtoMethodMeta {
+                            method_name: method_name.to_string(),
+                            param_count: params.len(),
+                        },
+                    );
+                }
+            } else {
+                for (method_name, params, _) in &proto.method_templates {
+                    self.proto_method_metas.insert(
+                        (proto_id as u32, hash_method_name(method_name)),
+                        ProtoMethodMeta {
+                            method_name: method_name.to_string(),
+                            param_count: params.len(),
+                        },
+                    );
+                }
             }
         }
 

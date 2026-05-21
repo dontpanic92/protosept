@@ -24,11 +24,11 @@ fn qualified_builtin_iterator_drives_for_in() {
     // `builtin.Iterator` via qualified-path conformance and drives a
     // proto-path `for-in`. Structural conformance is still checked at
     // the loop site; the explicit `[...]` opt-in is what unlocks
-    // implicit coercion to `box<builtin.Iterable>` at other sites
+    // implicit coercion to `box<builtin.Iterable<Counter>>` at other sites
     // (covered by `box_coercion_via_qualified_builtin_proto_conformance`
     // below).
     let src = r#"
-struct[builtin.Iterator] Counter(cur: int, end: int) {
+struct[builtin.Iterator<int>] Counter(cur: int, end: int) {
     pub fn next(box self) -> ?int {
         if self.cur >= self.end { return null; }
         let v = self.cur;
@@ -37,7 +37,7 @@ struct[builtin.Iterator] Counter(cur: int, end: int) {
     }
 }
 
-struct[builtin.Iterable] Source(limit: int) {
+struct[builtin.Iterable<Counter>] Source(limit: int) {
     pub fn iter(ref self) -> box<Counter> {
         box(Counter(0, self.limit))
     }
@@ -74,7 +74,7 @@ fn unqualified_iterable_after_import_builtin_is_now_allowed_via_prelude() {
     let src = r#"
 import builtin;
 
-struct[Iterable] Source(limit: int) {
+struct[Iterable<int>] Source(limit: int) {
     pub fn iter(ref self) -> box<int> { box(0) }
 }
 
@@ -150,12 +150,12 @@ fn qualified_and_unqualified_local_proto_resolve_to_same_typeid() {
     // The qualified path must reach the same TypeId as the local-scope
     // path when both reference the same proto. We approximate this
     // behaviourally: a struct conforming to `builtin.Iterable` and a
-    // typed site referencing `box<builtin.Iterable>` must share the
+    // typed site referencing `box<builtin.Iterable<Counter>>` must share the
     // proto identity, otherwise the box coercion test above could
     // not pass. This test pins the round-trip explicitly with both
     // sides written using the qualified form.
     let src = r#"
-struct[builtin.Iterator] Counter(cur: int, end: int) {
+struct[builtin.Iterator<int>] Counter(cur: int, end: int) {
     pub fn next(box self) -> ?int {
         if self.cur >= self.end { return null; }
         let v = self.cur;
@@ -164,17 +164,17 @@ struct[builtin.Iterator] Counter(cur: int, end: int) {
     }
 }
 
-struct[builtin.Iterable] Source(limit: int) {
+struct[builtin.Iterable<Counter>] Source(limit: int) {
     pub fn iter(ref self) -> box<Counter> {
         box(Counter(0, self.limit))
     }
 }
 
-fn count(it: box<builtin.Iterable>) -> int {
+fn count(it: box<builtin.Iterable<Counter>>) -> int {
     return 0;
 }
 
-fn make() -> box<builtin.Iterable> {
+fn make() -> box<builtin.Iterable<Counter>> {
     return box(Source(3));
 }
 
@@ -194,9 +194,9 @@ fn box_coercion_via_qualified_builtin_proto_conformance() {
     // The whole point of explicit conformance over structural-only is
     // unlocking implicit coercion at typed sites (§18.6). A struct
     // listing `[builtin.Iterable]` must implicitly coerce to
-    // `box<builtin.Iterable>` at a parameter site.
+    // `box<builtin.Iterable<Counter>>` at a parameter site.
     let src = r#"
-struct[builtin.Iterator] Counter(cur: int, end: int) {
+struct[builtin.Iterator<int>] Counter(cur: int, end: int) {
     pub fn next(box self) -> ?int {
         if self.cur >= self.end { return null; }
         let v = self.cur;
@@ -205,19 +205,19 @@ struct[builtin.Iterator] Counter(cur: int, end: int) {
     }
 }
 
-struct[builtin.Iterable] Source(limit: int) {
+struct[builtin.Iterable<Counter>] Source(limit: int) {
     pub fn iter(ref self) -> box<Counter> {
         box(Counter(0, self.limit))
     }
 }
 
-fn take(it: box<builtin.Iterable>) -> int {
+fn take(it: box<builtin.Iterable<Counter>>) -> int {
     return 42;
 }
 
 fn main() -> int {
     let s = Source(3);
-    // Implicit coercion from `box<Source>` to `box<builtin.Iterable>`:
+    // Implicit coercion from `box<Source>` to `box<builtin.Iterable<Counter>>`:
     // legal because `Source` lists `[builtin.Iterable]` in its
     // conformance bracket.
     take(box(s))

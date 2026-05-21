@@ -692,74 +692,137 @@ impl Generator {
         field: &Identifier,
         arguments: CallArgs,
     ) -> SaResult<Option<Type>> {
-        let proto_id = match object_ty {
-            Type::BoxType(inner) => match inner.as_ref() {
-                Type::Proto(id) => Some(*id),
-                _ => None,
+        // Extract (base proto id, optional type args) from the receiver type.
+        // Accepts ref<P> / box<P> for plain protos, ref<P<...>> / box<P<...>>
+        // for generic protos.
+        let (proto_id, proto_args): (Option<u32>, Vec<Type>) = match object_ty {
+            Type::BoxType(inner) | Type::Reference(inner) => match inner.as_ref() {
+                Type::Proto(id) => (Some(*id), Vec::new()),
+                Type::ProtoGeneric { base, args } => (Some(*base), args.clone()),
+                _ => (None, Vec::new()),
             },
-            Type::Reference(inner) => match inner.as_ref() {
-                Type::Proto(id) => Some(*id),
-                _ => None,
-            },
-            _ => None,
+            _ => (None, Vec::new()),
         };
 
         let Some(proto_id) = proto_id else {
             return Ok(None);
         };
 
-        let result = self.generate_proto_dispatch(proto_id, object_ty, field, arguments)?;
+        let result = self.generate_proto_dispatch(
+            proto_id,
+            &proto_args,
+            object_ty,
+            field,
+            arguments,
+        )?;
         Ok(Some(result))
     }
 
-    /// Generates dynamic dispatch for a proto method call
+    /// Generates dynamic dispatch for a proto method call.
+    ///
+    /// When `proto_args` is non-empty the proto is generic and its method
+    /// templates are substituted with the args at this call site to produce
+    /// the expected param/return types. Non-generic proto dispatch uses the
+    /// eagerly-resolved `proto.methods` as before.
     fn generate_proto_dispatch(
         &mut self,
         proto_id: u32,
+        proto_args: &[Type],
         object_ty: &Type,
         field: &Identifier,
         arguments: CallArgs,
     ) -> SaResult<Type> {
-        let proto = match &self.symbol_table.types[proto_id as usize] {
-            TypeDefinition::Proto(p) => p,
-            _ => return Err(SemanticError::Other("Expected proto type".to_string())),
+        // Pull either the resolved signature directly (non-generic) or the
+        // substituted form (generic).
+        let (method_params, method_return): (Vec<Type>, Option<Type>) = {
+            let proto = match &self.symbol_table.types[proto_id as usize] {
+                TypeDefinition::Proto(p) => p,
+                _ => return Err(SemanticError::Other("Expected proto type".to_string())),
+            };
+
+            if proto.type_parameters.is_empty() {
+                proto
+                    .methods
+                    .iter()
+                    .find(|(name, _, _)| name == &field.name)
+                    .map(|(_, params, ret)| (params.clone(), ret.clone()))
+                    .ok_or_else(|| SemanticError::FunctionNotFound {
+                        name: format!("proto method {}", field.name),
+                        pos: field.pos(),
+                    })?
+            } else {
+                let templates = proto.method_templates.clone();
+                let type_params = proto.type_parameters.clone();
+                let proto_qualified_for_self = proto.qualified_name.clone();
+
+                if proto_args.len() != type_params.len() {
+                    return Err(SemanticError::Other(format!(
+                        "proto method '{}' invoked with {} type arg(s), expected {}",
+                        field.name,
+                        proto_args.len(),
+                        type_params.len()
+                    )));
+                }
+
+                let mut substitution: std::collections::HashMap<
+                    crate::intern::InternedString,
+                    crate::ast::Type,
+                > = type_params
+                    .iter()
+                    .zip(proto_args.iter())
+                    .map(|(name, arg)| (name.clone(), self.type_to_parsed_type(arg)))
+                    .collect();
+                substitution.insert(
+                    crate::intern::InternedString::from("Self"),
+                    crate::ast::Type::Identifier(crate::ast::Identifier {
+                        name: proto_qualified_for_self,
+                        line: 0,
+                        col: 0,
+                    }),
+                );
+
+                let (mname_match, params_t, return_t) = templates
+                    .iter()
+                    .find(|(name, _, _)| name == &field.name)
+                    .ok_or_else(|| SemanticError::FunctionNotFound {
+                        name: format!("proto method {}", field.name),
+                        pos: field.pos(),
+                    })?
+                    .clone();
+                let _ = mname_match;
+
+                let mut params = Vec::with_capacity(params_t.len());
+                for p in &params_t {
+                    let sub = self.substitute_parsed_type(p, &substitution);
+                    params.push(self.get_semantic_type(&sub)?);
+                }
+                let ret = match return_t {
+                    Some(ref r) => {
+                        let sub = self.substitute_parsed_type(r, &substitution);
+                        Some(self.get_semantic_type(&sub)?)
+                    }
+                    None => None,
+                };
+                (params, ret)
+            }
         };
 
-        let (method_params, method_return) = proto
-            .methods
-            .iter()
-            .find(|(name, _, _)| name == &field.name)
-            .map(|(_, params, ret)| (params.clone(), ret.clone()))
-            .ok_or_else(|| SemanticError::FunctionNotFound {
-                name: format!("proto method {}", field.name),
-                pos: field.pos(),
-            })?;
-
-        // Enforce receiver-kind compatibility (spec §18.4.1, §18.7):
-        //
-        //   proto method receiver | allowed caller object types
-        //   ----------------------+----------------------------------
-        //   ref<P>     (ref self) | box<P>, ref<P>
-        //   ref_mut<P> (ref mut)  | box<P>           (ref<P> is ERROR)
-        //   box<P>     (box self) | box<P>           (ref<P> is ERROR)
-        //
-        // The receiver type is the proto method's first declared parameter,
-        // expressed as the appropriate wrapper around `Type::Proto(proto_id)`.
+        // Receiver-kind compatibility check. The proto method's first param
+        // wraps `Type::Proto(proto_id)` (or a substituted form that still
+        // references the base proto via Self). Compare base proto ids.
+        let object_inner_is_self = |inner: &Type| -> bool {
+            matches!(inner, Type::Proto(pid) if *pid == proto_id)
+                || matches!(inner, Type::ProtoGeneric { base, .. } if *base == proto_id)
+        };
         if let Some(receiver_ty) = method_params.first() {
-            let object_is_box = matches!(object_ty, Type::BoxType(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id));
-            let object_is_ref = matches!(object_ty, Type::Reference(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id));
+            let object_is_box = matches!(object_ty, Type::BoxType(inner) if object_inner_is_self(inner));
+            let object_is_ref = matches!(object_ty, Type::Reference(inner) if object_inner_is_self(inner));
             let allowed = match receiver_ty {
-                Type::Reference(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id) => {
+                Type::Reference(inner) if object_inner_is_self(inner) => {
                     object_is_box || object_is_ref
                 }
-                Type::MutableReference(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id) => {
-                    object_is_box
-                }
-                Type::BoxType(inner) if matches!(**inner, Type::Proto(pid) if pid == proto_id) => {
-                    object_is_box
-                }
-                // Any other receiver shape is invalid for proto methods; the
-                // proto-declaration validator catches this, but be defensive.
+                Type::MutableReference(inner) if object_inner_is_self(inner) => object_is_box,
+                Type::BoxType(inner) if object_inner_is_self(inner) => object_is_box,
                 _ => true,
             };
             if !allowed {
@@ -785,7 +848,8 @@ impl Generator {
         )?;
         self.push_typed_argument_list(ordered_exprs, expected_params, field.line, field.col)?;
 
-        // Hash the method name
+        // Hash the method name. Runtime dispatch (`CallProtoMethod`) is keyed
+        // by (proto base id, method-name hash), independent of type args.
         let mut hasher = DefaultHasher::new();
         field.name.hash(&mut hasher);
         let method_hash = hasher.finish() as u32;

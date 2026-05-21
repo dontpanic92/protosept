@@ -170,6 +170,7 @@ impl Generator {
             generic_field_types: None,
             monomorphization: None,
             conforming_to: vec![proto_id],
+            conforming_to_args: vec![Vec::new()],
             methods: Vec::new(),
             source_module: None,
         };

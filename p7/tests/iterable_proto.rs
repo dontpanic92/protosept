@@ -242,7 +242,7 @@ fn for_in_user_defined_iterable_explicit_conformance_with_qualified_proto() {
     // through the standard cross-module type lookup; structural
     // conformance is still enforced at the `for-in` call site.
     let src = r#"
-struct[builtin.Iterator] Counter(cur: int, end: int) {
+struct[builtin.Iterator<int>] Counter(cur: int, end: int) {
     pub fn next(box self) -> ?int {
         if self.cur >= self.end { return null; }
         let v = self.cur;
@@ -251,7 +251,7 @@ struct[builtin.Iterator] Counter(cur: int, end: int) {
     }
 }
 
-struct[builtin.Iterable] Source(limit: int) {
+struct[builtin.Iterable<Counter>] Source(limit: int) {
     pub fn iter(ref self) -> box<Counter> {
         box(Counter(0, self.limit))
     }
@@ -278,10 +278,10 @@ fn unqualified_iterable_works_thanks_to_builtin_auto_import() {
     // The `builtin` module is a prelude: its public, non-`@builtin()`,
     // non-generic types — including the marker protos `Iterable` /
     // `Iterator` — are auto-imported into root scope under their bare
-    // short name. So `struct[Iterable] Source(...)` resolves without
+    // short name. So `struct[Iterable<Counter>] Source(...)` resolves without
     // any `import` line and without the `builtin.` qualifier.
     let src = r#"
-struct[Iterator] Counter(cur: int, end: int) {
+struct[Iterator<int>] Counter(cur: int, end: int) {
     pub fn next(box self) -> ?int {
         if self.cur >= self.end { return null; }
         let v = self.cur;
@@ -290,7 +290,7 @@ struct[Iterator] Counter(cur: int, end: int) {
     }
 }
 
-struct[Iterable] Source(limit: int) {
+struct[Iterable<Counter>] Source(limit: int) {
     pub fn iter(ref self) -> box<Counter> {
         box(Counter(0, self.limit))
     }

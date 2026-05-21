@@ -20,31 +20,17 @@ proto Eq {
     fn eq(ref self, other: ref<Eq>) -> bool;
 }
 
-// Marker proto for types whose iteration state and cursor live in a
-// separate iterator value. See `protosept-language.md` §9.5.1.
+// Generic iteration protos. `Iterable<Iter>` declares the method
+// `iter(ref self) -> box<Iter>`, where `Iter` is the cursor type;
+// `Iterator<T>` declares the per-step method
+// `next(box self) -> ?T`, where `T` is the element type produced.
 //
-// Conformance contract (verified structurally by the compiler at each
-// `for-in` call site, not by the proto signature itself — p7 does not
-// yet support generic protos):
-//
-//     fn iter(ref self) -> box<X>
-//
-// where `X` is some concrete type that itself conforms to `Iterator`
-// (i.e. has `fn next(box self) -> ?T` for some element type `T`).
-//
-// Built-in conforming types: `array<T>`, `Range`, `RangeIncl`. User
-// types may add `[Iterable]` to opt-in explicitly or rely on
-// structural conformance.
-pub proto Iterable {}
-
-// Marker proto for iterator-cursor types. Conformance contract
-// (verified structurally at each `for-in` call site):
-//
-//     fn next(box self) -> ?T
-//
-// for some element type `T`. `null` signals end-of-iteration; the
-// element type `T` is inferred from the method's return type.
-pub proto Iterator {}
+// See `specs/protosept-language.md` §9.5.1 for the `for-in` lowering.
+// User types may declare conformance explicitly
+// (`struct[Iterable<MyIter>] X(...)`) or rely on the compiler's
+// structural fallback at each `for-in` site.
+pub proto Iterable<Iter> { fn iter(ref self) -> box<Iter>; }
+pub proto Iterator<T> { fn next(box self) -> ?T; }
 
 @builtin()
 pub struct string() {
@@ -241,11 +227,12 @@ pub struct HashMap<K: Hash + Eq, V>() {
 // fresh by each `iter()` call. Iterating the same range twice yields
 // the same sequence twice.
 //
-// Both conform to `Iterable` (marker proto); their iterator types
-// conform to `Iterator`. The compiler verifies the actual `iter`/`next`
-// method signatures structurally at each `for-in` call site.
+// They declare typed conformance to `Iterable<Iter>` / `Iterator<T>`
+// (defined near the top of this file). The compiler still applies the
+// structural fallback at `for-in` sites for types that do not opt in
+// to declared conformance.
 
-pub struct[Iterator] RangeIter(pub cur: int, pub end: int) {
+pub struct[Iterator<int>] RangeIter(pub cur: int, pub end: int) {
     pub fn next(box self) -> ?int {
         if self.cur >= self.end { return null; }
         let v = self.cur;
@@ -254,13 +241,13 @@ pub struct[Iterator] RangeIter(pub cur: int, pub end: int) {
     }
 }
 
-pub struct[Iterable] Range(pub start: int, pub end: int) {
+pub struct[Iterable<RangeIter>] Range(pub start: int, pub end: int) {
     pub fn iter(ref self) -> box<RangeIter> {
         box(RangeIter(self.start, self.end))
     }
 }
 
-pub struct[Iterator] RangeInclIter(pub cur: int, pub end: int) {
+pub struct[Iterator<int>] RangeInclIter(pub cur: int, pub end: int) {
     pub fn next(box self) -> ?int {
         if self.cur > self.end { return null; }
         let v = self.cur;
@@ -269,7 +256,7 @@ pub struct[Iterator] RangeInclIter(pub cur: int, pub end: int) {
     }
 }
 
-pub struct[Iterable] RangeIncl(pub start: int, pub end: int) {
+pub struct[Iterable<RangeInclIter>] RangeIncl(pub start: int, pub end: int) {
     pub fn iter(ref self) -> box<RangeInclIter> {
         box(RangeInclIter(self.start, self.end))
     }

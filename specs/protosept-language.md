@@ -1843,28 +1843,29 @@ Control flow:
 
 #### Iteration protocol
 
-The builtin package declares two marker protos:
+The builtin package declares two generic protos:
 
 ```p7
-proto Iterable {}
-proto Iterator {}
+proto Iterable<Iter> { fn iter(ref self) -> box<Iter>; }
+proto Iterator<T>    { fn next(box self) -> ?T; }
 ```
 
-Conformance is verified **structurally** at each `for-in` call site (the protos are non-generic markers — p7 does not yet support generic protos). A type conforms to `Iterable` iff it has a method
+A type conforms to `Iterable<Iter>` when it has a matching method
+`fn iter(ref self) -> box<Iter>`, and to `Iterator<T>` when it has a matching
+method `fn next(box self) -> ?T`. The element type `T` flows to the `x`
+binding at each `for-in` site.
 
-```p7
-fn iter(ref self) -> box<I>
-```
-
-for some concrete type `I` that itself has a method
-
-```p7
-fn next(box self) -> ?T
-```
-
-for some element type `T`. The element type `T` flows to the `x` binding.
-
-Authors may add `[Iterable]` / `[Iterator]` to the conformance list of their structs for explicit opt-in; the compiler does not require it. Conformance entries resolve through the standard type-lookup path, which includes the **builtin prelude** (see §1.2.0) — so bare `[Iterable]` works, and `[builtin.Iterable]` continues to work as a disambiguator when a user type shadows the prelude alias.
+Conformance may be declared explicitly via the conformance bracket —
+`struct[Iterator<int>] Counter(...)`, `struct[Iterable<MyIter>] Source(...)` —
+in which case the compiler substitutes the proto's type parameters with the
+declared args and checks the impl methods against that specialization. Types
+that omit the bracket still drive `for-in` through the compiler's structural
+fallback: any type with an `iter(ref self) -> box<I>` method, where `I` has
+`next(box self) -> ?T`, is iterable without an opt-in. Conformance entries
+resolve through the standard type-lookup path, including the **builtin
+prelude** (see §1.2.0) — bare `[Iterable<X>]` works, and
+`[builtin.Iterable<X>]` continues to work as a disambiguator when a user
+type shadows the prelude alias.
 
 #### Built-in iterables
 

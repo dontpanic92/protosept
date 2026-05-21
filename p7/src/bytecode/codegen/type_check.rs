@@ -1,5 +1,6 @@
 use crate::ast::Type as ParsedType;
 use crate::errors::{SemanticError, SourcePos};
+use crate::intern::InternedString;
 use crate::semantic::{PrimitiveType, SymbolKind, Type, TypeDefinition, TypeId};
 
 use super::{Generator, SaResult};
@@ -335,6 +336,26 @@ impl Generator {
                         base.line,
                         base.col,
                     ),
+                    Type::Proto(base_type_id) => {
+                        let expected = match self.symbol_table.types.get(base_type_id as usize) {
+                            Some(TypeDefinition::Proto(p)) => p.type_parameters.len(),
+                            _ => 0,
+                        };
+                        if expected != resolved_type_args.len() {
+                            return Err(SemanticError::Other(format!(
+                                "proto '{}' expects {} type argument(s), found {} at line {} column {}",
+                                base.name,
+                                expected,
+                                resolved_type_args.len(),
+                                base.line,
+                                base.col
+                            )));
+                        }
+                        Ok(Type::ProtoGeneric {
+                            base: base_type_id,
+                            args: resolved_type_args,
+                        })
+                    }
                     _ => {
                         // For non-struct/enum types, just return the base type for now
                         // TODO: implement monomorphization for other types if needed
@@ -366,11 +387,20 @@ impl Generator {
         }
     }
 
-    /// Check that a struct conforms to all declared protocols
+    /// Check that a struct/enum conforms to every declared protocol entry.
+    ///
+    /// `conforming_to` and `conforming_to_args` are parallel — entry `i`
+    /// represents `[proto_id, args]`. For generic protos, the proto's
+    /// `method_templates` (in parsed-AST form) are walked, each `T`/`Iter`
+    /// type-parameter occurrence is substituted with the matching arg, then
+    /// `get_semantic_type` converts the substituted shape to a checking
+    /// signature. For non-generic protos the args slice is empty and we
+    /// fall through to the existing eagerly-resolved `proto.methods`.
     pub(super) fn check_struct_conformance(
-        &self,
+        &mut self,
         type_id: TypeId,
         conforming_to: &[TypeId],
+        conforming_to_args: &[Vec<Type>],
         line: usize,
         col: usize,
     ) -> SaResult<()> {
@@ -385,28 +415,84 @@ impl Generator {
             }
         };
 
-        // For each protocol the type claims to conform to
-        for &proto_id in conforming_to {
-            let proto = match &self.symbol_table.types[proto_id as usize] {
-                TypeDefinition::Proto(p) => p,
-                _ => return Err(SemanticError::Other("Expected proto type".to_string())),
+        for (entry_idx, &proto_id) in conforming_to.iter().enumerate() {
+            let empty_args: Vec<Type> = Vec::new();
+            let proto_args = conforming_to_args.get(entry_idx).unwrap_or(&empty_args);
+
+            // Build the specialized method-signature list for this proto.
+            // For generic protos we substitute `method_templates`; for
+            // non-generic protos `methods` is the source of truth.
+            let (proto_qualified_name, expected_methods): (
+                InternedString,
+                Vec<(InternedString, Vec<Type>, Option<Type>)>,
+            ) = {
+                let proto = match &self.symbol_table.types[proto_id as usize] {
+                    TypeDefinition::Proto(p) => p,
+                    _ => return Err(SemanticError::Other("Expected proto type".to_string())),
+                };
+
+                if proto.type_parameters.is_empty() {
+                    (proto.qualified_name.clone(), proto.methods.clone())
+                } else {
+                    let templates = proto.method_templates.clone();
+                    let type_params = proto.type_parameters.clone();
+                    let qname = proto.qualified_name.clone();
+
+                    // Build substitution from type param name → ParsedType.
+                    // Also map `Self` to the proto's qualified name so that
+                    // receiver shortcuts like `box self` (parsed as `box<Self>`)
+                    // resolve back to the base proto when the template is
+                    // re-checked at each conformance site.
+                    let proto_qualified_for_self = proto.qualified_name.clone();
+                    let mut substitution: std::collections::HashMap<
+                        InternedString,
+                        crate::ast::Type,
+                    > = type_params
+                        .iter()
+                        .zip(proto_args.iter())
+                        .map(|(name, arg)| (name.clone(), self.type_to_parsed_type(arg)))
+                        .collect();
+                    substitution.insert(
+                        InternedString::from("Self"),
+                        crate::ast::Type::Identifier(crate::ast::Identifier {
+                            name: proto_qualified_for_self,
+                            line: 0,
+                            col: 0,
+                        }),
+                    );
+
+                    let mut resolved = Vec::with_capacity(templates.len());
+                    for (mname, params, return_ty) in templates {
+                        let mut resolved_params = Vec::with_capacity(params.len());
+                        for p in &params {
+                            let substituted = self.substitute_parsed_type(p, &substitution);
+                            resolved_params.push(self.get_semantic_type(&substituted)?);
+                        }
+                        let resolved_ret = match return_ty {
+                            Some(ref r) => {
+                                let substituted = self.substitute_parsed_type(r, &substitution);
+                                Some(self.get_semantic_type(&substituted)?)
+                            }
+                            None => None,
+                        };
+                        resolved.push((mname, resolved_params, resolved_ret));
+                    }
+                    (qname, resolved)
+                }
             };
 
-            // Check each required method in the protocol
-            for (method_name, param_types, return_type) in &proto.methods {
-                // Find the corresponding method in the type
+            for (method_name, param_types, return_type) in &expected_methods {
                 let type_method = self.find_type_method(type_id, method_name);
 
                 if type_method.is_none() {
                     return Err(SemanticError::Other(format!(
                         "{} '{}' does not implement required method '{}' from protocol '{}' at line {} column {}",
-                        type_name, qualified_name, method_name, proto.qualified_name, line, col
+                        type_name, qualified_name, method_name, proto_qualified_name, line, col
                     )));
                 }
 
                 let (method_params, method_return_type) = type_method.unwrap();
 
-                // Check parameter count matches
                 if method_params.len() != param_types.len() {
                     return Err(SemanticError::Other(format!(
                         "Method '{}' in {} '{}' has {} parameters, but protocol '{}' requires {} parameters at line {} column {}",
@@ -414,33 +500,16 @@ impl Generator {
                         type_name,
                         qualified_name,
                         method_params.len(),
-                        proto.qualified_name,
+                        proto_qualified_name,
                         param_types.len(),
                         line,
                         col
                     )));
                 }
 
-                // Check each parameter type matches
-                // Special handling for first parameter (self) which should be ref to the type/proto type
                 for (i, (expected_type, actual_type)) in
                     param_types.iter().zip(method_params.iter()).enumerate()
                 {
-                    // For the first parameter (self), receivers must match by
-                    // form (`ref self`, `ref mut self`, or `box self`) with the
-                    // proto's `Self` substituted by the implementing type:
-                    //
-                    //   proto      | required impl receiver
-                    //   -----------+------------------------
-                    //   ref<P>     | ref<T>
-                    //   ref_mut<P> | ref_mut<T>
-                    //   box<P>     | box<T>
-                    //
-                    // A weaker impl receiver (e.g. `ref self` for a `ref mut
-                    // self` proto method) breaks the proto contract; a stronger
-                    // impl receiver (e.g. `ref mut self` for a `ref self`
-                    // proto method) breaks dispatch via `ref<P>`. Require an
-                    // exact form match here.
                     if i == 0 {
                         let inner_is_self = |inner: &Type| -> bool {
                             matches!(inner, Type::Struct(sid) if *sid == type_id)
@@ -448,6 +517,10 @@ impl Generator {
                         };
                         let inner_is_proto = |inner: &Type| -> bool {
                             matches!(inner, Type::Proto(pid) if *pid == proto_id)
+                                || matches!(
+                                    inner,
+                                    Type::ProtoGeneric { base, .. } if *base == proto_id
+                                )
                         };
                         let receiver_forms_match = match (expected_type, actual_type) {
                             (Type::Reference(e), Type::Reference(a)) => {
@@ -474,7 +547,7 @@ impl Generator {
                             qualified_name,
                             i,
                             self.type_to_string(actual_type),
-                            proto.qualified_name,
+                            proto_qualified_name,
                             self.type_to_string(expected_type),
                             line,
                             col
@@ -482,16 +555,13 @@ impl Generator {
                     }
                 }
 
-                // Check return type matches
                 match (return_type, method_return_type) {
                     (Some(expected), Some(actual)) => {
-                        // Both unit and no return type should be considered equivalent
                         let expected_is_unit =
                             matches!(expected, Type::Primitive(PrimitiveType::Unit));
                         let actual_is_unit = matches!(actual, Type::Primitive(PrimitiveType::Unit));
 
                         if expected_is_unit && actual_is_unit {
-                            // Both return unit, this is fine
                         } else if !self.types_equal(expected, &actual) {
                             return Err(SemanticError::Other(format!(
                                 "Method '{}' in {} '{}' returns type '{}', but protocol '{}' requires return type '{}' at line {} column {}",
@@ -499,7 +569,7 @@ impl Generator {
                                 type_name,
                                 qualified_name,
                                 self.type_to_string(&actual),
-                                proto.qualified_name,
+                                proto_qualified_name,
                                 self.type_to_string(expected),
                                 line,
                                 col
@@ -507,15 +577,13 @@ impl Generator {
                         }
                     }
                     (Some(expected), None) => {
-                        // Proto requires a return type, but type method returns nothing (unit)
-                        // If proto expects unit, this is fine
                         if !matches!(expected, Type::Primitive(PrimitiveType::Unit)) {
                             return Err(SemanticError::Other(format!(
                                 "Method '{}' in {} '{}' returns nothing, but protocol '{}' requires return type '{}' at line {} column {}",
                                 method_name,
                                 type_name,
                                 qualified_name,
-                                proto.qualified_name,
+                                proto_qualified_name,
                                 self.type_to_string(expected),
                                 line,
                                 col
@@ -523,8 +591,6 @@ impl Generator {
                         }
                     }
                     (None, Some(actual)) => {
-                        // Proto expects no return, but type returns something
-                        // If type returns unit, this is fine
                         if !matches!(actual, Type::Primitive(PrimitiveType::Unit)) {
                             return Err(SemanticError::Other(format!(
                                 "Method '{}' in {} '{}' returns type '{}', but protocol '{}' expects no return type at line {} column {}",
@@ -532,15 +598,13 @@ impl Generator {
                                 type_name,
                                 qualified_name,
                                 self.type_to_string(&actual),
-                                proto.qualified_name,
+                                proto_qualified_name,
                                 line,
                                 col
                             )));
                         }
                     }
-                    (None, None) => {
-                        // Both return nothing, this is fine
-                    }
+                    (None, None) => {}
                 }
             }
         }
@@ -636,6 +700,18 @@ impl Generator {
                 } else {
                     format!("proto#{}", id)
                 }
+            }
+            Type::ProtoGeneric { base, args } => {
+                let base_name = if let Some(TypeDefinition::Proto(p)) =
+                    self.symbol_table.types.get(*base as usize)
+                {
+                    p.qualified_name.to_string()
+                } else {
+                    format!("proto#{}", base)
+                };
+                let args_str: Vec<String> =
+                    args.iter().map(|a| self.type_to_string(a)).collect();
+                format!("{}<{}>", base_name, args_str.join(", "))
             }
             Type::BoxType(inner) => format!("box<{}>", self.type_to_string(inner)),
             Type::Nullable(inner) => format!("?{}", self.type_to_string(inner)),

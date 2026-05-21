@@ -207,6 +207,10 @@ pub struct Enum {
     pub monomorphization: Option<(TypeId, Vec<Type>)>,
     // Protocol conformances
     pub conforming_to: Vec<TypeId>,
+    // Type args provided per conformance entry (parallel to `conforming_to`).
+    // Empty for non-generic protos.
+    #[serde(default)]
+    pub conforming_to_args: Vec<Vec<Type>>,
     // Associated methods
     pub methods: Vec<FunctionId>,
     // Source module path (set when type is imported from another module)
@@ -236,6 +240,10 @@ pub struct Struct {
     pub monomorphization: Option<(TypeId, Vec<Type>)>,
     // Protocol conformances
     pub conforming_to: Vec<TypeId>,
+    // Type args provided per conformance entry (parallel to `conforming_to`).
+    // Empty for non-generic protos.
+    #[serde(default)]
+    pub conforming_to_args: Vec<Vec<Type>>,
     // Associated methods
     pub methods: Vec<FunctionId>,
     // Source module path (set when type is imported from another module)
@@ -248,6 +256,20 @@ pub struct Proto {
     #[serde(default)]
     pub is_pub: bool,
     pub methods: Vec<(InternedString, Vec<Type>, Option<Type>)>, // (name, params, return_type)
+    /// For generic protos: type parameter names (e.g. ["T"] for `proto Iterator<T>`).
+    /// Empty for non-generic protos, preserving all existing behaviour.
+    #[serde(default)]
+    pub type_parameters: Vec<InternedString>,
+    /// For generic protos: proto bounds per type parameter (parallel to `type_parameters`).
+    #[serde(default)]
+    pub type_param_bounds: Vec<Vec<InternedString>>,
+    /// For generic protos: method signatures stored as parsed AST `Type`s so that
+    /// references to `T`, `Iter`, etc. can be substituted at each use-site.
+    /// Always populated alongside `methods` (which holds the eagerly-resolved
+    /// form for the zero-type-param fast path).
+    #[serde(skip)]
+    pub method_templates:
+        Vec<(InternedString, Vec<crate::ast::Type>, Option<crate::ast::Type>)>,
     #[serde(skip)]
     pub attributes: Vec<crate::ast::Attribute>,
     /// `@foreign(type_tag="...")` value, when this proto carries the
@@ -286,6 +308,15 @@ pub enum Type {
     Enum(TypeId),
     Struct(TypeId),
     Proto(TypeId),
+    /// Generic proto instantiation `P<args...>`. Used in type expressions
+    /// like `box<Iterator<int>>` and on the struct/enum side via
+    /// `conforming_to_args`. Runtime dispatch (`CallProtoMethod`) keys off
+    /// the base `TypeId` and method-name hash, so this variant has no
+    /// runtime cost — it only exists during type checking.
+    ProtoGeneric {
+        base: TypeId,
+        args: Vec<Type>,
+    },
     Nullable(Box<Type>),
     /// Function type: fn(T1, T2) -> R
     Function {
@@ -360,7 +391,7 @@ impl Type {
                 }
             }
             // Arrays, Protos, and Maps: not copy-treated by default in v1
-            Type::Array(_) | Type::Proto(_) | Type::Map(_, _) => false,
+            Type::Array(_) | Type::Proto(_) | Type::ProtoGeneric { .. } | Type::Map(_, _) => false,
             // Function types (closures): copy-treated only if all captures are Copy
             // For now (non-capturing closures), always copy-treated
             Type::Function { .. } => true,
@@ -381,6 +412,10 @@ impl Clone for Type {
             Type::Enum(e) => Type::Enum(*e),
             Type::Struct(s) => Type::Struct(*s),
             Type::Proto(p) => Type::Proto(*p),
+            Type::ProtoGeneric { base, args } => Type::ProtoGeneric {
+                base: *base,
+                args: args.clone(),
+            },
             Type::Nullable(n) => Type::Nullable(n.clone()),
             Type::Function {
                 params,
@@ -406,6 +441,16 @@ impl PartialEq for Type {
             (Type::Enum(a), Type::Enum(b)) => *a == *b,
             (Type::Struct(a), Type::Struct(b)) => *a == *b,
             (Type::Proto(a), Type::Proto(b)) => *a == *b,
+            (
+                Type::ProtoGeneric {
+                    base: ba,
+                    args: aa,
+                },
+                Type::ProtoGeneric {
+                    base: bb,
+                    args: ab,
+                },
+            ) => ba == bb && aa == ab,
             (Type::Nullable(a), Type::Nullable(b)) => *a == *b,
             (
                 Type::Function {
@@ -438,6 +483,10 @@ impl std::hash::Hash for Type {
             Type::Enum(e) => e.hash(state),
             Type::Struct(s) => s.hash(state),
             Type::Proto(p) => p.hash(state),
+            Type::ProtoGeneric { base, args } => {
+                base.hash(state);
+                args.hash(state);
+            }
             Type::Nullable(n) => n.hash(state),
             Type::Function {
                 params,
@@ -475,6 +524,14 @@ impl ToString for Type {
             Type::Enum(e) => format!("enum({})", e),
             Type::Struct(s) => format!("struct({})", s),
             Type::Proto(p) => format!("proto({})", p),
+            Type::ProtoGeneric { base, args } => {
+                let args_str = args
+                    .iter()
+                    .map(|a| a.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("proto({})<{}>", base, args_str)
+            }
             Type::Nullable(n) => format!("?{}", n.to_string()),
             Type::Function {
                 params,

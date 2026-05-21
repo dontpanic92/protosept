@@ -57,7 +57,7 @@ enum PendingType {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
-        conformance: Vec<Identifier>,
+        conformance: Vec<crate::ast::Type>,
         type_parameters: Vec<TypeParameter>,
         fields: Vec<StructField>,
         methods: Vec<StructMethod>,
@@ -67,7 +67,7 @@ enum PendingType {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
-        conformance: Vec<Identifier>,
+        conformance: Vec<crate::ast::Type>,
         type_parameters: Vec<TypeParameter>,
         values: Vec<EnumVariant>,
         methods: Vec<StructMethod>,
@@ -77,6 +77,7 @@ enum PendingType {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
+        type_parameters: Vec<TypeParameter>,
         methods: Vec<ProtoMethod>,
     },
 }
@@ -326,15 +327,21 @@ impl Generator {
                     is_pub,
                     name,
                     attributes,
+                    type_parameters,
                     methods,
                 } => {
-                    let type_id =
-                        self.register_proto_decl(is_pub, name.clone(), attributes.clone())?;
+                    let type_id = self.register_proto_decl(
+                        is_pub,
+                        name.clone(),
+                        attributes.clone(),
+                        type_parameters.clone(),
+                    )?;
                     pending_type_decls.push(PendingType::Proto {
                         type_id,
                         is_pub,
                         name,
                         attributes,
+                        type_parameters,
                         methods,
                     });
                 }
@@ -439,6 +446,7 @@ impl Generator {
                 is_pub,
                 name,
                 attributes,
+                type_parameters,
                 methods,
             } = pending
             {
@@ -447,6 +455,7 @@ impl Generator {
                     *is_pub,
                     name.clone(),
                     std::mem::take(attributes),
+                    std::mem::take(type_parameters),
                     std::mem::take(methods),
                 )?;
             }

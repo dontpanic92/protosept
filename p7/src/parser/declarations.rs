@@ -187,18 +187,16 @@ impl Parser {
     ) -> ParseResult<Statement> {
         self.consume_match(TokenType::Enum)?;
 
-        // Parse optional conformance list: enum[Proto1, Proto2]
+        // Parse optional conformance list: enum[Proto1, Proto2<Arg>]
         let conformance = if self.peek_match(TokenType::OpenBracket) {
             self.consume();
             let mut protos = vec![];
 
-            // Parse first protocol
-            protos.push(self.parse_qualified_identifier()?);
+            protos.push(self.parse_type()?);
 
-            // Parse additional protocols separated by commas
             while self.peek_match(TokenType::Comma) {
                 self.consume();
-                protos.push(self.parse_qualified_identifier()?);
+                protos.push(self.parse_type()?);
             }
 
             self.consume_match(TokenType::CloseBracket)?;
@@ -403,18 +401,16 @@ impl Parser {
     ) -> ParseResult<Statement> {
         self.consume_match(TokenType::Struct)?;
 
-        // Parse optional conformance list: struct[Proto1, Proto2]
+        // Parse optional conformance list: struct[Proto1, Proto2<Arg>]
         let conformance = if self.peek_match(TokenType::OpenBracket) {
             self.consume();
             let mut protos = vec![];
 
-            // Parse first protocol
-            protos.push(self.parse_qualified_identifier()?);
+            protos.push(self.parse_type()?);
 
-            // Parse additional protocols separated by commas
             while self.peek_match(TokenType::Comma) {
                 self.consume();
-                protos.push(self.parse_qualified_identifier()?);
+                protos.push(self.parse_type()?);
             }
 
             self.consume_match(TokenType::CloseBracket)?;
@@ -507,6 +503,7 @@ impl Parser {
     ) -> ParseResult<Statement> {
         self.consume_match(TokenType::Proto)?;
         let name = self.parse_identifier()?;
+        let type_parameters = self.parse_type_parameters()?;
 
         let methods = if self.peek_match(TokenType::OpenBrace) {
             self.parse_proto_method_list()?
@@ -519,6 +516,7 @@ impl Parser {
             is_pub,
             name,
             attributes,
+            type_parameters,
             methods,
         })
     }

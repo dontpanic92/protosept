@@ -122,6 +122,7 @@ impl Generator {
             generic_field_types: None,
             monomorphization: Some((base_type_id, type_args.clone())),
             conforming_to: base_struct.conforming_to.clone(),
+            conforming_to_args: base_struct.conforming_to_args.clone(),
             methods: base_struct.methods.clone(), // Copy methods from base
             source_module: base_struct.source_module.clone(),
         };
@@ -246,6 +247,7 @@ impl Generator {
             generic_variant_types: None,
             monomorphization: Some((base_type_id, type_args.clone())),
             conforming_to: base_enum.conforming_to.clone(),
+            conforming_to_args: base_enum.conforming_to_args.clone(),
             methods: base_enum.methods.clone(), // Copy methods from base
             source_module: base_enum.source_module.clone(),
         };
@@ -636,7 +638,7 @@ impl Generator {
     /// Check that concrete type arguments satisfy all proto bounds declared on type parameters.
     /// `type_param_names` and `type_param_bounds` are parallel arrays; `type_args` maps 1:1.
     fn check_type_param_bounds(
-        &self,
+        &mut self,
         type_param_names: &[InternedString],
         type_param_bounds: &[Vec<InternedString>],
         type_args: &[Type],
@@ -676,7 +678,13 @@ impl Generator {
                 match concrete_type_id {
                     Some(tid) => {
                         if self
-                            .check_struct_conformance(tid, &[proto_type_id], line, col)
+                            .check_struct_conformance(
+                                tid,
+                                &[proto_type_id],
+                                &[Vec::new()],
+                                line,
+                                col,
+                            )
                             .is_err()
                         {
                             let type_name = self.type_display_name(concrete_type);

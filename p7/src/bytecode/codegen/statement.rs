@@ -74,8 +74,9 @@ impl Generator {
                 is_pub,
                 name,
                 attributes,
+                type_parameters,
                 methods,
-            } => self.generate_proto_decl(is_pub, name, attributes, methods),
+            } => self.generate_proto_decl(is_pub, name, attributes, type_parameters, methods),
             Statement::Return { expression, pos } => {
                 self.generate_return(expression.map(|expr| *expr), pos)
             }
@@ -506,7 +507,7 @@ impl Generator {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
-        conformance: Vec<Identifier>,
+        conformance: Vec<crate::ast::Type>,
         type_parameters: Vec<TypeParameter>,
         values: Vec<EnumVariant>,
         methods: Vec<StructMethod>,
@@ -536,7 +537,7 @@ impl Generator {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
-        _conformance: Vec<Identifier>,
+        _conformance: Vec<crate::ast::Type>,
         type_parameters: Vec<TypeParameter>,
     ) -> SaResult<TypeId> {
         let qualified_name = self.symbol_table.get_new_symbol_qualified_name(&name.name);
@@ -565,6 +566,7 @@ impl Generator {
             },
             monomorphization: None,
             conforming_to: Vec::new(),
+            conforming_to_args: Vec::new(),
             methods: Vec::new(),
             source_module: None,
         };
@@ -588,7 +590,7 @@ impl Generator {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
-        conformance: Vec<Identifier>,
+        conformance: Vec<crate::ast::Type>,
         type_parameters: Vec<TypeParameter>,
         values: Vec<EnumVariant>,
         methods: Vec<StructMethod>,
@@ -623,7 +625,7 @@ impl Generator {
         is_pub: bool,
         name: &Identifier,
         attributes: &[Attribute],
-        conformance: &[Identifier],
+        conformance: &[crate::ast::Type],
         type_parameters: &[TypeParameter],
         values: Vec<EnumVariant>,
     ) -> SaResult<()> {
@@ -675,7 +677,7 @@ impl Generator {
             (resolved_variants, None)
         };
 
-        let conforming_to = self.resolve_conformances(conformance)?;
+        let (conforming_to, conforming_to_args) = self.resolve_conformances(conformance)?;
 
         let type_param_names: Vec<InternedString> = type_parameters
             .iter()
@@ -696,6 +698,7 @@ impl Generator {
             type_param_bounds: type_param_bounds_list,
             generic_variant_types,
             monomorphization: None,
+            conforming_to_args,
             conforming_to,
             methods: Vec::new(),
             source_module: None,
@@ -741,9 +744,9 @@ impl Generator {
             }
             Ok(())
         })?;
-        let conforming_to = match self.symbol_table.get_type(type_id) {
-            TypeDefinition::Enum(e) => e.conforming_to.clone(),
-            _ => Vec::new(),
+        let (conforming_to, conforming_to_args) = match self.symbol_table.get_type(type_id) {
+            TypeDefinition::Enum(e) => (e.conforming_to.clone(), e.conforming_to_args.clone()),
+            _ => (Vec::new(), Vec::new()),
         };
         let symbol_id = self
             .symbol_table
@@ -752,7 +755,13 @@ impl Generator {
                 SemanticError::Other(format!("Type symbol not found for enum '{}'", name.name))
             })?;
         self.symbol_table.push_existing_symbol(symbol_id);
-        let result = self.check_struct_conformance(type_id, &conforming_to, name.line, name.col);
+        let result = self.check_struct_conformance(
+            type_id,
+            &conforming_to,
+            &conforming_to_args,
+            name.line,
+            name.col,
+        );
         self.symbol_table.pop_symbol();
         result
     }
@@ -762,7 +771,7 @@ impl Generator {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
-        conformance: Vec<Identifier>,
+        conformance: Vec<crate::ast::Type>,
         type_parameters: Vec<TypeParameter>,
         fields: Vec<StructField>,
         methods: Vec<StructMethod>,
@@ -792,7 +801,7 @@ impl Generator {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
-        _conformance: Vec<Identifier>,
+        _conformance: Vec<crate::ast::Type>,
         type_parameters: Vec<TypeParameter>,
     ) -> SaResult<TypeId> {
         let qualified_name = self.symbol_table.get_new_symbol_qualified_name(&name.name);
@@ -823,6 +832,7 @@ impl Generator {
             },
             monomorphization: None,
             conforming_to: Vec::new(),
+            conforming_to_args: Vec::new(),
             methods: Vec::new(),
             source_module: None,
         };
@@ -846,7 +856,7 @@ impl Generator {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
-        conformance: Vec<Identifier>,
+        conformance: Vec<crate::ast::Type>,
         type_parameters: Vec<TypeParameter>,
         fields: Vec<StructField>,
         methods: Vec<StructMethod>,
@@ -881,7 +891,7 @@ impl Generator {
         is_pub: bool,
         name: &Identifier,
         attributes: &[Attribute],
-        conformance: &[Identifier],
+        conformance: &[crate::ast::Type],
         type_parameters: &[TypeParameter],
         fields: &[StructField],
     ) -> SaResult<()> {
@@ -981,7 +991,7 @@ impl Generator {
         };
 
         let field_defaults = fields.iter().map(|f| f.default_value.clone()).collect();
-        let conforming_to = self.resolve_conformances(conformance)?;
+        let (conforming_to, conforming_to_args) = self.resolve_conformances(conformance)?;
 
         let ty = Struct {
             qualified_name,
@@ -994,6 +1004,7 @@ impl Generator {
             type_param_bounds: type_param_bounds_list,
             generic_field_types,
             monomorphization: None,
+            conforming_to_args,
             conforming_to,
             methods: Vec::new(),
             source_module: None,
@@ -1036,9 +1047,9 @@ impl Generator {
             }
             Ok(())
         })?;
-        let conforming_to = match self.symbol_table.get_type(type_id) {
-            TypeDefinition::Struct(s) => s.conforming_to.clone(),
-            _ => Vec::new(),
+        let (conforming_to, conforming_to_args) = match self.symbol_table.get_type(type_id) {
+            TypeDefinition::Struct(s) => (s.conforming_to.clone(), s.conforming_to_args.clone()),
+            _ => (Vec::new(), Vec::new()),
         };
         let symbol_id = self
             .symbol_table
@@ -1047,7 +1058,13 @@ impl Generator {
                 SemanticError::Other(format!("Type symbol not found for struct '{}'", name.name))
             })?;
         self.symbol_table.push_existing_symbol(symbol_id);
-        let result = self.check_struct_conformance(type_id, &conforming_to, name.line, name.col);
+        let result = self.check_struct_conformance(
+            type_id,
+            &conforming_to,
+            &conforming_to_args,
+            name.line,
+            name.col,
+        );
         self.symbol_table.pop_symbol();
         result
     }
@@ -1098,10 +1115,16 @@ impl Generator {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
+        type_parameters: Vec<TypeParameter>,
         methods: Vec<ProtoMethod>,
     ) -> SaResult<Type> {
-        let type_id = self.register_proto_decl(is_pub, name.clone(), attributes.clone())?;
-        self.resolve_proto_decl(type_id, is_pub, name, attributes, methods)?;
+        let type_id = self.register_proto_decl(
+            is_pub,
+            name.clone(),
+            attributes.clone(),
+            type_parameters.clone(),
+        )?;
+        self.resolve_proto_decl(type_id, is_pub, name, attributes, type_parameters, methods)?;
         Ok(Type::Primitive(PrimitiveType::Unit))
     }
 
@@ -1110,12 +1133,24 @@ impl Generator {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
+        type_parameters: Vec<TypeParameter>,
     ) -> SaResult<TypeId> {
         let qualified_name = self.symbol_table.get_new_symbol_qualified_name(&name.name);
+        let type_param_names: Vec<InternedString> = type_parameters
+            .iter()
+            .map(|tp| tp.name.name.clone())
+            .collect();
+        let type_param_bounds: Vec<Vec<InternedString>> = type_parameters
+            .iter()
+            .map(|tp| tp.bounds.iter().map(|b| b.name.clone()).collect())
+            .collect();
         let ty = Proto {
             qualified_name: qualified_name.clone(),
             is_pub,
             methods: vec![],
+            type_parameters: type_param_names,
+            type_param_bounds,
+            method_templates: vec![],
             attributes: attributes.clone(),
             foreign_type_tag: None,
             foreign_uuid: None,
@@ -1141,6 +1176,7 @@ impl Generator {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
+        type_parameters: Vec<TypeParameter>,
         methods: Vec<ProtoMethod>,
     ) -> SaResult<Type> {
         Self::validate_proto_attrs(&attributes)?;
@@ -1164,17 +1200,51 @@ impl Generator {
             }
         };
 
-        let mut methods_with_types = Vec::new();
-        for m in &methods {
-            let mut params = Vec::new();
-            for p in &m.parameters {
-                params.push(self.get_semantic_type(&p.arg_type)?);
+        // Always preserve method shapes as parsed-AST templates so that
+        // generic protos can substitute their type parameters per use-site.
+        let method_templates: Vec<(
+            InternedString,
+            Vec<crate::ast::Type>,
+            Option<crate::ast::Type>,
+        )> = methods
+            .iter()
+            .map(|m| {
+                (
+                    m.name.name.clone(),
+                    m.parameters.iter().map(|p| p.arg_type.clone()).collect(),
+                    m.return_type.clone(),
+                )
+            })
+            .collect();
+
+        let type_param_names: Vec<InternedString> = type_parameters
+            .iter()
+            .map(|tp| tp.name.name.clone())
+            .collect();
+        let type_param_bounds: Vec<Vec<InternedString>> = type_parameters
+            .iter()
+            .map(|tp| tp.bounds.iter().map(|b| b.name.clone()).collect())
+            .collect();
+
+        // Eagerly resolve method signatures only when this is a non-generic
+        // proto. Generic protos populate `methods` lazily at each use-site by
+        // substituting `method_templates` (see `check_struct_conformance` and
+        // `generate_proto_dispatch`). Resolving with `T` in scope here would
+        // require a `Type::TypeParameter` form the rest of the type system
+        // doesn't carry, so we keep `methods` empty in the generic case.
+        let mut methods_with_types: Vec<(InternedString, Vec<Type>, Option<Type>)> = Vec::new();
+        if type_parameters.is_empty() {
+            for m in &methods {
+                let mut params = Vec::new();
+                for p in &m.parameters {
+                    params.push(self.get_semantic_type(&p.arg_type)?);
+                }
+                let return_type = match &m.return_type {
+                    Some(t) => Some(self.get_semantic_type(t)?),
+                    None => None,
+                };
+                methods_with_types.push((m.name.name.clone(), params, return_type));
             }
-            let return_type = match &m.return_type {
-                Some(t) => Some(self.get_semantic_type(t)?),
-                None => None,
-            };
-            methods_with_types.push((m.name.name.clone(), params, return_type));
         }
 
         let foreign_attrs = Self::extract_foreign_attrs(&attributes)?;
@@ -1182,6 +1252,9 @@ impl Generator {
             qualified_name: qualified_name.clone(),
             is_pub,
             methods: methods_with_types.clone(),
+            type_parameters: type_param_names,
+            type_param_bounds,
+            method_templates,
             attributes: attributes.clone(),
             foreign_type_tag: foreign_attrs.as_ref().and_then(|f| f.type_tag.clone()),
             foreign_uuid: foreign_attrs.as_ref().and_then(|f| f.uuid.clone()),
@@ -1193,6 +1266,12 @@ impl Generator {
         self.symbol_table.pop_symbol();
 
         if let Some(foreign) = foreign_attrs {
+            if !type_parameters.is_empty() {
+                return Err(SemanticError::Other(format!(
+                    "@foreign proto '{}' may not have type parameters",
+                    qualified_name
+                )));
+            }
             self.synthesize_foreign_carrier(
                 &name,
                 &qualified_name,
@@ -1279,6 +1358,7 @@ impl Generator {
             generic_field_types: None,
             monomorphization: None,
             conforming_to: vec![proto_type_id],
+            conforming_to_args: vec![Vec::new()],
             methods: Vec::new(),
             source_module: None,
         };
@@ -1547,13 +1627,53 @@ impl Generator {
     }
 
     /// Helper to resolve protocol conformances from identifiers
-    fn resolve_conformances(&mut self, conformance: &[Identifier]) -> SaResult<Vec<u32>> {
-        let mut conforming_to = Vec::new();
-        for proto_name in conformance {
-            let proto_type_id = self.resolve_proto_identifier(proto_name)?;
+    /// Resolve a conformance list (parsed-AST `Type`s like `Iterator<int>`
+    /// or bare `Eq`) into the parallel `(proto TypeId, type args)` shape
+    /// stored on `Struct`/`Enum`. Each entry's type args are validated
+    /// against the proto's declared `type_parameters` arity (the proto must
+    /// already be resolved by Pass 1b-shape when this runs).
+    fn resolve_conformances(
+        &mut self,
+        conformance: &[crate::ast::Type],
+    ) -> SaResult<(Vec<u32>, Vec<Vec<Type>>)> {
+        let mut conforming_to = Vec::with_capacity(conformance.len());
+        let mut conforming_to_args = Vec::with_capacity(conformance.len());
+        for entry in conformance {
+            let (base_ident, parsed_args): (Identifier, &[crate::ast::Type]) = match entry {
+                crate::ast::Type::Identifier(id) => (id.clone(), &[]),
+                crate::ast::Type::Generic { base, type_args } => {
+                    (base.clone(), type_args.as_slice())
+                }
+                other => {
+                    return Err(SemanticError::Other(format!(
+                        "conformance entry must be a proto name (got '{}')",
+                        other.get_name()
+                    )));
+                }
+            };
+            let proto_type_id = self.resolve_proto_identifier(&base_ident)?;
+            let expected = match self.symbol_table.types.get(proto_type_id as usize) {
+                Some(TypeDefinition::Proto(p)) => p.type_parameters.len(),
+                _ => 0,
+            };
+            if expected != parsed_args.len() {
+                return Err(SemanticError::Other(format!(
+                    "proto '{}' expects {} type argument(s), found {} at line {} column {}",
+                    base_ident.name,
+                    expected,
+                    parsed_args.len(),
+                    base_ident.line,
+                    base_ident.col
+                )));
+            }
+            let mut args = Vec::with_capacity(parsed_args.len());
+            for a in parsed_args {
+                args.push(self.get_semantic_type(a)?);
+            }
             conforming_to.push(proto_type_id);
+            conforming_to_args.push(args);
         }
-        Ok(conforming_to)
+        Ok((conforming_to, conforming_to_args))
     }
 
     pub(super) fn import_type_from_module(
@@ -1615,6 +1735,7 @@ impl Generator {
                 generic_field_types: None,
                 monomorphization: None,
                 conforming_to: Vec::new(),
+                conforming_to_args: Vec::new(),
                 methods: Vec::new(),
                 source_module: source_module_path.clone(),
             }),
@@ -1628,6 +1749,7 @@ impl Generator {
                 generic_variant_types: None,
                 monomorphization: None,
                 conforming_to: Vec::new(),
+                conforming_to_args: Vec::new(),
                 methods: Vec::new(),
                 source_module: source_module_path.clone(),
             }),
@@ -1635,6 +1757,9 @@ impl Generator {
                 qualified_name: p.qualified_name.clone(),
                 is_pub: p.is_pub,
                 methods: Vec::new(),
+                type_parameters: p.type_parameters.clone(),
+                type_param_bounds: p.type_param_bounds.clone(),
+                method_templates: Vec::new(),
                 attributes: p.attributes.clone(),
                 foreign_type_tag: p.foreign_type_tag.clone(),
                 foreign_uuid: p.foreign_uuid.clone(),
@@ -1689,6 +1814,7 @@ impl Generator {
                     generic_field_types: s.generic_field_types.clone(),
                     monomorphization: s.monomorphization.clone(),
                     conforming_to,
+                    conforming_to_args: s.conforming_to_args.clone(),
                     methods: Vec::new(),
                     source_module: source_module_path.clone(),
                 })
@@ -1722,6 +1848,7 @@ impl Generator {
                     generic_variant_types: e.generic_variant_types.clone(),
                     monomorphization: e.monomorphization.clone(),
                     conforming_to,
+                    conforming_to_args: e.conforming_to_args.clone(),
                     methods: Vec::new(),
                     source_module: source_module_path.clone(),
                 })
@@ -1747,6 +1874,9 @@ impl Generator {
                     qualified_name: p.qualified_name.clone(),
                     is_pub: p.is_pub,
                     methods,
+                    type_parameters: p.type_parameters.clone(),
+                    type_param_bounds: p.type_param_bounds.clone(),
+                    method_templates: p.method_templates.clone(),
                     attributes: p.attributes.clone(),
                     foreign_type_tag: p.foreign_type_tag.clone(),
                     foreign_uuid: p.foreign_uuid.clone(),
@@ -1854,6 +1984,7 @@ impl Generator {
             generic_field_types: None,
             monomorphization: None,
             conforming_to: vec![proto_type_id],
+            conforming_to_args: vec![Vec::new()],
             methods: Vec::new(),
             source_module: None,
         };
@@ -1931,6 +2062,17 @@ impl Generator {
             Type::Proto(id) => {
                 let new_id = self.import_type_from_module(module, *id, type_map)?;
                 Type::Proto(new_id)
+            }
+            Type::ProtoGeneric { base, args } => {
+                let new_base = self.import_type_from_module(module, *base, type_map)?;
+                let mapped_args = args
+                    .iter()
+                    .map(|a| self.map_type_from_module(module, a, type_map))
+                    .collect::<SaResult<Vec<_>>>()?;
+                Type::ProtoGeneric {
+                    base: new_base,
+                    args: mapped_args,
+                }
             }
             Type::Function {
                 params,

@@ -114,11 +114,11 @@ fn main() -> int {
 
 #[test]
 fn bare_iterable_proto_in_conformance_list_works() {
-    // The marker protos are auto-imported too, so bare `[Iterable]` /
-    // `[Iterator]` in the conformance bracket work without the
+    // The marker protos are auto-imported too, so bare `[Iterable<...>]` /
+    // `[Iterator<...>]` in the conformance bracket work without the
     // `builtin.` qualifier.
     let src = r#"
-struct[Iterator] Counter(cur: int, end: int) {
+struct[Iterator<int>] Counter(cur: int, end: int) {
     pub fn next(box self) -> ?int {
         if self.cur >= self.end { return null; }
         let v = self.cur;
@@ -127,7 +127,7 @@ struct[Iterator] Counter(cur: int, end: int) {
     }
 }
 
-struct[Iterable] Source(limit: int) {
+struct[Iterable<Counter>] Source(limit: int) {
     pub fn iter(ref self) -> box<Counter> {
         box(Counter(0, self.limit))
     }

@@ -349,8 +349,17 @@ impl Context {
                     // Get the proto definition
                     if let Some(TypeDefinition::Proto(proto)) = module.types.get(proto_id as usize)
                     {
-                        // For each method in the proto
-                        for (method_name, _, _) in &proto.methods {
+                        // For each method in the proto: non-generic protos
+                        // populate `methods`; generic protos only populate
+                        // `method_templates`. Both carry the same method
+                        // names, so iterate whichever is populated.
+                        let method_names: Vec<&crate::intern::InternedString> =
+                            if !proto.methods.is_empty() {
+                                proto.methods.iter().map(|(name, _, _)| name).collect()
+                            } else {
+                                proto.method_templates.iter().map(|(name, _, _)| name).collect()
+                            };
+                        for method_name in method_names {
                             // Find the struct's symbol and look for this method
                             if let Some(struct_symbol) = type_symbols.get(&struct_type_id) {
                                 // Look for the method in the struct's children

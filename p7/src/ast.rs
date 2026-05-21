@@ -386,7 +386,7 @@ pub enum Statement {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
-        conformance: Vec<Identifier>, // Protocol conformances: enum[Proto1, Proto2]
+        conformance: Vec<crate::ast::Type>, // Protocol conformances: enum[Proto1, Proto2]
         type_parameters: Vec<TypeParameter>,
         values: Vec<EnumVariant>,
         methods: Vec<StructMethod>,
@@ -395,7 +395,7 @@ pub enum Statement {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
-        conformance: Vec<Identifier>, // Protocol conformances: struct[Proto1, Proto2]
+        conformance: Vec<crate::ast::Type>, // Protocol conformances: struct[Proto1, Proto2]
         type_parameters: Vec<TypeParameter>,
         fields: Vec<StructField>,
         methods: Vec<StructMethod>,
@@ -404,6 +404,7 @@ pub enum Statement {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
+        type_parameters: Vec<TypeParameter>,
         methods: Vec<ProtoMethod>,
     },
     Return {
