@@ -1,0 +1,24 @@
+// Exercises the `@test(runtime_error = "...")` form of the test attribute.
+// The substring match is checked against `Proto7Error`'s Display string.
+import test.test;
+
+// Empty substring is a catch-all: any runtime error counts as success.
+@test(runtime_error = "")
+fn any_runtime_error_passes() -> int {
+    let arr = [1, 2, 3];
+    return arr[7];
+}
+
+// Substring match against the real RuntimeError::Other message
+// (see radiance/protosept/p7/src/interpreter/builtin/array.rs).
+@test(runtime_error = "out of bounds")
+fn array_index_out_of_bounds_high() -> int {
+    let arr = [1, 2, 3];
+    return arr[10];
+}
+
+@test(runtime_error = "negative index")
+fn array_index_out_of_bounds_negative() -> int {
+    let arr = [1, 2, 3];
+    return arr[-1];
+}

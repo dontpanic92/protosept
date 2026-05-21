@@ -40,10 +40,16 @@ impl p7::ModuleProvider for CompositeModuleProvider {
 
 // Define the test modules that will be provided in-memory
 const TEST_MODULE_SOURCE: &str = r#"
-// Test attribute struct for marking test functions
+// Test attribute struct for marking test functions.
+//
+// Two mutually exclusive forms are recognised by the harness:
+//   @test(expected_type = "...", expected_value = "...")
+//   @test(runtime_error  = "<substring of Proto7Error Display>")
+// All fields are nullable so any single form type-checks against the struct.
 pub struct test(
-    pub expected_type: string,
-    pub expected_value: string,
+    pub expected_type: ?string,
+    pub expected_value: ?string,
+    pub runtime_error:  ?string,
 );
 
 // Another struct to test selective import
@@ -75,6 +81,17 @@ pub enum FailureReason {
     ValueMismatch { expected: String, found: String },
     InvalidTestAttribute(String),
     CompileDidNotFail,
+    /// `@test(runtime_error = ...)` was set but the function returned Ok.
+    RuntimeErrorDidNotOccur {
+        expected_substring: String,
+        returned: String,
+    },
+    /// The function did return Err, but `Proto7Error::Display` did not contain
+    /// the expected substring.
+    RuntimeErrorMismatch {
+        expected_substring: String,
+        found: String,
+    },
 }
 
 #[derive(Debug)]
@@ -83,11 +100,24 @@ pub enum TestResult {
     Failure(FailureReason),
 }
 
+#[derive(Debug, Clone)]
+enum TestExpectation {
+    /// `@test(expected_type = ..., expected_value = ...)` — function must
+    /// return Ok with a matching value.
+    Returns {
+        expected_type: String,
+        expected_value: String,
+    },
+    /// `@test(runtime_error = ...)` — function must return Err and the
+    /// formatted error must contain this substring. Empty substring matches
+    /// any runtime error.
+    RuntimeError { substring: String },
+}
+
 #[derive(Debug)]
 struct TestCase {
     function_name: String,
-    expected_type: String,
-    expected_value: String,
+    expectation: TestExpectation,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -103,13 +133,14 @@ fn extract_string_from_expression(expr: &Expression) -> Option<String> {
     }
 }
 
-fn parse_test_attribute(attr: &Attribute) -> Result<Option<(String, String)>, FailureReason> {
+fn parse_test_attribute(attr: &Attribute) -> Result<Option<TestExpectation>, FailureReason> {
     if attr.name.name != "test" {
         return Ok(None);
     }
 
     let mut expected_type = None;
     let mut expected_value = None;
+    let mut runtime_error = None;
 
     for (name_opt, expr) in &attr.arguments {
         let Some(name) = name_opt else {
@@ -140,6 +171,13 @@ fn parse_test_attribute(attr: &Attribute) -> Result<Option<(String, String)>, Fa
                     ));
                 }
             }
+            "runtime_error" => {
+                if runtime_error.replace(value).is_some() {
+                    return Err(FailureReason::InvalidTestAttribute(
+                        "Duplicate @test argument 'runtime_error'".to_string(),
+                    ));
+                }
+            }
             _ => {
                 return Err(FailureReason::InvalidTestAttribute(format!(
                     "Unknown @test argument '{}'",
@@ -149,8 +187,28 @@ fn parse_test_attribute(attr: &Attribute) -> Result<Option<(String, String)>, Fa
         }
     }
 
+    let returns_form = expected_type.is_some() || expected_value.is_some();
+    let error_form = runtime_error.is_some();
+
+    if returns_form && error_form {
+        return Err(FailureReason::InvalidTestAttribute(
+            "@test arguments 'runtime_error' and 'expected_type'/'expected_value' are mutually exclusive".to_string(),
+        ));
+    }
+
+    if let Some(substring) = runtime_error {
+        return Ok(Some(TestExpectation::RuntimeError { substring }));
+    }
+
     match (expected_type, expected_value) {
-        (Some(t), Some(v)) => Ok(Some((t, v))),
+        (Some(t), Some(v)) => Ok(Some(TestExpectation::Returns {
+            expected_type: t,
+            expected_value: v,
+        })),
+        (None, None) => Err(FailureReason::InvalidTestAttribute(
+            "@test requires either 'runtime_error' or both 'expected_type' and 'expected_value'"
+                .to_string(),
+        )),
         (None, _) => Err(FailureReason::InvalidTestAttribute(
             "Missing @test argument 'expected_type'".to_string(),
         )),
@@ -168,11 +226,10 @@ fn find_test_cases(module: &p7::bytecode::Module) -> Result<Vec<TestCase>, Failu
             && let Some(func) = module.functions.get(func_id as usize)
         {
             for attr in &func.attributes {
-                if let Some((expected_type, expected_value)) = parse_test_attribute(attr)? {
+                if let Some(expectation) = parse_test_attribute(attr)? {
                     test_cases.push(TestCase {
                         function_name: symbol.name.to_string(),
-                        expected_type,
-                        expected_value,
+                        expectation,
                     });
                 }
             }
@@ -188,88 +245,120 @@ fn run_test_case(
     options: RunOptions,
 ) -> Result<TestResult, Proto7Error> {
     let disassembly = unp7::disassemble_module(&module);
-    let p7_result = match p7::run_with_options(module, &test_case.function_name, options) {
-        Ok(value) => value,
-        Err(e) => {
-            println!("Disassembly of the module before error:\n{}", disassembly);
-            return Ok(TestResult::Failure(FailureReason::ExecutionError(e)));
-        }
-    };
+    let run_result = p7::run_with_options(module, &test_case.function_name, options);
 
-    // Compare results
-    let expected_type = &test_case.expected_type;
-    let expected_value_str = &test_case.expected_value;
-
-    let actual_type = match p7_result {
-        P7Value::Int(_) => {
-            if *expected_type == "bool" {
-                "bool"
-            } else {
-                "int"
+    match &test_case.expectation {
+        TestExpectation::RuntimeError { substring } => match run_result {
+            Ok(value) => {
+                let returned = format_value(&value);
+                Ok(TestResult::Failure(FailureReason::RuntimeErrorDidNotOccur {
+                    expected_substring: substring.clone(),
+                    returned,
+                }))
             }
-        }
-        P7Value::Float(_) => "float",
-        P7Value::String(_) => "string",
-        P7Value::Array(_) => "array",
-        _ => "unknown",
-    }
-    .to_string();
+            Err(err) => {
+                let rendered = format!("{}", err);
+                if substring.is_empty() || rendered.contains(substring) {
+                    Ok(TestResult::Success)
+                } else {
+                    println!("Disassembly of the module before error:\n{}", disassembly);
+                    Ok(TestResult::Failure(FailureReason::RuntimeErrorMismatch {
+                        expected_substring: substring.clone(),
+                        found: rendered,
+                    }))
+                }
+            }
+        },
+        TestExpectation::Returns {
+            expected_type,
+            expected_value,
+        } => {
+            let p7_result = match run_result {
+                Ok(value) => value,
+                Err(e) => {
+                    println!("Disassembly of the module before error:\n{}", disassembly);
+                    return Ok(TestResult::Failure(FailureReason::ExecutionError(e)));
+                }
+            };
 
-    if actual_type != *expected_type {
-        return Ok(TestResult::Failure(FailureReason::TypeMismatch {
-            expected: expected_type.clone(),
-            found: actual_type,
-        }));
-    }
-
-    let is_match = match &p7_result {
-        P7Value::Int(actual_val) => {
-            if *expected_type == "bool" {
-                let expected_bool = match expected_value_str.as_str() {
-                    "true" => 1i64,
-                    "false" => 0i64,
-                    _ => {
-                        return Ok(TestResult::Failure(FailureReason::ValueMismatch {
-                            expected: expected_value_str.clone(),
-                            found: actual_val.to_string(),
-                        }));
+            let actual_type = match p7_result {
+                P7Value::Int(_) => {
+                    if expected_type == "bool" {
+                        "bool"
+                    } else {
+                        "int"
                     }
-                };
-                *actual_val == expected_bool
-            } else {
-                expected_value_str.parse::<i64>() == Ok(*actual_val)
+                }
+                P7Value::Float(_) => "float",
+                P7Value::String(_) => "string",
+                P7Value::Array(_) => "array",
+                _ => "unknown",
             }
-        }
-        P7Value::Float(actual_val) => expected_value_str
-            .parse::<f64>()
-            .is_ok_and(|expected_val| (actual_val - expected_val).abs() < 1e-9),
-        P7Value::String(actual_val) => actual_val.as_ref() == expected_value_str.as_str(),
-        P7Value::Array(elements) => {
-            let formatted = format_array(elements);
-            formatted == *expected_value_str
-        }
-        _ => {
-            let actual_value = format!("{:?}", p7_result);
-            actual_value == *expected_value_str
-        }
-    };
+            .to_string();
 
-    if !is_match {
-        println!("Disassembly of the module before error:\n{}", disassembly);
-        let found = match p7_result {
-            P7Value::Int(i) => i.to_string(),
-            P7Value::Float(f) => f.to_string(),
-            P7Value::String(s) => s.to_string(),
-            P7Value::Array(elements) => format_array(&elements),
-            _ => format!("{:?}", p7_result),
-        };
-        return Ok(TestResult::Failure(FailureReason::ValueMismatch {
-            expected: expected_value_str.clone(),
-            found,
-        }));
+            if actual_type != *expected_type {
+                return Ok(TestResult::Failure(FailureReason::TypeMismatch {
+                    expected: expected_type.clone(),
+                    found: actual_type,
+                }));
+            }
+
+            let is_match = match &p7_result {
+                P7Value::Int(actual_val) => {
+                    if expected_type == "bool" {
+                        let expected_bool = match expected_value.as_str() {
+                            "true" => 1i64,
+                            "false" => 0i64,
+                            _ => {
+                                return Ok(TestResult::Failure(FailureReason::ValueMismatch {
+                                    expected: expected_value.clone(),
+                                    found: actual_val.to_string(),
+                                }));
+                            }
+                        };
+                        *actual_val == expected_bool
+                    } else {
+                        expected_value.parse::<i64>() == Ok(*actual_val)
+                    }
+                }
+                P7Value::Float(actual_val) => expected_value
+                    .parse::<f64>()
+                    .is_ok_and(|expected_val| (actual_val - expected_val).abs() < 1e-9),
+                P7Value::String(actual_val) => {
+                    actual_val.as_ref() == expected_value.as_str()
+                }
+                P7Value::Array(elements) => {
+                    let formatted = format_array(elements);
+                    formatted == *expected_value
+                }
+                _ => {
+                    let actual_value = format!("{:?}", p7_result);
+                    actual_value == *expected_value
+                }
+            };
+
+            if !is_match {
+                println!("Disassembly of the module before error:\n{}", disassembly);
+                let found = format_value(&p7_result);
+                return Ok(TestResult::Failure(FailureReason::ValueMismatch {
+                    expected: expected_value.clone(),
+                    found,
+                }));
+            }
+
+            Ok(TestResult::Success)
+        }
     }
+}
 
-    Ok(TestResult::Success)
+fn format_value(value: &P7Value) -> String {
+    match value {
+        P7Value::Int(i) => i.to_string(),
+        P7Value::Float(f) => f.to_string(),
+        P7Value::String(s) => s.to_string(),
+        P7Value::Array(elements) => format_array(elements),
+        other => format!("{:?}", other),
+    }
 }
 
 fn format_array(elements: &[P7Value]) -> String {
@@ -509,7 +598,11 @@ mod tests {
         ]);
 
         let parsed = parse_test_attribute(&attr).unwrap();
-        assert_eq!(parsed, Some(("int".to_string(), "42".to_string())));
+        assert!(matches!(
+            parsed,
+            Some(TestExpectation::Returns { ref expected_type, ref expected_value })
+                if expected_type == "int" && expected_value == "42"
+        ));
     }
 
     #[test]
@@ -554,5 +647,208 @@ mod tests {
             Err(FailureReason::InvalidTestAttribute(message))
                 if message.contains("must be a string literal")
         ));
+    }
+
+    #[test]
+    fn test_attribute_accepts_runtime_error_alone() {
+        let attr = test_attr(vec![(
+            Some(ident("runtime_error")),
+            Expression::StringLiteral(InternedString::from("out of bounds")),
+        )]);
+
+        assert!(matches!(
+            parse_test_attribute(&attr).unwrap(),
+            Some(TestExpectation::RuntimeError { ref substring })
+                if substring == "out of bounds"
+        ));
+    }
+
+    #[test]
+    fn test_attribute_accepts_runtime_error_empty_string_as_catchall() {
+        let attr = test_attr(vec![(
+            Some(ident("runtime_error")),
+            Expression::StringLiteral(InternedString::from("")),
+        )]);
+
+        assert!(matches!(
+            parse_test_attribute(&attr).unwrap(),
+            Some(TestExpectation::RuntimeError { ref substring })
+                if substring.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_attribute_rejects_mixing_runtime_error_with_returns_form() {
+        let attr = test_attr(vec![
+            (
+                Some(ident("expected_type")),
+                Expression::StringLiteral(InternedString::from("int")),
+            ),
+            (
+                Some(ident("runtime_error")),
+                Expression::StringLiteral(InternedString::from("oops")),
+            ),
+        ]);
+
+        assert!(matches!(
+            parse_test_attribute(&attr),
+            Err(FailureReason::InvalidTestAttribute(message))
+                if message.contains("mutually exclusive")
+        ));
+    }
+
+    #[test]
+    fn test_attribute_rejects_duplicate_runtime_error() {
+        let attr = test_attr(vec![
+            (
+                Some(ident("runtime_error")),
+                Expression::StringLiteral(InternedString::from("first")),
+            ),
+            (
+                Some(ident("runtime_error")),
+                Expression::StringLiteral(InternedString::from("second")),
+            ),
+        ]);
+
+        assert!(matches!(
+            parse_test_attribute(&attr),
+            Err(FailureReason::InvalidTestAttribute(message))
+                if message.contains("Duplicate @test argument 'runtime_error'")
+        ));
+    }
+
+    #[test]
+    fn test_attribute_rejects_runtime_error_non_string_literal() {
+        let attr = test_attr(vec![(
+            Some(ident("runtime_error")),
+            Expression::IntegerLiteral(7),
+        )]);
+
+        assert!(matches!(
+            parse_test_attribute(&attr),
+            Err(FailureReason::InvalidTestAttribute(message))
+                if message.contains("must be a string literal")
+        ));
+    }
+
+    #[test]
+    fn test_attribute_rejects_empty_attribute() {
+        let attr = test_attr(vec![]);
+
+        assert!(matches!(
+            parse_test_attribute(&attr),
+            Err(FailureReason::InvalidTestAttribute(message))
+                if message.contains("either 'runtime_error'")
+        ));
+    }
+
+    /// End-to-end harness coverage for the runtime_error variant: compile a
+    /// tiny in-memory file, run it through `run_tests_in_file`, and assert on
+    /// the resulting per-function outcome.
+    fn run_inline(src: &str) -> Vec<(String, TestResult)> {
+        use std::io::Write;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "p7_runtime_error_inline_{}_{}.p7",
+            std::process::id(),
+            n
+        ));
+        let mut f = std::fs::File::create(&path).expect("create");
+        f.write_all(src.as_bytes()).expect("write");
+        drop(f);
+        let results = super::run_tests_in_file(&path).expect("run");
+        let _ = std::fs::remove_file(&path);
+        results
+    }
+
+    #[test]
+    fn runtime_error_substring_match_passes() {
+        let results = run_inline(
+            r#"
+            import test.test;
+
+            @test(runtime_error = "out of bounds")
+            pub fn oob() -> int {
+                let arr = [1, 2, 3];
+                return arr[7];
+            }
+        "#,
+        );
+        assert_eq!(results.len(), 1);
+        assert!(
+            matches!(&results[0].1, TestResult::Success),
+            "expected Success, got {:?}",
+            results[0].1
+        );
+    }
+
+    #[test]
+    fn runtime_error_substring_mismatch_fails() {
+        let results = run_inline(
+            r#"
+            import test.test;
+
+            @test(runtime_error = "totally not the real message")
+            pub fn oob() -> int {
+                let arr = [1, 2, 3];
+                return arr[7];
+            }
+        "#,
+        );
+        assert_eq!(results.len(), 1);
+        assert!(
+            matches!(
+                &results[0].1,
+                TestResult::Failure(FailureReason::RuntimeErrorMismatch { .. })
+            ),
+            "expected RuntimeErrorMismatch, got {:?}",
+            results[0].1
+        );
+    }
+
+    #[test]
+    fn runtime_error_did_not_occur_fails() {
+        let results = run_inline(
+            r#"
+            import test.test;
+
+            @test(runtime_error = "something")
+            pub fn ok_path() -> int {
+                return 1;
+            }
+        "#,
+        );
+        assert_eq!(results.len(), 1);
+        assert!(
+            matches!(
+                &results[0].1,
+                TestResult::Failure(FailureReason::RuntimeErrorDidNotOccur { .. })
+            ),
+            "expected RuntimeErrorDidNotOccur, got {:?}",
+            results[0].1
+        );
+    }
+
+    #[test]
+    fn runtime_error_empty_substring_catches_any_error() {
+        let results = run_inline(
+            r#"
+            import test.test;
+
+            @test(runtime_error = "")
+            pub fn oob() -> int {
+                let arr = [1, 2, 3];
+                return arr[7];
+            }
+        "#,
+        );
+        assert_eq!(results.len(), 1);
+        assert!(
+            matches!(&results[0].1, TestResult::Success),
+            "expected Success, got {:?}",
+            results[0].1
+        );
     }
 }

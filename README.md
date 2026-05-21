@@ -190,6 +190,15 @@ cargo run -p p7-cli -- test tests/test_basic_operations.p7
 
 Compile-fail tests: add a line starting with `// compile_fail` anywhere in the `.p7` file.
 
+### `@test` attribute forms
+
+The harness recognises two mutually exclusive forms on each `@test(...)`:
+
+- **Positive return:** `@test(expected_type = "...", expected_value = "...")` — the function must return `Ok` and the value must match.
+- **Runtime error:** `@test(runtime_error = "<substring>")` — the function must return `Err` and the `Proto7Error` `Display` text must contain `<substring>`. An empty substring (`""`) matches any runtime error, which is useful as a catch-all when the exact message is unstable. Substring matching is case-sensitive — when renaming error messages in `radiance/protosept/p7/src/errors.rs` or in `RuntimeError::Other(format!(...))` call sites, sweep `tests/*.p7` for the affected substrings.
+
+Mixing `runtime_error` with `expected_type`/`expected_value` on the same attribute is rejected at scan time. A function may carry multiple `@test(...)` attributes; each is run as a separate case.
+
 ## Benchmarks
 
 The `p7` crate includes Criterion benchmarks for compiler phases, runtime hot paths, and a curated `.p7` test-corpus subset.
