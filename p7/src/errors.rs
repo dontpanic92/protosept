@@ -159,6 +159,10 @@ pub enum SemanticError {
         name: String,
         pos: Option<SourcePos>,
     },
+    DiscardedMustUseValue {
+        ty: String,
+        pos: Option<SourcePos>,
+    },
     Other(String),
 }
 
@@ -209,6 +213,15 @@ impl fmt::Display for SemanticError {
             }
             SemanticError::UseAfterMove { name, pos } => {
                 format_error_with_pos!(&format!("Use of moved value: {}", name), pos)
+            }
+            SemanticError::DiscardedMustUseValue { ty, pos } => {
+                format_error_with_pos!(
+                    &format!(
+                        "Discarded value of `#[must_use]` type `{}`; bind it with `let _ = ...` or use it",
+                        ty
+                    ),
+                    pos
+                )
             }
             SemanticError::Other(msg) => format!("Semantic error: {}", msg),
         };

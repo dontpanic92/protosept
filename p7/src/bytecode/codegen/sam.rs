@@ -374,6 +374,9 @@ fn collect_identifiers_rec(expr: &Expression, names: &mut Vec<InternedString>) {
             for stmt in stmts {
                 match stmt {
                     crate::ast::Statement::Expression(e) => collect_identifiers_rec(e, names),
+                    crate::ast::Statement::ExpressionStatement(e) => {
+                        collect_identifiers_rec(e, names)
+                    }
                     crate::ast::Statement::Let { expression, .. } => {
                         collect_identifiers_rec(expression, names)
                     }
@@ -651,6 +654,9 @@ fn rewrite_captures_stmt(
     use crate::ast::Statement;
     match stmt {
         Statement::Expression(e) => Statement::Expression(rewrite_captures(e, captures)),
+        Statement::ExpressionStatement(e) => {
+            Statement::ExpressionStatement(rewrite_captures(e, captures))
+        }
         Statement::Let {
             is_pub,
             is_mutable,

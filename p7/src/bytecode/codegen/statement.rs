@@ -31,6 +31,9 @@ impl Generator {
                 expression,
             } => self.generate_let_destructure(is_mutable, pattern, expression),
             Statement::Expression(expression) => self.generate_expression(expression),
+            Statement::ExpressionStatement(expression) => {
+                self.generate_expression_statement(expression)
+            }
             Statement::FunctionDeclaration(declaration) => self.generate_function_decl(declaration),
             Statement::Throw(expression) => self.generate_throw(expression),
             Statement::EnumDeclaration {
@@ -78,6 +81,60 @@ impl Generator {
             }
             Statement::Import { module_path, alias } => self.generate_import(module_path, alias),
         }
+    }
+
+    /// Codegen for a discarding expression-statement (`expr;`).
+    ///
+    /// Evaluates the expression, then:
+    /// - if the static result type is non-Unit, emits `Pop` to keep the
+    ///   stack balanced so that authors can write bare calls like
+    ///   `ui.text(...)` without `let _ = ...`;
+    /// - if the expression's call resolves to a function/method tagged
+    ///   `#[must_use]` and its result type is non-Unit, raises a
+    ///   `SemanticError::DiscardedMustUseValue` instead of silently
+    ///   popping.
+    ///
+    /// Always returns `Unit` because a discarding statement has no
+    /// observable value.
+    fn generate_expression_statement(&mut self, expression: Expression) -> SaResult<Type> {
+        let pos = expression.source_pos();
+        let must_use = self.expression_is_must_use_call(&expression);
+        let ty = self.generate_expression(expression)?;
+        if ty == Type::Primitive(PrimitiveType::Unit) {
+            return Ok(Type::Primitive(PrimitiveType::Unit));
+        }
+        if must_use {
+            return Err(SemanticError::DiscardedMustUseValue {
+                ty: format!("{:?}", ty),
+                pos,
+            });
+        }
+        self.builder.pop();
+        Ok(Type::Primitive(PrimitiveType::Unit))
+    }
+
+    /// Returns true if `expression` is a direct call (`f(...)`) whose
+    /// resolved callee carries the `#[must_use]` attribute. Method calls
+    /// and indirect callees are not yet inspected — that lands with the
+    /// follow-up IDL plumbing.
+    fn expression_is_must_use_call(&self, expression: &Expression) -> bool {
+        let Expression::FunctionCall(call) = expression else {
+            return false;
+        };
+        let Expression::Identifier(ident) = call.callee.as_ref() else {
+            return false;
+        };
+        let Some(sym_id) = self.symbol_table.find_symbol_in_scope(&ident.name) else {
+            return false;
+        };
+        let Some(sym) = self.symbol_table.get_symbol(sym_id) else {
+            return false;
+        };
+        let Some(func_id) = sym.get_func_id() else {
+            return false;
+        };
+        let func = self.symbol_table.get_function(func_id);
+        func.attributes.iter().any(|a| a.name.name == "must_use")
     }
 
     fn generate_let(

@@ -510,6 +510,9 @@ impl Generator {
                         crate::ast::Statement::Expression(e) => {
                             Self::collect_identifiers_recursive(e, names);
                         }
+                        crate::ast::Statement::ExpressionStatement(e) => {
+                            Self::collect_identifiers_recursive(e, names);
+                        }
                         crate::ast::Statement::Let { expression, .. } => {
                             Self::collect_identifiers_recursive(expression, names);
                         }

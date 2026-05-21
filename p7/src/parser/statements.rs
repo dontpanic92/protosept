@@ -606,7 +606,7 @@ impl Parser {
                     self.peek(),
                     TokenType::Semicolon => {
                         self.consume();
-                        Ok(Statement::Expression(expression))
+                        Ok(Statement::ExpressionStatement(expression))
                     }
                     TokenType::CloseBrace => Ok(Statement::Expression(
                         Expression::BlockValue(Box::new(expression)),

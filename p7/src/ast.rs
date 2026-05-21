@@ -362,6 +362,12 @@ pub enum Statement {
         expression: Expression,
     },
     Expression(Expression),
+    /// Discarding expression-statement: `expr;`. Codegen pops the value
+    /// from the stack when its static type is non-Unit, so authors can
+    /// write `ui.text(...)` directly instead of `let _ = ui.text(...)`.
+    /// Distinct from `Statement::Expression` which carries a block's
+    /// tail value through to the caller.
+    ExpressionStatement(Expression),
     FunctionDeclaration(FunctionDeclaration),
     Throw(Expression),
     EnumDeclaration {
