@@ -531,8 +531,38 @@ impl Generator {
                     })
                 }
             }
+            Type::Proto(type_id) => {
+                // Recover the proto's qualified name so the resulting ParsedType
+                // round-trips through `get_semantic_type` (which uses
+                // `resolve_qualified_type_name` for dotted names). Without this
+                // arm, nullable / array element types whose inner is a `Proto`
+                // would fall into the `_` arm below and stringify as
+                // `proto(N)` — an identifier that no scope ever defines.
+                let type_def = self.symbol_table.get_type(*type_id);
+                if let TypeDefinition::Proto(p) = type_def {
+                    ParsedType::Identifier(Identifier {
+                        name: p.qualified_name.clone(),
+                        line: SYNTHETIC_LINE,
+                        col: SYNTHETIC_COL,
+                    })
+                } else {
+                    ParsedType::Identifier(Identifier {
+                        name: InternedString::from(format!("proto_{}", type_id)),
+                        line: SYNTHETIC_LINE,
+                        col: SYNTHETIC_COL,
+                    })
+                }
+            }
+            Type::Nullable(inner) => {
+                ParsedType::Nullable(Box::new(self.type_to_parsed_type(inner)))
+            }
+            Type::MutableReference(inner) => {
+                ParsedType::MutableReference(Box::new(self.type_to_parsed_type(inner)))
+            }
             _ => {
-                // For other types, create a simple identifier
+                // For other types (Tuple, Map, Function), create a simple
+                // identifier as a last resort. These were not previously
+                // exercised by the array-method substitution path.
                 ParsedType::Identifier(Identifier {
                     name: InternedString::from(ty.to_string()),
                     line: SYNTHETIC_LINE,

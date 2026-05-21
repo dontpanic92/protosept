@@ -26,6 +26,42 @@ pub(crate) struct ForeignAttrs {
 }
 
 impl Generator {
+    /// Reconcile a function body's implicit-return type with the declared
+    /// return type at validation time. Applies spec §3.5 widening
+    /// (`T -> ?T`) by emitting `WrapNullable` on the value the block left
+    /// on the stack, and lets exact-match return types pass through
+    /// untouched. Other mismatches surface as a `TypeMismatch` error.
+    pub(super) fn coerce_implicit_return(
+        &mut self,
+        block_type: &Type,
+        return_type: &Type,
+        pos: Option<SourcePos>,
+    ) -> SaResult<()> {
+        if block_type == return_type {
+            return Ok(());
+        }
+
+        // Widen `T -> ?T` at the implicit-return tail. The block has already
+        // pushed a `T`; wrap it so the runtime value is a properly-tagged
+        // nullable and downstream callers see a `?T`.
+        if let Type::Nullable(inner) = return_type
+            && !matches!(block_type, Type::Nullable(_))
+            && self.types_compatible(block_type, inner)
+        {
+            self.builder.wrap_nullable();
+            return Ok(());
+        }
+
+        Err(SemanticError::TypeMismatch {
+            lhs: format!("declared return type {}", self.type_to_string(return_type)),
+            rhs: format!(
+                "implicit return value of type {}",
+                self.type_to_string(block_type)
+            ),
+            pos,
+        })
+    }
+
     /// Look up a symbol in scope, returning an error if not found
     pub(super) fn require_symbol_in_scope(
         &self,

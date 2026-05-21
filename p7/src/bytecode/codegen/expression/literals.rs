@@ -132,7 +132,12 @@ impl Generator {
     ) -> SaResult<Type> {
         let (line, col) = pos;
 
-        // Infer element type from first element if non-empty, or use expected type for empty arrays
+        // Infer element type from first element if non-empty, or use expected type for empty arrays.
+        // When an expected element type is available, route each element through the
+        // checking-context path (`generate_expression_with_expected_type`) so that the
+        // spec §3.5 widenings — `null -> ?T` and `T -> ?T` — fire per element. Without an
+        // expected type, fall back to the synthesis path: take the first element's type as
+        // the array's element type and require the rest to match exactly.
         let element_type = if elements.is_empty() {
             // Empty array uses expected type from context
             if let Some(expected) = expected_element_type {
@@ -143,6 +148,14 @@ impl Generator {
                     line, col
                 )));
             }
+        } else if let Some(expected) = expected_element_type {
+            // Checking-context: every element is checked against the expected element type,
+            // which lets `null` and bare `T` widen to `?T` (and `box<T>` coerce to `box<P>`).
+            for element in &elements {
+                let _ = self
+                    .generate_expression_with_expected_type(element.clone(), Some(expected))?;
+            }
+            expected.clone()
         } else {
             // Generate code for all elements and check they have the same type
             let first_expr_type = self.generate_expression(elements[0].clone())?;

@@ -472,22 +472,8 @@ impl Generator {
                 };
                 self.local_scope = saved_local_scope;
 
-                if !diverges && block_type != monomorph_return_type {
-                    return Err(SemanticError::TypeMismatch {
-                        lhs: format!(
-                            "declared return type {}",
-                            self.type_to_string(&monomorph_return_type)
-                        ),
-                        rhs: format!(
-                            "implicit return value of type {}",
-                            self.type_to_string(&block_type)
-                        ),
-                        pos: Some(SourcePos {
-                            line: SYNTHETIC_LINE,
-                            col: SYNTHETIC_COL,
-                            module: Some(self._current_module_path.to_string()),
-                        }),
-                    });
+                if !diverges {
+                    self.coerce_implicit_return(&block_type, &monomorph_return_type, None)?;
                 }
                 self.builder.ret();
             }
@@ -1179,19 +1165,13 @@ impl Generator {
         self.symbol_table.pop_symbol();
 
         let block_type = block_result?;
-        if intrinsic_name.is_none() && !body_diverges && block_type != return_type {
-            return Err(SemanticError::TypeMismatch {
-                lhs: format!("declared return type {}", self.type_to_string(&return_type)),
-                rhs: format!(
-                    "implicit return value of type {}",
-                    self.type_to_string(&block_type)
-                ),
-                pos: Some(SourcePos {
-                    line: declaration.name.line,
-                    col: declaration.name.col,
-                    module: Some(self._current_module_path.to_string()),
-                }),
+        if intrinsic_name.is_none() && !body_diverges {
+            let pos = Some(SourcePos {
+                line: declaration.name.line,
+                col: declaration.name.col,
+                module: Some(self._current_module_path.to_string()),
             });
+            self.coerce_implicit_return(&block_type, &return_type, pos)?;
         }
 
         self.builder.ret();
