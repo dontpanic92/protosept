@@ -1752,6 +1752,7 @@ fn map_host_return_ty(
             Type::Primitive(PrimitiveType::Unit) => H::Void,
             Type::Primitive(PrimitiveType::Int) => H::Int,
             Type::Primitive(PrimitiveType::Float) => H::Float,
+            Type::Primitive(PrimitiveType::Bool) => H::Bool,
             Type::Primitive(PrimitiveType::String) => H::String,
             Type::Nullable(inner) => H::Optional(Box::new(map_ty(inner, symbol_table))),
             Type::Array(inner) => H::Array(Box::new(map_ty(inner, symbol_table))),

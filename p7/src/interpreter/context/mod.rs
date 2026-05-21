@@ -238,6 +238,31 @@ impl Context {
         None
     }
 
+    /// All foreign-tagged proto type_tags that the struct
+    /// `(module_idx, type_id)` conforms to, in declaration order.
+    /// Used by the crosscom dispatcher to pick the most-derived
+    /// interface UUID when reverse-wrapping a script-side
+    /// `box<F>` that the script struct may also conform to
+    /// derived interfaces of.
+    pub fn struct_foreign_proto_tags(&self, module_idx: usize, type_id: u32) -> Vec<&str> {
+        use crate::semantic::TypeDefinition;
+        let mut out = Vec::new();
+        let Some(module) = self.modules.get(module_idx) else {
+            return out;
+        };
+        let Some(TypeDefinition::Struct(s)) = module.types.get(type_id as usize) else {
+            return out;
+        };
+        for &proto_id in &s.conforming_to {
+            if let Some(TypeDefinition::Proto(p)) = module.types.get(proto_id as usize)
+                && let Some(tag) = &p.foreign_type_tag
+            {
+                out.push(tag.as_str());
+            }
+        }
+        out
+    }
+
     /// Push an owning foreign value onto the current stack frame.
     ///
     /// The runtime allocates a box on `box_heap` containing

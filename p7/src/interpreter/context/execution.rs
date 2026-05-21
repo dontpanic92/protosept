@@ -8,7 +8,8 @@ use super::data::{ContextResult, Data, StackFrame, Struct};
 /// dispatcher can pop+decode it without a custom serialization format.
 /// Encoding (`first element of array` is the variant tag):
 ///   0 = Void, 1 = Int, 2 = Float, 3 = String,
-///   4 = Foreign(type_tag),  5 = Optional(inner),  6 = Array(inner)
+///   4 = Foreign(type_tag),  5 = Optional(inner),  6 = Array(inner),
+///   7 = Bool
 pub fn encode_return_ty(rt: &crate::semantic::HostReturnTy) -> Data {
     use crate::semantic::HostReturnTy as H;
     let arr = match rt {
@@ -21,6 +22,7 @@ pub fn encode_return_ty(rt: &crate::semantic::HostReturnTy) -> Data {
         }
         H::Optional(inner) => vec![Data::Int(5), encode_return_ty(inner)],
         H::Array(inner) => vec![Data::Int(6), encode_return_ty(inner)],
+        H::Bool => vec![Data::Int(7)],
     };
     Data::array(arr)
 }

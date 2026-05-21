@@ -42,6 +42,7 @@ pub enum HostReturnTy {
     Void,
     Int,
     Float,
+    Bool,
     String,
     Foreign { type_tag: InternedString },
     Optional(Box<HostReturnTy>),
