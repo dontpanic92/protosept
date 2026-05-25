@@ -646,7 +646,8 @@ impl Generator {
             }
             Pattern::EnumVariant { .. }
             | Pattern::StructPattern { .. }
-            | Pattern::TuplePattern { .. } => Err(SemanticError::Other(
+            | Pattern::TuplePattern { .. }
+            | Pattern::Or { .. } => Err(SemanticError::Other(
                 "Destructuring patterns cannot be converted to expressions".to_string(),
             )),
         }

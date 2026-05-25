@@ -345,6 +345,13 @@ pub enum Pattern {
     TuplePattern {
         sub_patterns: Vec<Pattern>,
     },
+    /// Or-pattern: `p1 | p2 | ... | pn`. All alternatives must be
+    /// refutable and binding-free in v1 (literal patterns or unit-variant
+    /// enum paths only). Used to collapse repeated literal arms, e.g.
+    /// `match x { 0 | 1 | 2 => ..., _ => ... }`.
+    Or {
+        alternatives: Vec<Pattern>,
+    },
 }
 
 impl Pattern {

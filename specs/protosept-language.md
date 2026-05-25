@@ -1961,6 +1961,7 @@ Supported pattern forms:
 - **Tuple-struct**: `TypeName(p1, ..., pn)` — matches a tuple-struct value by positional field index.
 - **Record-struct**: `TypeName(f1 = p1, f2 = p2, ..., fn = pn)` — matches a record-struct value by named fields. If a field pattern is written as just `fname` (without `= sub_pattern`), it is shorthand for `fname = fname` (binding the field value to a variable with the same name as the field).
 - **Enum payload variant**: `EnumName.Variant(p1, ..., pn)` — matches a specific payload variant and destructures its payload by position.
+- **Or-pattern**: `p1 | p2 | ... | pn` (`n ≥ 2`) — matches if **any** alternative matches. Only valid in refutable contexts (`match` arms, `try ... else` handler arms). In v1, alternatives must be **literal patterns or unit-variant paths** (no bindings, no destructuring, no nested or-patterns); the engine rejects bindings such as `0 | n` and destructurings such as `Some(_) | None`. Or-patterns count towards exhaustiveness: `true | false` is exhaustive for `bool`, and listing every enum variant via `|` is exhaustive for that enum.
 
 Grammar sketch:
 
@@ -1972,6 +1973,7 @@ pattern            := '_'
                     | '(' pattern ',' pattern (',' pattern)* ','? ')'
                     | path '(' pattern_list? ')'
                     | path '(' field_pattern_list ')'
+                    | pattern '|' pattern  -- or-pattern (refutable contexts only; v1: literal or unit-variant alternatives only)
 
 pattern_list       := pattern (',' pattern)* ','?
 field_pattern      := ident ('=' pattern)?
@@ -2115,11 +2117,15 @@ match s {
 
 #### 9.6.4 Exhaustiveness (v1)
 
-`match` MUST be exhaustive.
+`match` MUST be exhaustive. The check runs before codegen; non-exhaustive
+matches are rejected with `Non-exhaustive match on <T>: <missing>`.
 
 - If it is not statically provable that some arm matches, the program is ill-formed (ERROR).
 - The simplest portable way to be exhaustive is to include a final wildcard arm `_ => ...`.
-- For enum types, listing all variants (including payload variants) exhaustively is also accepted without a wildcard.
+- Any **irrefutable** arm makes the `match` exhaustive (wildcard `_`, bare identifier binding `name`, tuple pattern, struct pattern).
+- For `bool` scrutinees, covering both `true` and `false` literal patterns (including via an or-pattern `true | false`) is exhaustive.
+- For enum types, listing all variants (including payload variants) exhaustively is also accepted without a wildcard. Or-pattern alternatives count individually toward enum-variant coverage.
+- For all other types (`int`, `float`, `string`, `char`, `?T`, …), only an irrefutable arm makes the `match` exhaustive — listing literals alone is **not** sufficient.
 
 Example:
 ```p7

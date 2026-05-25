@@ -170,6 +170,11 @@ pub enum SemanticError {
         ty: String,
         pos: Option<SourcePos>,
     },
+    NonExhaustiveMatch {
+        scrutinee_ty: String,
+        missing: String,
+        pos: Option<SourcePos>,
+    },
     Other(String),
 }
 
@@ -226,6 +231,19 @@ impl fmt::Display for SemanticError {
                     &format!(
                         "Discarded value of `#[must_use]` type `{}`; bind it with `let _ = ...` or use it",
                         ty
+                    ),
+                    pos
+                )
+            }
+            SemanticError::NonExhaustiveMatch {
+                scrutinee_ty,
+                missing,
+                pos,
+            } => {
+                format_error_with_pos!(
+                    &format!(
+                        "Non-exhaustive match on `{}`: {} not covered. Add a wildcard arm `_ => ...` or cover the missing case.",
+                        scrutinee_ty, missing
                     ),
                     pos
                 )

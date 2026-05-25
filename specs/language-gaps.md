@@ -31,10 +31,22 @@ Range form (`for i in 0..n`) is still open — see item #6.
 **Impact: LOW** — `box<array<string>>` appears 30+ times in function signatures.
 A `type Lines = box<array<string>>` would improve readability significantly.
 
-### 4. No `match` on integers reliably
-**Impact: LOW** — The spec supports integer match patterns, but key code dispatch
-in the editor uses sequential `if` chains. Unclear if `match` on `int` works
-reliably in the current compiler for all cases.
+### 4. No `match` on integers reliably — RESOLVED
+**Impact: LOW** — Spec §9.6 `match` on int / bool / enum is now fully
+supported and verified end-to-end:
+
+- Trailing comma after the last arm is optional.
+- `true` / `false` literal patterns parse and run.
+- Bare identifier patterns (`n => ...`) bind to the scrutinee (irrefutable).
+- Non-exhaustive matches are rejected at compile time with a clear
+  `Non-exhaustive match on <T>: ...` error.
+- Or-patterns `p1 | p2 | ...` are supported for literal / unit-variant
+  alternatives in `match` and `try ... else` arms (v1: no bindings or
+  destructuring inside an alternative); they participate in exhaustiveness
+  (e.g. `true | false` for `bool`, all-variants for enums).
+
+Regression coverage lives in
+`radiance/protosept/p7/tests/match_int_enum.rs`.
 
 ### 5. No `+=`, `-=`, `*=` compound assignment
 **Impact: MEDIUM** — Mutable variable updates require repeating the variable name:

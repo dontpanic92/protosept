@@ -112,6 +112,14 @@ impl Parser {
                     self.consume();
                     Ok(Pattern::StringLiteral(value.clone()))
                 }
+                TokenType::True => {
+                    self.consume();
+                    Ok(Pattern::BooleanLiteral(true))
+                }
+                TokenType::False => {
+                    self.consume();
+                    Ok(Pattern::BooleanLiteral(false))
+                }
                 TokenType::Identifier(_) => {
                     let identifier = self.parse_identifier()?;
                     let pattern = Pattern::Identifier(identifier);
@@ -177,6 +185,22 @@ impl Parser {
         };
 
         let pattern = self.parse_pattern()?;
+
+        // Or-pattern: `p1 | p2 | ... | pn`. Only legal in refutable
+        // (match / try-else) contexts, which is exactly where
+        // `parse_named_pattern` is called. Sub-patterns inside
+        // destructurings use `parse_pattern` directly and do not pick up
+        // `|` chains.
+        let pattern = if self.peek_match(TokenType::Pipe) {
+            let mut alternatives = vec![pattern];
+            while self.consume_match(TokenType::Pipe).is_ok() {
+                alternatives.push(self.parse_pattern()?);
+            }
+            Pattern::Or { alternatives }
+        } else {
+            pattern
+        };
+
         Ok(NamedPattern { name, pattern })
     }
 
@@ -201,10 +225,26 @@ impl Parser {
                         expression,
                     });
 
+                    // Comma is required between arms whose body is not a
+                    // block (`{ ... }`), but optional after the final arm.
                     let ends_with_brace = self.ends_with_brace();
-                    let comma = self.consume_match(TokenType::Comma);
-                    if !ends_with_brace {
-                        comma?;
+                    let comma_consumed = self.consume_match(TokenType::Comma).is_ok();
+                    if !comma_consumed
+                        && !ends_with_brace
+                        && !self.peek_match(TokenType::CloseBrace)
+                    {
+                        return Err(ParseError::ExpectedToken {
+                            expected: "Comma".to_string(),
+                            found: format!(
+                                "{:?}",
+                                self.peek().map(|t| &t.token_type)
+                            ),
+                            pos: self.peek().map(|t| SourcePos {
+                                line: t.line,
+                                col: t.col,
+                                module: None,
+                            }),
+                        });
                     }
 
                     if self.consume_match(TokenType::CloseBrace).is_ok() {
@@ -261,11 +301,23 @@ impl Parser {
                 expression,
             });
 
-            // Handle optional comma
+            // Comma is required between arms whose body is not a block
+            // (`{ ... }`), but optional after the final arm.
             let ends_with_brace = self.ends_with_brace();
-            let comma = self.consume_match(TokenType::Comma);
-            if !ends_with_brace {
-                comma?;
+            let comma_consumed = self.consume_match(TokenType::Comma).is_ok();
+            if !comma_consumed
+                && !ends_with_brace
+                && !self.peek_match(TokenType::CloseBrace)
+            {
+                return Err(ParseError::ExpectedToken {
+                    expected: "Comma".to_string(),
+                    found: format!("{:?}", self.peek().map(|t| &t.token_type)),
+                    pos: self.peek().map(|t| SourcePos {
+                        line: t.line,
+                        col: t.col,
+                        module: None,
+                    }),
+                });
             }
 
             // Check for closing brace again
