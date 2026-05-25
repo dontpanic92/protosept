@@ -278,3 +278,15 @@ pub fn max(a: int, b: int) -> int;
 // Clamp value to [lo, hi] range.
 @intrinsic(name="builtin.clamp")
 pub fn clamp(value: int, lo: int, hi: int) -> int;
+
+// Trigonometric and square-root scalar math on floats. Angles are
+// in radians, matching `f32::sin`/`f32::cos`. `sqrt` of a negative
+// number returns NaN (the underlying `f32::sqrt`).
+@intrinsic(name="builtin.sin")
+pub fn sin(x: float) -> float;
+
+@intrinsic(name="builtin.cos")
+pub fn cos(x: float) -> float;
+
+@intrinsic(name="builtin.sqrt")
+pub fn sqrt(x: float) -> float;

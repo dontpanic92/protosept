@@ -432,11 +432,7 @@ impl Parser {
         // Catch this at parse time so authors get a clear, attribute-aware
         // diagnostic instead of the misleading "expected 0 args, N provided"
         // error that fires later at the constructor call site.
-        if !fields.is_empty()
-            && attributes
-                .iter()
-                .any(|a| a.name.name.as_str() == "builtin")
-        {
+        if !fields.is_empty() && attributes.iter().any(|a| a.name.name.as_str() == "builtin") {
             return Err(ParseError::Other {
                 message: format!(
                     "@builtin() struct '{}' must not declare fields; \

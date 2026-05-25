@@ -208,3 +208,50 @@ pub(crate) fn builtin_clamp(ctx: &mut Context) -> ContextResult<()> {
         )),
     }
 }
+
+/// `sin(x: float) -> float` — radians, mirrors `f32::sin`. Internally
+/// computed on `f64` so script `float` (f64) precision is preserved.
+pub(crate) fn builtin_sin(ctx: &mut Context) -> ContextResult<()> {
+    let x = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    match x {
+        Data::Float(v) => {
+            ctx.stack_frame_mut()?.stack.push(Data::Float(v.sin()));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other("sin: argument must be float".into())),
+    }
+}
+
+pub(crate) fn builtin_cos(ctx: &mut Context) -> ContextResult<()> {
+    let x = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    match x {
+        Data::Float(v) => {
+            ctx.stack_frame_mut()?.stack.push(Data::Float(v.cos()));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other("cos: argument must be float".into())),
+    }
+}
+
+pub(crate) fn builtin_sqrt(ctx: &mut Context) -> ContextResult<()> {
+    let x = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    match x {
+        Data::Float(v) => {
+            ctx.stack_frame_mut()?.stack.push(Data::Float(v.sqrt()));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other("sqrt: argument must be float".into())),
+    }
+}

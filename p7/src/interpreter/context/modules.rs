@@ -357,7 +357,11 @@ impl Context {
                             if !proto.methods.is_empty() {
                                 proto.methods.iter().map(|(name, _, _)| name).collect()
                             } else {
-                                proto.method_templates.iter().map(|(name, _, _)| name).collect()
+                                proto
+                                    .method_templates
+                                    .iter()
+                                    .map(|(name, _, _)| name)
+                                    .collect()
                             };
                         for method_name in method_names {
                             // Find the struct's symbol and look for this method

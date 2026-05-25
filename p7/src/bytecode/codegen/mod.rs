@@ -998,10 +998,7 @@ impl Generator {
             if !is_pub || has_type_params {
                 continue;
             }
-            if attributes
-                .iter()
-                .any(|a| a.name.name.as_str() == "builtin")
-            {
+            if attributes.iter().any(|a| a.name.name.as_str() == "builtin") {
                 continue;
             }
 
@@ -1030,11 +1027,8 @@ impl Generator {
                 None => continue,
             };
 
-            let alias_symbol = crate::semantic::Symbol::new(
-                short_name,
-                qualified_name,
-                SymbolKind::Type(new_id),
-            );
+            let alias_symbol =
+                crate::semantic::Symbol::new(short_name, qualified_name, SymbolKind::Type(new_id));
             self.symbol_table.insert_symbol(alias_symbol);
         }
     }

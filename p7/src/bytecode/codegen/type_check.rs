@@ -709,8 +709,7 @@ impl Generator {
                 } else {
                     format!("proto#{}", base)
                 };
-                let args_str: Vec<String> =
-                    args.iter().map(|a| self.type_to_string(a)).collect();
+                let args_str: Vec<String> = args.iter().map(|a| self.type_to_string(a)).collect();
                 format!("{}<{}>", base_name, args_str.join(", "))
             }
             Type::BoxType(inner) => format!("box<{}>", self.type_to_string(inner)),

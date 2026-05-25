@@ -268,8 +268,11 @@ pub struct Proto {
     /// Always populated alongside `methods` (which holds the eagerly-resolved
     /// form for the zero-type-param fast path).
     #[serde(skip)]
-    pub method_templates:
-        Vec<(InternedString, Vec<crate::ast::Type>, Option<crate::ast::Type>)>,
+    pub method_templates: Vec<(
+        InternedString,
+        Vec<crate::ast::Type>,
+        Option<crate::ast::Type>,
+    )>,
     #[serde(skip)]
     pub attributes: Vec<crate::ast::Attribute>,
     /// `@foreign(type_tag="...")` value, when this proto carries the
@@ -442,14 +445,8 @@ impl PartialEq for Type {
             (Type::Struct(a), Type::Struct(b)) => *a == *b,
             (Type::Proto(a), Type::Proto(b)) => *a == *b,
             (
-                Type::ProtoGeneric {
-                    base: ba,
-                    args: aa,
-                },
-                Type::ProtoGeneric {
-                    base: bb,
-                    args: ab,
-                },
+                Type::ProtoGeneric { base: ba, args: aa },
+                Type::ProtoGeneric { base: bb, args: ab },
             ) => ba == bb && aa == ab,
             (Type::Nullable(a), Type::Nullable(b)) => *a == *b,
             (

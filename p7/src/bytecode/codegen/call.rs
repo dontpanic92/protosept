@@ -708,13 +708,8 @@ impl Generator {
             return Ok(None);
         };
 
-        let result = self.generate_proto_dispatch(
-            proto_id,
-            &proto_args,
-            object_ty,
-            field,
-            arguments,
-        )?;
+        let result =
+            self.generate_proto_dispatch(proto_id, &proto_args, object_ty, field, arguments)?;
         Ok(Some(result))
     }
 
@@ -815,8 +810,10 @@ impl Generator {
                 || matches!(inner, Type::ProtoGeneric { base, .. } if *base == proto_id)
         };
         if let Some(receiver_ty) = method_params.first() {
-            let object_is_box = matches!(object_ty, Type::BoxType(inner) if object_inner_is_self(inner));
-            let object_is_ref = matches!(object_ty, Type::Reference(inner) if object_inner_is_self(inner));
+            let object_is_box =
+                matches!(object_ty, Type::BoxType(inner) if object_inner_is_self(inner));
+            let object_is_ref =
+                matches!(object_ty, Type::Reference(inner) if object_inner_is_self(inner));
             let allowed = match receiver_ty {
                 Type::Reference(inner) if object_inner_is_self(inner) => {
                     object_is_box || object_is_ref

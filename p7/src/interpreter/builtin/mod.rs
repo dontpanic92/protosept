@@ -54,6 +54,9 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("builtin.min".to_string(), display::builtin_min);
     ctx.register_host_function("builtin.max".to_string(), display::builtin_max);
     ctx.register_host_function("builtin.clamp".to_string(), display::builtin_clamp);
+    ctx.register_host_function("builtin.sin".to_string(), display::builtin_sin);
+    ctx.register_host_function("builtin.cos".to_string(), display::builtin_cos);
+    ctx.register_host_function("builtin.sqrt".to_string(), display::builtin_sqrt);
     ctx.register_host_function("tuple.new".to_string(), tuple::tuple_new);
     ctx.register_host_function("tuple.index".to_string(), tuple::tuple_index);
     ctx.register_host_function("hashmap.new".to_string(), hashmap::hashmap_new);

@@ -124,9 +124,8 @@ impl Generator {
     /// them at `target`. Every loop generator must call this once, with its
     /// chosen continue target, before `finalize_loop_context`.
     fn finalize_continue_patches_to(&mut self, target: u32) {
-        let patches = std::mem::take(
-            &mut self.loop_context_stack.last_mut().unwrap().continue_patches,
-        );
+        let patches =
+            std::mem::take(&mut self.loop_context_stack.last_mut().unwrap().continue_patches);
         for addr in patches {
             self.builder.patch_jump_address(addr, target);
         }
@@ -224,25 +223,13 @@ impl Generator {
             if let Some(elem_ty) = unwrap_array_type(&stored_ty) {
                 // ----- Array fast path -----
                 self.generate_for_in_array_fast_path(
-                    arr_name,
-                    arr_var_id,
-                    len_name,
-                    i_name,
-                    elem_ty,
-                    index_var,
-                    value_var,
-                    body,
+                    arr_name, arr_var_id, len_name, i_name, elem_ty, index_var, value_var, body,
                     pos,
                 )?;
             } else {
                 // ----- Iterable proto path -----
                 self.generate_for_in_iterable_proto_path(
-                    arr_name,
-                    n,
-                    index_var,
-                    value_var,
-                    body,
-                    pos,
+                    arr_name, n, index_var, value_var, body, pos,
                 )?;
             }
 
@@ -292,11 +279,7 @@ impl Generator {
             .local_scope
             .as_mut()
             .unwrap()
-            .add_variable(
-                len_name.clone(),
-                Type::Primitive(PrimitiveType::Int),
-                false,
-            )
+            .add_variable(len_name.clone(), Type::Primitive(PrimitiveType::Int), false)
             .map_err(|_| SemanticError::Other("failed to bind $for_len".to_string()))?;
         self.builder.stvar(len_var_id);
 
@@ -472,12 +455,11 @@ impl Generator {
             operator: synth_token(TokenType::Equals),
             right: Box::new(Expression::NullLiteral),
         };
-        let break_block = Expression::Block(vec![Statement::ExpressionStatement(
-            Expression::Break {
+        let break_block =
+            Expression::Block(vec![Statement::ExpressionStatement(Expression::Break {
                 value: None,
                 pos,
-            },
-        )]);
+            })]);
         let null_check = Expression::If {
             condition: Box::new(cur_is_null),
             then_branch: Box::new(break_block),

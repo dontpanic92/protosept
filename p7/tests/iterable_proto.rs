@@ -325,7 +325,10 @@ fn main() -> int {
 }
 "#;
     let result = p7::compile(src.to_string());
-    assert!(result.is_err(), "iterating over an int must be a compile error");
+    assert!(
+        result.is_err(),
+        "iterating over an int must be a compile error"
+    );
 }
 
 #[test]
@@ -341,5 +344,8 @@ fn main() -> int {
 }
 "#;
     let result = p7::compile(src.to_string());
-    assert!(result.is_err(), "struct without an iter() method must be a compile error");
+    assert!(
+        result.is_err(),
+        "struct without an iter() method must be a compile error"
+    );
 }

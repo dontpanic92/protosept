@@ -235,10 +235,7 @@ impl Parser {
                     {
                         return Err(ParseError::ExpectedToken {
                             expected: "Comma".to_string(),
-                            found: format!(
-                                "{:?}",
-                                self.peek().map(|t| &t.token_type)
-                            ),
+                            found: format!("{:?}", self.peek().map(|t| &t.token_type)),
                             pos: self.peek().map(|t| SourcePos {
                                 line: t.line,
                                 col: t.col,
@@ -305,10 +302,7 @@ impl Parser {
             // (`{ ... }`), but optional after the final arm.
             let ends_with_brace = self.ends_with_brace();
             let comma_consumed = self.consume_match(TokenType::Comma).is_ok();
-            if !comma_consumed
-                && !ends_with_brace
-                && !self.peek_match(TokenType::CloseBrace)
-            {
+            if !comma_consumed && !ends_with_brace && !self.peek_match(TokenType::CloseBrace) {
                 return Err(ParseError::ExpectedToken {
                     expected: "Comma".to_string(),
                     found: format!("{:?}", self.peek().map(|t| &t.token_type)),

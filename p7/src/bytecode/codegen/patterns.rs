@@ -356,10 +356,7 @@ impl Generator {
                     // Irrefutable.
                     if arm.pattern.name.is_some() {
                         self.builder.dup();
-                        self.bind_pattern_variable(
-                            &arm.pattern.name,
-                            scrutinee_ty.clone(),
-                        )?;
+                        self.bind_pattern_variable(&arm.pattern.name, scrutinee_ty.clone())?;
                     }
                     self.bind_pattern_variable(&Some(id.clone()), scrutinee_ty.clone())?;
 
@@ -439,10 +436,7 @@ impl Generator {
                             self.builder.patch_jump_address(j, body_address);
                         }
 
-                        self.bind_pattern_variable(
-                            &arm.pattern.name,
-                            scrutinee_ty.clone(),
-                        )?;
+                        self.bind_pattern_variable(&arm.pattern.name, scrutinee_ty.clone())?;
 
                         let arm_ty = self.generate_expression(arm.expression.clone())?;
                         self.validate_match_arm_type(&mut result_ty, arm_ty)?;
@@ -454,10 +448,8 @@ impl Generator {
                         }
 
                         let next_arm_address = self.builder.next_address();
-                        self.builder.patch_jump_address(
-                            no_match_jump_placeholder,
-                            next_arm_address,
-                        );
+                        self.builder
+                            .patch_jump_address(no_match_jump_placeholder, next_arm_address);
                         continue;
                     }
 
@@ -529,11 +521,7 @@ impl Generator {
     ///   is exhaustive.
     /// - For all other types (`int`, `float`, `string`, `char`, `?T`, ...),
     ///   only an irrefutable arm makes the match exhaustive.
-    fn check_match_exhaustive(
-        &self,
-        arms: &[MatchArm],
-        scrutinee_ty: &Type,
-    ) -> SaResult<()> {
+    fn check_match_exhaustive(&self, arms: &[MatchArm], scrutinee_ty: &Type) -> SaResult<()> {
         // Try-else handler arms re-use this codegen path with an exception
         // type as scrutinee and an empty arm list. Treat empty as already
         // exhaustive (try-else has its own handling).
@@ -542,7 +530,10 @@ impl Generator {
         }
 
         // Any irrefutable arm anywhere makes the match exhaustive.
-        if arms.iter().any(|a| Self::pattern_is_irrefutable(&a.pattern.pattern)) {
+        if arms
+            .iter()
+            .any(|a| Self::pattern_is_irrefutable(&a.pattern.pattern))
+        {
             return Ok(());
         }
 
@@ -553,7 +544,11 @@ impl Generator {
                 for a in arms {
                     Self::for_each_atomic_pattern(&a.pattern.pattern, &mut |p| {
                         if let Pattern::BooleanLiteral(v) = p {
-                            if *v { has_true = true; } else { has_false = true; }
+                            if *v {
+                                has_true = true;
+                            } else {
+                                has_false = true;
+                            }
                         }
                     });
                 }
@@ -627,12 +622,12 @@ impl Generator {
     fn pattern_is_irrefutable(pattern: &Pattern) -> bool {
         match pattern {
             Pattern::Identifier(_) => true, // covers both `_` and bare bindings
-            Pattern::TuplePattern { sub_patterns } => sub_patterns
-                .iter()
-                .all(Self::pattern_is_irrefutable),
-            Pattern::StructPattern { field_patterns, .. } => field_patterns
-                .iter()
-                .all(Self::pattern_is_irrefutable),
+            Pattern::TuplePattern { sub_patterns } => {
+                sub_patterns.iter().all(Self::pattern_is_irrefutable)
+            }
+            Pattern::StructPattern { field_patterns, .. } => {
+                field_patterns.iter().all(Self::pattern_is_irrefutable)
+            }
             _ => false,
         }
     }

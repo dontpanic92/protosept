@@ -152,8 +152,8 @@ impl Generator {
             // Checking-context: every element is checked against the expected element type,
             // which lets `null` and bare `T` widen to `?T` (and `box<T>` coerce to `box<P>`).
             for element in &elements {
-                let _ = self
-                    .generate_expression_with_expected_type(element.clone(), Some(expected))?;
+                let _ =
+                    self.generate_expression_with_expected_type(element.clone(), Some(expected))?;
             }
             expected.clone()
         } else {
