@@ -36,7 +36,6 @@ pub struct TypeParameter {
 pub enum Type {
     Identifier(Identifier),
     Reference(Box<Type>),
-    MutableReference(Box<Type>),
     Array(Box<Type>),
     Generic {
         base: Identifier,
@@ -58,9 +57,6 @@ impl Type {
             Type::Identifier(identifier) => identifier.name.to_string(),
             Type::Reference(r) => {
                 format!("ref<{}>", r.get_name())
-            }
-            Type::MutableReference(r) => {
-                format!("ref_mut<{}>", r.get_name())
             }
             Type::Array(a) => {
                 format!("{}[]", a.get_name())

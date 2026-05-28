@@ -23,14 +23,17 @@ impl Parser {
             let parameter = match_token! {
                 self.peek(),
                 TokenType::Ref => {
-                    // Receiver shortcut: `ref self` == `self: ref Self`
-                    // or `ref mut self` (ephemeral mutable borrow receiver)
+                    // Receiver shortcut: `ref self` == `self: ref<Self>`.
+                    // `ref<T>` is a (mutable) borrowed view; the readonly axis
+                    // was removed, so `ref mut self` is no longer accepted.
                     self.consume(); // consume 'ref'
 
-                    // Check for 'ref mut self'
-                    let is_mut = matches!(self.peek().map(|t| &t.token_type), Some(TokenType::Mut));
-                    if is_mut {
-                        self.consume(); // consume 'mut'
+                    if matches!(self.peek().map(|t| &t.token_type), Some(TokenType::Mut)) {
+                        let mut_tok = self.peek().cloned();
+                        return Err(ParseError::UnexpectedToken {
+                            found: "`ref mut self` is no longer supported; `ref self` is now mutable. Use `ref self`.".to_string(),
+                            pos: mut_tok.map(|t| SourcePos { line: t.line, col: t.col, module: None }),
+                        });
                     }
 
                     let name = self.parse_identifier()?;
@@ -47,11 +50,7 @@ impl Parser {
                         col: name.col,
                     });
 
-                    let arg_type = if is_mut {
-                        Type::MutableReference(Box::new(self_type))
-                    } else {
-                        Type::Reference(Box::new(self_type))
-                    };
+                    let arg_type = Type::Reference(Box::new(self_type));
 
                     Ok(Parameter { name, arg_type, default_value: None })
                 },

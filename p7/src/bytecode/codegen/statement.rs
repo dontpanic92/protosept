@@ -2039,9 +2039,6 @@ impl Generator {
             Type::Reference(inner) => Type::Reference(Box::new(
                 self.map_type_from_module(module, inner, type_map)?,
             )),
-            Type::MutableReference(inner) => Type::MutableReference(Box::new(
-                self.map_type_from_module(module, inner, type_map)?,
-            )),
             Type::Array(inner) => Type::Array(Box::new(
                 self.map_type_from_module(module, inner, type_map)?,
             )),
@@ -2115,10 +2112,10 @@ fn map_host_return_ty(
             Type::Primitive(PrimitiveType::String) => H::String,
             Type::Nullable(inner) => H::Optional(Box::new(map_ty(inner, symbol_table))),
             Type::Array(inner) => H::Array(Box::new(map_ty(inner, symbol_table))),
-            // `box<T>`, `ref<T>`, and `&mut T` are handle-copy wrappers (see
+            // `box<T>` and `ref<T>` are handle-copy wrappers (see
             // `Type::is_copy_treated`); on the host ABI they are
             // indistinguishable from `T` itself, so unwrap and recurse.
-            Type::BoxType(inner) | Type::Reference(inner) | Type::MutableReference(inner) => {
+            Type::BoxType(inner) | Type::Reference(inner) => {
                 map_ty(inner, symbol_table)
             }
             Type::Proto(type_id) => {

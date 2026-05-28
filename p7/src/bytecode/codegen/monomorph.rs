@@ -558,9 +558,6 @@ impl Generator {
             Type::Nullable(inner) => {
                 ParsedType::Nullable(Box::new(self.type_to_parsed_type(inner)))
             }
-            Type::MutableReference(inner) => {
-                ParsedType::MutableReference(Box::new(self.type_to_parsed_type(inner)))
-            }
             _ => {
                 // For other types (Tuple, Map, Function), create a simple
                 // identifier as a last resort. These were not previously
@@ -592,9 +589,6 @@ impl Generator {
             ParsedType::Reference(inner) => {
                 ParsedType::Reference(Box::new(self.substitute_parsed_type(inner, substitution)))
             }
-            ParsedType::MutableReference(inner) => ParsedType::MutableReference(Box::new(
-                self.substitute_parsed_type(inner, substitution),
-            )),
             ParsedType::Array(inner) => {
                 ParsedType::Array(Box::new(self.substitute_parsed_type(inner, substitution)))
             }

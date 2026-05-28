@@ -804,7 +804,7 @@ impl Generator {
     /// Check if a semantic type contains ref<T> anywhere
     pub(super) fn type_contains_ref(&self, ty: &Type) -> bool {
         match ty {
-            Type::Reference(_) | Type::MutableReference(_) => true,
+            Type::Reference(_) => true,
             Type::Array(inner) => self.type_contains_ref(inner),
             Type::BoxType(inner) => self.type_contains_ref(inner),
             Type::Nullable(inner) => self.type_contains_ref(inner),

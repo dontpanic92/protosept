@@ -26,13 +26,7 @@ impl Generator {
                 matches!(actual, Type::BoxType(actual_inner) if actual_inner.as_ref() == expected_inner.as_ref())
             }
             Type::Reference(expected_inner) => match actual {
-                Type::Reference(actual_inner)
-                | Type::MutableReference(actual_inner)
-                | Type::BoxType(actual_inner) => actual_inner.as_ref() == expected_inner.as_ref(),
-                other => other == expected_inner.as_ref(),
-            },
-            Type::MutableReference(expected_inner) => match actual {
-                Type::MutableReference(actual_inner) | Type::BoxType(actual_inner) => {
+                Type::Reference(actual_inner) | Type::BoxType(actual_inner) => {
                     actual_inner.as_ref() == expected_inner.as_ref()
                 }
                 other => other == expected_inner.as_ref(),
@@ -818,7 +812,6 @@ impl Generator {
                 Type::Reference(inner) if object_inner_is_self(inner) => {
                     object_is_box || object_is_ref
                 }
-                Type::MutableReference(inner) if object_inner_is_self(inner) => object_is_box,
                 Type::BoxType(inner) if object_inner_is_self(inner) => object_is_box,
                 _ => true,
             };
@@ -955,7 +948,7 @@ impl Generator {
     ) -> SaResult<Type> {
         // Extract the type_id for source_module lookup (works for both struct and enum)
         let type_id_opt = match object_ty {
-            Type::Reference(inner) | Type::BoxType(inner) | Type::MutableReference(inner) => {
+            Type::Reference(inner) | Type::BoxType(inner) => {
                 match inner.as_ref() {
                     Type::Struct(id) | Type::Enum(id) => Some(*id),
                     _ => None,

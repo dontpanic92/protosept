@@ -1,34 +1,31 @@
-// Tests for `ref mut self` receivers on proto methods (spec §11.4, §18.3,
-// §18.7). Covers conformance, dynamic dispatch via `box<P>`, and direct
-// mutable-place / box receiver invocation.
+// Tests for `ref self` receivers on proto methods. After dropping the
+// readonly axis, `ref self` is the only borrowed receiver form and permits
+// mutation of fields through the borrow. Covers conformance, dynamic
+// dispatch via `box<P>`, and direct method invocation.
 import test.test;
 
 proto Ticker {
-    fn tick(ref mut self);
+    fn tick(ref self);
     fn value(ref self) -> int;
 }
 
 struct[Ticker] Tally(pub n: int) {
-    pub fn tick(ref mut self) { self.n = self.n + 1; }
+    pub fn tick(ref self) { self.n = self.n + 1; }
     pub fn value(ref self) -> int { return self.n; }
 }
 
-// Direct call on a `let mut` mutable place — bypasses proto dispatch entirely.
-// Regression guard: tightening the proto-side conformance check must not
-// break direct struct-method `ref mut self` invocation.
+// Direct call on a `let mut` mutable place.
 @test(expected_type = "int", expected_value = "2")
-fn test_proto_ref_mut_self_direct_let_mut() -> int {
+fn test_proto_ref_self_direct_let_mut() -> int {
     let mut t = Tally(0);
     t.tick();
     t.tick();
     return t.value();
 }
 
-// Dynamic dispatch via `box<P>` for a `ref mut self` proto method (§18.7).
-// The auto-borrow described in §11.3.2 produces an ephemeral mutable borrow
-// of `*bp` for the duration of each call.
+// Dynamic dispatch via `box<P>` for a `ref self` proto method.
 @test(expected_type = "int", expected_value = "3")
-fn test_proto_ref_mut_self_box_proto_dispatch() -> int {
+fn test_proto_ref_self_box_proto_dispatch() -> int {
     let bp: box<Ticker> = box(Tally(0)) as box<Ticker>;
     bp.tick();
     bp.tick();
@@ -36,10 +33,9 @@ fn test_proto_ref_mut_self_box_proto_dispatch() -> int {
     return bp.value();
 }
 
-// `box<Self>` (concrete) for a `ref mut self` method also works via the
-// struct-method path (§11.3.2). No proto handle involved here.
+// `box<Self>` (concrete) also works via the struct-method path.
 @test(expected_type = "int", expected_value = "5")
-fn test_proto_ref_mut_self_box_concrete() -> int {
+fn test_proto_ref_self_box_concrete() -> int {
     let b = box(Tally(0));
     b.tick();
     b.tick();

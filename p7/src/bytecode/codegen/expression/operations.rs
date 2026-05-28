@@ -213,13 +213,6 @@ impl Generator {
             if let Some(var_id) = scope.find_variable(&identifier.name) {
                 let lhs_ty = scope.get_variable_type(var_id);
 
-                if matches!(lhs_ty, Type::Reference(_)) {
-                    return Err(SemanticError::Other(format!(
-                        "Cannot assign to read-only ref '{}'",
-                        identifier.name
-                    )));
-                }
-
                 if !scope.is_variable_mutable(var_id) {
                     return Err(SemanticError::Other(format!(
                         "Cannot assign to immutable variable '{}' (use 'let mut' instead of 'let')",
@@ -246,14 +239,7 @@ impl Generator {
 
             // Try parameter
             if let Some(param_id) = scope.find_param(&identifier.name) {
-                let lhs_ty = scope.get_param_type(param_id);
-
-                if matches!(lhs_ty, Type::Reference(_)) {
-                    return Err(SemanticError::Other(format!(
-                        "Cannot assign to read-only ref parameter '{}'",
-                        identifier.name
-                    )));
-                }
+                let _lhs_ty = scope.get_param_type(param_id);
 
                 return Err(SemanticError::Other(format!(
                     "Cannot assign to immutable parameter '{}' (parameters are always immutable)",
@@ -363,14 +349,6 @@ impl Generator {
         }
 
         let object_ty = self.generate_expression(object.clone())?;
-
-        if matches!(object_ty, Type::Reference(_)) {
-            return Err(SemanticError::Other(format!(
-                "Cannot assign through read-only ref '{}.{}'",
-                object.get_name(),
-                field.name
-            )));
-        }
 
         let struct_type_id = self.extract_struct_type_id(&object_ty, &field)?;
 
@@ -789,7 +767,7 @@ impl Generator {
 
         // Auto-deref references and boxes
         let object_ty = match object_ty {
-            Type::Reference(inner) | Type::MutableReference(inner) => *inner,
+            Type::Reference(inner) => *inner,
             Type::BoxType(inner) => *inner,
             other => other,
         };

@@ -305,7 +305,6 @@ pub enum PrimitiveType {
 pub enum Type {
     Primitive(PrimitiveType),
     Reference(Box<Type>),
-    MutableReference(Box<Type>),
     Array(Box<Type>),
     BoxType(Box<Type>),
     Enum(TypeId),
@@ -347,7 +346,7 @@ impl Type {
             // All primitives are copy-treated by default
             Type::Primitive(_) => true,
             // ref<T> and box<T> are copy-treated (handle/view copy)
-            Type::Reference(_) | Type::MutableReference(_) | Type::BoxType(_) => true,
+            Type::Reference(_) | Type::BoxType(_) => true,
             // ?T is copy-treated iff T is copy-treated
             Type::Nullable(inner) => inner.is_copy_treated(symbol_table),
             // User-defined structs: check for Copy proto conformance
@@ -409,7 +408,6 @@ impl Clone for Type {
         match self {
             Type::Primitive(primitive_type) => Type::Primitive(*primitive_type),
             Type::Reference(r) => Type::Reference(r.clone()),
-            Type::MutableReference(r) => Type::MutableReference(r.clone()),
             Type::Array(a) => Type::Array(a.clone()),
             Type::BoxType(b) => Type::BoxType(b.clone()),
             Type::Enum(e) => Type::Enum(*e),
@@ -438,7 +436,6 @@ impl PartialEq for Type {
         match (self, other) {
             (Type::Primitive(a), Type::Primitive(b)) => a == b,
             (Type::Reference(a), Type::Reference(b)) => *a == *b,
-            (Type::MutableReference(a), Type::MutableReference(b)) => *a == *b,
             (Type::Array(a), Type::Array(b)) => *a == *b,
             (Type::BoxType(a), Type::BoxType(b)) => *a == *b,
             (Type::Enum(a), Type::Enum(b)) => *a == *b,
@@ -474,7 +471,6 @@ impl std::hash::Hash for Type {
         match self {
             Type::Primitive(p) => p.hash(state),
             Type::Reference(r) => r.hash(state),
-            Type::MutableReference(r) => r.hash(state),
             Type::Array(a) => a.hash(state),
             Type::BoxType(b) => b.hash(state),
             Type::Enum(e) => e.hash(state),
@@ -515,7 +511,6 @@ impl ToString for Type {
                 PrimitiveType::Unit => "unit".to_string(),
             },
             Type::Reference(r) => format!("ref<{}>", r.to_string()),
-            Type::MutableReference(r) => format!("ref_mut<{}>", r.to_string()),
             Type::Array(a) => format!("[{}]", a.to_string()),
             Type::BoxType(b) => format!("box<{}>", b.to_string()),
             Type::Enum(e) => format!("enum({})", e),

@@ -545,7 +545,7 @@ impl Generator {
 fn unwrap_array_type(ty: &Type) -> Option<Type> {
     match ty {
         Type::Array(inner) => Some((**inner).clone()),
-        Type::Reference(inner) | Type::MutableReference(inner) | Type::BoxType(inner) => {
+        Type::Reference(inner) | Type::BoxType(inner) => {
             if let Type::Array(elem) = inner.as_ref() {
                 Some((**elem).clone())
             } else {

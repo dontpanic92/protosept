@@ -32,9 +32,9 @@ Normative keywords:
 - `null` denotes the null value (only inhabits nullable types).
 - **Slot**: a storage location introduced by `let`, `let mut`, or a parameter.
 - **Addressable location** (v1): a `let`-introduced slot, a parameter slot, or a field/sub-location of an addressable base where the language provides addressability (see §7.1, §7.2, §11.4). Note: `let mut` slots are NOT addressable locations in v1.
-- **Mutable place**: a syntactic expression that may appear on the left side of an assignment statement or as the receiver of a `ref mut self` method call (see §10.2, §11.3.2, §11.4). Mutable places are ephemeral; they are not storable values.
+- **Mutable place**: a syntactic expression that may appear on the left side of an assignment statement (§10.2). Mutable places are ephemeral; they are not storable values.
 - **Binding mutability**: whether a named slot may be reassigned. Controlled by `let` vs `let mut`. A `let mut` binding may be rebound to a new value; a `let` binding may not.
-- **Interior mutability**: whether the value behind a handle may be mutated in place. Controlled by the handle type: `box<T>` permits interior mutation; `robox<T>` does not. `let mut` has no effect on interior mutability.
+- **Interior mutability**: whether the value behind a handle may be mutated in place. `box<T>` and `ref<T>` both permit interior mutation. `let mut` has no effect on interior mutability.
 - **Structural-copyable**: types for which `structural_copy(x)` is well-typed (§6.2). This is a structural property determined by the type's structure.
 - **Copy type**: a type `T` such that `T: Copy` (§6.3). Types satisfying the `Copy` proto enable implicit copying at value-flow sites.
 - **Materialized temporary slot (v1)**: an implicit immutable `let` slot created by the compiler to extend the lifetime of a temporary value, enabling it to be borrowed. Used in narrowly-scoped contexts; in v1, this is currently only used for receiver temporary materialization (§11.3.1).
@@ -502,13 +502,13 @@ Identifiers start with `_` or a letter and continue with letters, digits, or `_`
 `null` is a keyword (null literal).
 
 **Predeclared type constructors / intrinsics** (not reserved; contextual by syntactic position):  
-`ref`, `box`, `robox`
+`ref`, `box`
 
 These identifiers have special meaning only in specific syntactic positions:
-- **Type position:** `ref<T>`, `box<T>`, `robox<T>` denote reference, boxed, and read-only boxed types.
-- **Expression position:** `ref(expr)` and `box(expr)` construct reference and boxed values. Note: `robox` has no expression-position form; `robox<T>` values are obtained via type ascription or coercion from `box<T>`.
-- **Method receiver position:** `ref self` desugars to `self: ref<Self>`, `box self` desugars to `self: box<Self>`, and `ref mut self` denotes an ephemeral mutable-borrowed receiver (see §11.4). Note: `robox self` is not a valid receiver form.
-- In all other positions, `ref`, `box`, and `robox` are ordinary identifiers and may be used as variable names, parameter names, etc.
+- **Type position:** `ref<T>` and `box<T>` denote borrowed-view and owned-heap-handle types.
+- **Expression position:** `ref(expr)` and `box(expr)` construct reference and boxed values.
+- **Method receiver position:** `ref self` desugars to `self: ref<Self>`; `box self` desugars to `self: box<Self>`.
+- In all other positions, `ref` and `box` are ordinary identifiers and may be used as variable names, parameter names, etc.
 
 **Contextual keywords** (not reserved; allowed as identifiers in most contexts):  
 `throw`, `try`, `yield`
@@ -561,10 +561,9 @@ Types in v1:
 - Nullability: `?T`
 - Borrowed view: `ref<T>` (Input: `&T`)
 - Owned heap handle: `box<T>` (Input: `^T`)
-- Read-only heap handle: `robox<T>`
 - Function types: `fn(T1, T2, ...) -> R`, `fn[effects](T1, T2, ...) -> R` (§3.9)
 - User-defined: `struct Name(...)`, `enum Name(...)`, `proto Name { ... }`
-- Compile-time generics: `T`, `array<T>`, `box<T>`, `robox<T>`, etc. (§20)
+- Compile-time generics: `T`, `array<T>`, `box<T>`, etc. (§20)
 
 ---
 
@@ -669,8 +668,8 @@ Two indexing forms:
 
 **Boxed-array index as mutable place:**
 - When `a: box<array<T>>`, the expression `a[i]` is a **mutable place** in addition to being a read expression.
-- As a mutable place, `a[i]` may appear on the left of an assignment or as the receiver of a `ref mut self` method call (see §10.2, §11.3.2).
-- `a[i]` is NOT a mutable place when `a: array<T>` (value arrays are immutable) or when `a: robox<array<T>>` (read-only box).
+- As a mutable place, `a[i]` may appear on the left of an assignment (see §10.2).
+- `a[i]` is NOT a mutable place when `a: array<T>` (value arrays are immutable).
 
 [[TODO]] define full array API surface (`len`, `get`, etc.) and whether `get` is syntax sugar for a prelude function.
 
@@ -681,12 +680,12 @@ Mutation of an array requires boxing:
 
 **Structural mutation** (adding/removing elements) is via library operations on the boxed array, such as `push`, `pop`, `set`, and `insert`.
 
-**Element mutation in place** is via mutable place assignment or `ref mut self` method calls on elements:
+**Element mutation in place** is via mutable place assignment or method calls on elements:
 - `xs[i] = new_val;` — replace element at index `i`
 - `xs[i].field = 10;` — assign to a field of the element at index `i` (requires element type to be a struct with a visible field)
-- `xs[i].method()` where `method` has a `ref mut self` receiver — call a mutable method on element `i` in place
+- `xs[i].method()` where `method` mutates through a `ref self` or `box self` receiver — mutate element `i` in place
 
-See §10.2 for assignment rules and §11.3.2 for `ref mut self` auto-borrow sugar.
+See §10.2 for assignment rules.
 
 **Restriction:** When `xs[i]` is used as a mutable place within an expression, the same expression MUST NOT also perform structural mutation of `xs` (push, pop, insert, remove, or replacement of `xs` itself). This local exclusivity rule prevents element references from being invalidated within a single expression. See §10.2.1.
 
@@ -763,10 +762,14 @@ let y = p.1;  // y has type string, value "test"
 
 ### 3.6 Borrowed view types: `ref<T>`
 
-`ref<T>` is a **read-only view** of an existing addressable location that holds a `T` (§7).
+`ref<T>` is a borrowed view of an existing addressable location that holds
+a `T` (§7).
 
 - `ref<T>` values satisfy `Copy` (copying a `ref<T>` copies the view/handle; it does not copy the underlying `T`).
 - `ref<T>` values are **non-escapable** (§7.3).
+- Mutation of the referent through `ref<T>` is permitted: `r.field = …`
+  and `*r = …` are well-typed when the underlying location is itself a
+  mutable place (§7.6).
 
 `ref<?T>` is permitted and means a view of a nullable location.
 
@@ -781,30 +784,6 @@ let y = p.1;  // y has type string, value "test"
 - Mutation of boxed contents is visible through all aliases.
 
 ---
-
-### 3.8 Read-only heap handle types: `robox<T>`
-
-`robox<T>` is a **read-only heap-allocated identity container** holding a `T`.
-
-- `robox<T>` values can escape (stored, returned, captured, interop).
-- `robox<T>` satisfies `Copy`: copying a robox copies the handle; all copies alias the same boxed cell.
-- `robox<T>` **forbids mutation** through the handle:
-  - `*rb = ...` is ERROR when `rb: robox<T>`.
-  - `rb.field = ...` is ERROR when `rb: robox<S>`.
-- `robox<T>` supports borrowing boxed contents with `ref(*rb)`.
-- Dereferencing `*rb` as a value is allowed only when `T: Copy`; otherwise ERROR (mirroring the `box<T>` rule).
-- Method-call behavior:
-  - Calling methods with `ref self` receivers on `robox<Self>` is allowed via auto-borrow to `ref(*rb)` (§11.3.1).
-  - Calling `box self` methods on `robox<Self>` is ERROR.
-
-**Relationship to `box<T>`:**
-
-- `box<T>` may implicitly coerce to `robox<T>` (capability-weakening) in checking/expected-type contexts:
-  - Assignment to an annotated `robox<T>` type.
-  - Argument passing to a `robox<T>` parameter.
-  - Function return when the return type is `robox<T>`.
-  - Contextual branch/join with expected type `robox<T>`.
-- The reverse coercion `robox<T> -> box<T>` is **not** allowed (ERROR). There is no v1 mechanism for downcast.
 
 ### 3.9 Function types
 
@@ -1138,7 +1117,6 @@ This rule applies uniformly to:
 - `string` (string data is reference-counted; copying duplicates the handle)
 - `ref<T>` (view/handle copy; does not duplicate the referent)
 - `box<T>` (handle copy; does not duplicate the heap allocation)
-- `robox<T>` (handle copy; does not duplicate the heap allocation)
 - `?T` iff `T` is structural-copyable
 - `array<T>` iff `T` is structural-copyable
 - `(T1, T2, ...)` (tuples) iff all components are structural-copyable
@@ -1197,7 +1175,7 @@ Using `structural_copy(x)` when `T` is not structural-copyable is ERROR.
   - Requires `T` to be structural-eqable (but does NOT require `T: Copy`)
   - This enables observational equality through references without dereferencing to a value
 
-- **`box<T>` and `robox<T>`**: identity equality ONLY
+- **`box<T>`**: identity equality ONLY
   - Compares heap cell identity (same allocation), NOT contents
   - `box1 == box2` is `true` iff they point to the same heap cell
   - Deep content comparison is NOT performed
@@ -1206,7 +1184,7 @@ Using `structural_copy(x)` when `T` is not structural-copyable is ERROR.
 Using `structural_eq` when `T` is not structural-eqable is ERROR.
 
 **Rationale:**
-- `box<T>` and `robox<T>` use identity equality to preserve clear semantics: equality tests identity, not deep contents
+- `box<T>` uses identity equality to preserve clear semantics: equality tests identity, not deep contents
 - `ref<T>` uses referent value equality to enable observational equality without requiring `T: Copy`
 - This design allows equality testing on non-Copy types through references
 
@@ -1236,7 +1214,6 @@ A type `T` satisfies `Copy` iff:
 - `string`
 - `ref<T>` (for any `T`)
 - `box<T>` (for any `T`)
-- `robox<T>` (for any `T`)
 - `?T` iff `T: Copy` (by composition)
 - `(T1, T2, ...)` (tuples) iff all components satisfy `Copy`
 - `array<T>` iff `T: Copy`
@@ -1296,7 +1273,6 @@ A type `T` satisfies `Eq` iff:
 - `string`
 - `ref<T>` (for any `T` that is structural-eqable)
 - `box<T>` (for any `T`; uses identity equality)
-- `robox<T>` (for any `T`; uses identity equality)
 - `?T` iff `T: Eq` (by composition)
 - `(T1, T2, ...)` (tuples) iff all components satisfy `Eq`
 - `array<T>` iff `T: Eq`
@@ -1311,7 +1287,7 @@ Listing `Eq` in a struct/enum conformance when the structural-eqable requirement
 - `Eq` is a static proto (not object-safe; `Self` appears in parameter type)
 - Default implementation leverages `structural_eq` for observation through references
 - Enables equality on non-Copy types without requiring value-level dereference
-- `box<T>` and `robox<T>` use identity equality regardless of `T` to maintain clear semantics
+- `box<T>` uses identity equality regardless of `T` to maintain clear semantics
 
 
 #### 6.4.2 The `Display` proto (built-in formatting proto)
@@ -1356,19 +1332,18 @@ Types satisfying `Send` (`T: Send`) in v1:
 
 Types that do NOT satisfy `Send`:
 - `box<T>`
-- `robox<T>`
 - `ref<T>`
-- Any type transitively containing `box<...>`, `robox<...>`, or `ref<...>`
+- Any type transitively containing `box<...>` or `ref<...>`
 
 `Send` is primarily used by the Threading extension (§22), but is always available in the core language.
 
 ---
 
-## 7. Borrowed views (`ref<T>`), boxes (`box<T>`), and read-only boxes (`robox<T>`)
+## 7. Borrowed views (`ref<T>`) and boxes (`box<T>`)
 
 ### 7.1 Meaning of ref<T> (Input: &T)
 
-A value of type `ref<T>` is a read-only view of an addressable location holding a `T`.
+A value of type `ref<T>` is a borrowed view of an addressable location holding a `T`. Mutation of the referent through `ref<T>` is permitted: see "Operations" below.
 
 - Dereference: `*r` reads the current value of the referent location.
 - Read semantics: `*r` yields a value of type `T`:
@@ -1380,6 +1355,7 @@ A value of type `ref<T>` is a read-only view of an addressable location holding 
 - Member access (`r.field`) and method calls (`r.method(...)`) are permitted without copying `T`:
   - These operations access the referent location directly.
   - Only explicit dereference (`*r`) is restricted by the `T: Copy` requirement.
+- Assignments through `ref<T>` (`r.field = …`, `*r = …`) are well-typed when the underlying location is itself a mutable place (§7.6).
 
 ### 7.2 Taking views
 
@@ -1450,53 +1426,9 @@ Operations (surface syntax v1):
   - `b.field`, `b.method(...)` act as if on the inner `T`.
   - Field assignment is allowed for boxed structs: `b.field = expr` updates the inner field in place (requires `b: box<S>`).
 
-### 7.5 Meaning of robox<T>
-
-A `robox<T>` is a **read-only** identity-bearing heap cell containing a `T`.
-
-Operations (surface syntax v1):
-
-- **Construction:** `robox<T>` values are typically obtained via coercion from `box<T>` (see below). There is no direct `robox(expr)` syntax; construction requires first creating a `box<T>` and coercing it.
-
-- Read / deref: `*rb` (where `rb: robox<T>`)
-  - `*rb` is **not** a mutable place; it cannot appear on the left side of assignment.
-  - If `T: Copy`, `*rb` as a value expression yields a copy of type `T`.
-  - If `T` does not satisfy `Copy`, using `*rb` as a value expression is ERROR (mirroring the `box<T>` rule).
-
-- Write: `*rb = expr` is **ERROR** when `rb: robox<T>`.
-
-- **Borrowing boxed contents**: `ref(*rb)`
-  - Produces a `ref<T>` view of the boxed contents.
-  - Permitted for **any** `T`, including types that do not satisfy `Copy`.
-  - The resulting `ref<T>` follows all `ref<...>` rules (§7.1, §7.3).
-  - When `T` is an object proto `P`, `ref(*rb)` yields `ref<P>` and is dynamically dispatched per §18.
-
-- Member auto-deref:
-  - `rb.field` reads the field (no assignment allowed).
-  - `rb.field = expr` is **ERROR** when `rb: robox<S>`.
-  - `rb.method(...)` is allowed when the method has a `ref self` receiver (desugars to `Type.method(ref(*rb), ...)` per §11.3.1).
-  - Calling methods with `box self` receivers on `robox<Self>` is ERROR.
-
-**Coercion from `box<T>` to `robox<T>`:**
-
-In **checking/expected-type contexts**, a `box<T>` value may implicitly coerce to `robox<T>` (capability-weakening):
-
-- Assignment: `let rb: robox<T> = b;` where `b: box<T>`.
-- Parameter passing: `f(b)` where `f` expects `robox<T>` and `b: box<T>`.
-- Return: `return b;` where the function return type is `robox<T>` and `b: box<T>`.
-- Branch/join: if/else branches with expected type `robox<T>` may return `box<T>` expressions.
-
-The reverse coercion `robox<T> -> box<T>` is **not** allowed (ERROR).
-
-**Rationale:**
-
-`robox<T>` provides a type-safe mechanism to share heap-allocated values without permitting mutation, enabling safer API boundaries and immutable views of mutable data.
-
----
-
 ### 7.6 Ephemeral mutable-place semantics (v1)
 
-A **mutable place** (see §0) is a syntactic expression that may appear on the left side of an assignment statement, or as the receiver of a `ref mut self` method call. Mutable places are **ephemeral**: they are not storable values, cannot be passed as arguments, cannot be returned from functions, and have no first-class mutable-reference type in v1.
+A **mutable place** (see §0) is a syntactic expression that may appear on the left side of an assignment statement (§10.2). Mutable places are **ephemeral**: they are not storable values, cannot be passed as arguments, cannot be returned from functions, and have no first-class mutable-reference type in v1.
 
 #### 7.6.1 Mutable place forms
 
@@ -1515,8 +1447,6 @@ The mutable place forms compose: if `b[i]` is a mutable place of struct type `S`
 The following are **not** mutable places:
 - `let`-introduced slots (immutable bindings)
 - Parameter slots (parameters are not reassignable in v1)
-- `ref<T>` values (read-only borrowed views)
-- `*rb` / `rb.field` where `rb: robox<T>` (read-only boxes)
 - `a[i]` where `a: array<T>` (value arrays are immutable)
 
 #### 7.6.2 Restriction: ephemeral and non-storable
@@ -1524,20 +1454,18 @@ The following are **not** mutable places:
 Mutable places are ephemeral and exist only in specific syntactic positions:
 
 - A mutable place may appear as the `place` in an assignment statement `place = expr;` (§10.2).
-- A mutable place may appear as the receiver of a `ref mut self` method call `place.method(args...)` (§11.3.2).
-- A mutable place may NOT be stored: there is no `ref_mut<T>` value form in v1.
-- A mutable place may NOT be passed as a function argument (beyond the implicit `ref mut self` receiver desugaring).
+- A mutable place may NOT be stored: there is no first-class mutable-reference value form in v1.
 - A mutable place may NOT be returned from a function.
 
 #### 7.6.3 Local exclusivity restriction for boxed-array element places
 
-When `xs[i]` is used as a mutable place within an expression (either on the left of `=` or as the receiver of a `ref mut self` call), the same expression MUST NOT also perform structural mutation of the containing array `xs`. Structural mutations include: calls to `push`, `pop`, `insert`, `remove`, or any operation that may reallocate or resize the array, and assignment to `xs` itself.
+When `xs[i]` is used as a mutable place within an expression, the same expression MUST NOT also perform structural mutation of the containing array `xs`. Structural mutations include: calls to `push`, `pop`, `insert`, `remove`, or any operation that may reallocate or resize the array, and assignment to `xs` itself.
 
 **Examples:**
 
 ```p7
 struct Point(pub x: int, pub y: int) {
-  pub fn shift(ref mut self, dx: int) {
+  pub fn shift(ref self, dx: int) {
     self.x = self.x + dx;
   }
 }
@@ -1550,7 +1478,7 @@ xs[0] = Point(10, 20);
 // OK: assign to field of element
 xs[0].x = 10;
 
-// OK: call ref mut self method on element
+// OK: call mutating method on element
 xs[0].shift(5);
 
 // ERROR: structural mutation (push) of xs while xs[i] is in use as mutable place
@@ -2040,7 +1968,7 @@ When a pattern introduces bindings from sub-values, each bound sub-value flows i
 - If the sub-value's type satisfies `Copy`, it is copied.
 - Otherwise it is moved.
 
-The matched source value is consumed exactly once. Borrow patterns are not supported in v1; deconstruction does not introduce implicit borrowing. To destructure a value held through `ref<T>`, `box<T>`, or `robox<T>`, the inner type `T` must satisfy `Copy`, because applying a pattern requires materializing the inner value, which for these handle types requires a dereference — and dereferencing a non-`Copy` inner type is not permitted.
+The matched source value is consumed exactly once. Borrow patterns are not supported in v1; deconstruction does not introduce implicit borrowing. To destructure a value held through `ref<T>` or `box<T>`, the inner type `T` must satisfy `Copy`, because applying a pattern requires materializing the inner value, which for these handle types requires a dereference — and dereferencing a non-`Copy` inner type is not permitted.
 
 **Pattern examples:**
 
@@ -2195,7 +2123,6 @@ All captures in v1 use **by-value** semantics. When a closure captures a binding
 
 - `ref<T>` values MUST NOT be captured (§7.3). A closure that references a `ref<T>` binding from an enclosing scope is ERROR.
 - `box<T>` values may be captured. Because `box<T>` is structural-copyable and satisfies `Copy` (§6.3), capturing a `box<T>` copies the handle into the closure. Both the closure and the enclosing scope share the same heap cell — mutations through either handle are visible through the other.
-- `robox<T>` values may be captured (same handle-copy semantics as `box<T>`).
 
 **Implicit capture set:**
 
@@ -2338,9 +2265,6 @@ Rules:
      - `expr` MUST have type `T`.
   5. A nested field of a boxed-array element: `b[i].field = expr` where `b: box<array<T>>` and the element type is struct `S` with a visible field `field`.
      - `expr` MUST have the declared type of `field`.
-- Assignment to read-only boxes is ERROR:
-  - `*rb = expr` where `rb: robox<T>` is ERROR.
-  - `rb.field = expr` where `rb: robox<S>` is ERROR.
 - Assigning to a `let` slot (`x = expr` where `x` was introduced by `let`) is ERROR.
 - Assignment does not produce a value.
 
@@ -2445,9 +2369,6 @@ For `ref<T>` parameters:
 
 Mutation requires `box<T>` parameters.
 
-For `robox<T>` parameters:
-- A `box<T>` argument may be passed and will implicitly coerce to `robox<T>` (§7.5).
-
 #### 11.3.1 Method-call auto-borrow sugar for `ref self` receivers
 
 For method calls only, p7 provides auto-borrow sugar when the method has a `ref self` receiver:
@@ -2463,7 +2384,6 @@ For method calls only, p7 provides auto-borrow sugar when the method has a `ref 
     ```
     where `__tmp_recv` is a compiler-generated name. The materialized temporary lives until the method-call expression completes.
   - If `recv` has type `box<Self>`: desugars to `Type.method(ref(*recv), args...)`. The receiver `recv` may be any value (including temporaries), as the borrow is taken of the dereferenced contents `*recv`.
-  - If `recv` has type `robox<Self>`: desugars to `Type.method(ref(*recv), args...)`. The receiver `recv` may be any value (including temporaries), as the borrow is taken of the dereferenced contents `*recv`.
   - If `recv` already has type `ref<Self>`: it is passed directly to the `ref self` parameter without desugaring.
   - The receiver is evaluated exactly once.
 
@@ -2507,56 +2427,6 @@ The temporary `__tmp_recv` is valid for the duration of the method call, and the
 
 This sugar reduces ceremony at method call sites while maintaining explicit borrowing for free function calls, providing ergonomics where method chaining and fluent APIs are common.
 
-#### 11.3.2 Method-call auto-borrow sugar for `ref mut self` receivers
-
-For method calls on mutable places, p7 provides auto-borrow sugar when the method has a `ref mut self` receiver (§11.4):
-
-**Sugar rules:**
-
-- `recv.method(args...)` where `method` has a `ref mut self` receiver desugars as follows:
-  - If `recv` is a `let mut` slot of type `Self`: desugars to `Type.method(ref_mut(recv), args...)` — the compiler takes an ephemeral mutable borrow of the slot for the duration of the call.
-  - If `recv` has type `box<Self>`: desugars to `Type.method(ref_mut(*recv), args...)` — the mutable borrow is taken of the dereferenced contents. The receiver may be any `box<Self>` value (including non-`let-mut` bindings); the box itself provides the mutable place via `*recv`.
-  - If `recv` is a boxed field `b.field` where `b: box<S>` and the field type is `Self`: desugars to `Type.method(ref_mut(b.field), args...)`.
-  - If `recv` is `b[i]` where `b: box<array<Self>>`: desugars to `Type.method(ref_mut(b[i]), args...)`.
-  - If `recv` is `b[i].field` where `b: box<array<S>>` and the field type is `Self`: desugars to `Type.method(ref_mut(b[i].field), args...)`.
-  - Calling a `ref mut self` method on a `robox<Self>` value is ERROR (`*rb` is not a mutable place when `rb: robox<T>`).
-
-**Restrictions:**
-
-- Applies only to methods with `ref mut self` receivers; does NOT apply to methods with `ref self`, `box self`, or value `self` receivers.
-- The receiver expression must either be a mutable place (§7.6.1) or an expression of type `box<Self>` (from which `*recv` is a mutable place). Calling a `ref mut self` method on any other expression is ERROR.
-- The `ref_mut(...)` desugaring in the rules above is an **internal notation only** — there is no user-visible `ref_mut<T>` type or `ref_mut(...)` expression in v1. The mutable borrow is always implicit and ephemeral.
-- The mutable borrow exists only for the duration of the method call expression; it does not outlive the call.
-- The local exclusivity restriction of §7.6.3 applies: when the receiver is a boxed-array element place, the same expression must not also structurally mutate the containing array.
-
-**Example:**
-
-```p7
-struct Point(pub x: int, pub y: int) {
-  pub fn shift(ref mut self, dx: int, dy: int) {
-    self.x = self.x + dx;
-    self.y = self.y + dy;
-  }
-  pub fn get_x(ref self) -> int {
-    return self.x;
-  }
-}
-
-// Via let mut slot
-let mut p = Point(1, 2);
-p.shift(3, 4);           // ok: desugars to Point.shift(ref_mut(p), 3, 4)
-
-// Via boxed array element
-let xs = box([Point(0, 0), Point(10, 10)]);
-xs[0].shift(1, 1);       // ok: desugars to Point.shift(ref_mut(xs[0]), 1, 1)
-xs[1].x = 5;             // ok: direct field assignment (§10.2)
-let v = xs[0].get_x();   // ok: ref self method still works (§11.3.1)
-```
-
-**Normative note:**
-
-The `ref_mut(...)` notation in the desugaring rules above is internal specification notation. The user never writes `ref_mut` in source. The `ref mut self` receiver form is solely a method receiver syntax (§11.4), not a general type constructor.
-
 ### 11.4 Method receivers (v1)
 
 Methods on structs, enums, and protos may declare a receiver parameter. The receiver is the first parameter and uses special syntax.
@@ -2575,17 +2445,11 @@ Methods on structs, enums, and protos may declare a receiver parameter. The rece
 
 2. `self: ref<Self>` or shorthand `ref self` – borrowed receiver:
    - Type: `ref<Self>`.
-   - Caller passes a read-only view of an addressable location.
+   - Caller passes a borrowed view of an addressable location.
    - Method-call syntax automatically applies the auto-borrow sugar (§11.3.1).
-
-3. `ref mut self` – ephemeral mutable-borrowed receiver:
-   - Denotes ephemeral mutable borrowed access to `Self` for the duration of the method call.
-   - The caller must supply a mutable place of type `Self` (§7.6.1), or an expression of type `box<Self>` (from which the compiler takes a mutable borrow of `*recv`); the compiler applies the auto-borrow sugar (§11.3.2).
-   - This form is **receiver-only** in v1: `ref mut` is not a general type constructor, and there is no first-class `ref_mut<T>` value type.
-   - `ref mut self` is distinct from `let mut` (binding mutability) and from `box self` (escaping identity): it belongs to the borrow/access-capability axis and is strictly ephemeral.
    - Within the method body, `self` may be used to read and write fields of `Self`, subject to field-visibility rules (§12.1.1).
 
-4. `self: box<Self>` or shorthand `box self` – boxed receiver:
+3. `self: box<Self>` or shorthand `box self` – boxed receiver:
    - Type: `box<Self>`.
    - Caller passes a boxed handle to the instance.
    - The boxed handle satisfies `Copy` (§6.3); passing does not move the box itself.
@@ -2596,16 +2460,13 @@ Methods on structs, enums, and protos may declare a receiver parameter. The rece
 - The receiver is the first parameter; it is written before other parameters without a trailing comma.
 - No implicit boxing occurs to satisfy a receiver:
   - A method with `self: box<Self>` requires the caller to have `box<Self>`, not just `Self`.
-- For methods with `ref self` receivers, the auto-borrow sugar (§11.3.1) applies at method call sites for `box<Self>` and `robox<Self>` receivers.
-- For methods with `ref mut self` receivers, the auto-borrow sugar (§11.3.2) applies at method call sites; the receiver expression must be a mutable place or a `box<Self>` value.
+- For methods with `ref self` receivers, the auto-borrow sugar (§11.3.1) applies at method call sites for `box<Self>` receivers.
 - Boxed receivers (`self: box<Self>`) pass the box handle, which satisfies `Copy`. This allows multiple method calls on the same box without moving the box itself.
-- Calling a method with a `box self` receiver on a `robox<Self>` value is ERROR (capability mismatch).
-- Calling a `ref mut self` method on a non-mutable-place, non-`box<Self>` expression is ERROR.
 
 **Example:**
 ```p7
 struct Counter(pub count: int) {
-  pub fn increment(ref mut self) {
+  pub fn increment(ref self) {
     self.count = self.count + 1;
   }
   pub fn get(ref self) -> int {
@@ -2618,26 +2479,21 @@ struct Counter(pub count: int) {
 
 // Via let mut slot
 let mut c = Counter(0);
-c.increment();       // ok: ref mut self auto-borrow (§11.3.2)
-c.increment();       // ok: can call again on same mutable place
-let n = c.get();     // ok: ref self auto-borrow (§11.3.1); n == 2
+c.increment();       // ok: ref self auto-borrow (§11.3.1)
+c.increment();       // ok: can call again on same place
+let n = c.get();     // ok: ref self auto-borrow; n == 2
 
 // Via boxed array
 let cs = box([Counter(0), Counter(10)]);
-cs[0].increment();   // ok: ref mut self on boxed-array element
+cs[0].increment();   // ok: ref self on boxed-array element
 cs[1].increment();   // ok
-let v = cs[0].get(); // ok: ref self on boxed-array element (§11.3.1)
+let v = cs[0].get(); // ok: ref self on boxed-array element
 
 // box self example (requires box handle)
 let bc = box(Counter(5));
 bc.reset();          // ok: box self receiver
-bc.increment();      // ok: ref mut self auto-borrows *bc (bc: box<Counter>)
+bc.increment();      // ok: ref self auto-borrows *bc (bc: box<Counter>)
 let m = bc.get();    // ok: ref self; m == 1
-
-let rc: robox<Counter> = bc;
-// rc.increment();   // ERROR: ref mut self requires mutable place; robox is not mutable
-// rc.reset();       // ERROR: reset requires box self, but rc is robox<Counter>
-let k = rc.get();    // ok: ref self works on robox<Counter>
 ```
 
 **Receiver capability comparison:**
@@ -2645,8 +2501,7 @@ let k = rc.get();    // ok: ref self works on robox<Counter>
 | Receiver | Requires | Caller supplies | Can mutate fields | Escapes? |
 |---|---|---|---|---|
 | `self` | value `Self` | value (moved) | yes (owned copy) | — |
-| `ref self` | addressable place or box/robox | mutable or immutable place | no | no |
-| `ref mut self` | mutable place | mutable place only | yes | no |
+| `ref self` | addressable place or box | place or box handle | yes (via borrow) | no |
 | `box self` | `box<Self>` | box handle | yes | via box |
 
 ---
@@ -2832,7 +2687,7 @@ struct Vec2(
 }
 ```
 
-Method receivers are defined in §11.4. Structs may use `self`, `ref self`, `ref mut self`, or `box self` receivers.
+Method receivers are defined in §11.4. Structs may use `self`, `ref self`, or `box self` receivers.
 
 #### 12.5.1 Non-instance methods
 
@@ -3021,7 +2876,7 @@ These may be added in future versions.
 
 An enum may include a method block, using the same method syntax as structs.
 
-Method receivers are defined in §11.4. Enums may use `self`, `ref self`, `ref mut self`, or `box self` receivers.
+Method receivers are defined in §11.4. Enums may use `self`, `ref self`, or `box self` receivers.
 
 This enables enums to satisfy object protos structurally (§18).
 
@@ -3240,20 +3095,7 @@ Rule: `default_expr` MUST have type `T`.
 
 ### 15.3 Heap handle coercions
 
-#### 15.3.1 `box<T>` to `robox<T>` capability-weakening
-
-In **checking/expected-type contexts**, a `box<T>` value may implicitly coerce to `robox<T>`:
-
-- Assignment to an annotated `robox<T>` type: `let rb: robox<T> = b;` where `b: box<T>`.
-- Parameter passing: `f(b)` where `f` expects `robox<T>` and `b: box<T>`.
-- Return: `return b;` where the function return type is `robox<T>` and `b: box<T>`.
-- Branch/join: if/else branches with expected type `robox<T>` may return `box<T>` expressions.
-
-The reverse coercion `robox<T> -> box<T>` is **not** allowed (ERROR).
-
-**Rationale:**
-
-This coercion is safe because it removes capabilities (mutation) without adding any. It enables flexible API design where functions can accept read-only handles while callers with mutable handles can pass them without explicit conversion.
+(Reserved for future heap handle coercion rules.)
 
 ---
 
@@ -3320,7 +3162,7 @@ Protos are categorized as:
 
 A proto is an **object proto** iff all its methods are object-safe:
 - `Self` MUST NOT appear in parameter types or return types except as the receiver.
-- The receiver must be explicit and one of: `ref self` (shorthand for `self: ref<Self>`), `ref mut self` (ephemeral mutable-borrowed receiver, §11.4), or `box self` (shorthand for `self: box<Self>`).
+- The receiver must be explicit and one of: `ref self` (shorthand for `self: ref<Self>`) or `box self` (shorthand for `self: box<Self>`).
 - Generic methods in object protos are ERROR in v1.
 
 Otherwise, the proto is a **static proto**.
@@ -3357,7 +3199,7 @@ proto Mutator {
 }
 
 proto Counter {
-  fn tick(ref mut self);
+  fn tick(ref self);
   fn value(ref self) -> int;
 }
 ```
@@ -3366,10 +3208,9 @@ proto Counter {
 
 Proto methods may declare receivers as defined in §11.4:
 - `self: ref<Self>` (or shorthand `ref self`) – borrowed receiver
-- `ref mut self` – ephemeral mutable-borrowed receiver (§11.4)
 - `self: box<Self>` (or shorthand `box self`) – boxed receiver
 
-Receivers `self` (by-value) and `robox self` are NOT permitted in proto methods.
+Receivers `self` (by-value) are NOT permitted in proto methods.
 
 **Default implementations:**
 
@@ -3420,8 +3261,7 @@ Static protos MUST NOT appear as `box<P>` or `ref<P>`.
 - `*r` where `r: ref<P>` is ERROR in v1.
 
 **Method-call restriction:**
-- `ref<P>` can call only proto methods whose receiver is `ref self`.
-- Calling a proto method with a `ref mut self` receiver on `ref<P>` is ERROR (`ref<T>` is a read-only view; §3.6).
+- `ref<P>` can call proto methods whose receiver is `ref self`.
 - Calling a proto method with a `box self` receiver on `ref<P>` is ERROR (see §18.7).
 
 
@@ -3499,18 +3339,11 @@ Calling a proto method on `box<P>` or `ref<P>` performs dynamic dispatch:
 
 For `box<P>`:
 - For methods with `ref self` receivers: the proto box handle is passed and dereferenced to obtain a `ref<T>` view of the boxed contents.
-- For methods with `ref mut self` receivers: the proto box handle is dereferenced to obtain an ephemeral mutable borrow of the boxed contents (`ref_mut(*recv)` per §11.3.2). The mutable borrow exists only for the duration of the call and never escapes; this preserves the read-only invariant of `ref<T>` because no first-class mutable-reference value is produced.
 - For methods with `box self` receivers: the proto box handle itself is passed (as `box<P>`), aliasing the original box. The method receives a boxed handle, which satisfies `Copy`; multiple calls do not move the box.
 
 For `ref<P>`:
 - For methods with `ref self` receivers: the borrowed proto handle is passed directly as a `ref<T>` view to the underlying object.
-- For methods with `ref mut self` receivers: calling such methods on `ref<P>` is ERROR (see §18.4.1).
 - For methods with `box self` receivers: calling such methods on `ref<P>` is ERROR (see §18.4.1).
-
-For `robox<P>`:
-- For methods with `ref self` receivers: allowed (auto-borrow `ref(*rb)`, mirroring §3.8).
-- For methods with `ref mut self` receivers: ERROR (`*rb` is not a mutable place when `rb: robox<T>`; §11.3.2).
-- For methods with `box self` receivers: ERROR (capability mismatch).
 
 Example:
 ```p7
@@ -3529,30 +3362,30 @@ b.mutate();  // dispatches to Counter.mutate; box handle satisfies Copy
 b.mutate();  // ok: can call again
 ```
 
-Example with `ref mut self` in a proto:
+Example with a borrowed proto handle:
 ```p7
 proto Ticker {
-  fn tick(ref mut self);
+  fn tick(ref self);
   fn value(ref self) -> int;
 }
 
 struct[Ticker] Tally(pub n: int) {
-  pub fn tick(ref mut self) { self.n = self.n + 1; }
+  pub fn tick(ref self) { self.n = self.n + 1; }
   pub fn value(ref self) -> int { self.n }
 }
 
-// Direct call on a mutable place (no proto handle involved)
+// Direct call on a mutable place
 let mut t = Tally(0);
-t.tick();                          // ok: §11.3.2 auto-borrow
+t.tick();                          // ok: §11.3.1 auto-borrow
 
 // Dynamic dispatch via box<P>
 let bp: box<Ticker> = ^Tally(0);
-bp.tick();                          // ok: ref mut self auto-borrows *bp
-let v = bp.value();                 // ok: ref self
+bp.tick();                          // ok: ref self auto-borrows *bp
+let v = bp.value();                 // ok
 
-// Dynamic dispatch via ref<P> is read-only
+// Dynamic dispatch via ref<P>
 let rp: ref<Ticker> = ref(t);
-// rp.tick();                       // ERROR: ref<P> cannot call ref mut self (§18.4.1)
+rp.tick();                          // ok: ref self
 let w = rp.value();                 // ok
 ```
 
@@ -4265,7 +4098,7 @@ FFI-safe (v1):
 - `@repr(C)` structs whose fields are all FFI-safe (recursively). These are C POD structs.
 
 Not FFI-safe (v1):
-- `string`, `array<T>`, tuples `(T1, ...)`, `box<T>`, `robox<T>`, `ref<T>`, `proto`, `?T` (except `?ptr`)
+- `string`, `array<T>`, tuples `(T1, ...)`, `box<T>`, `ref<T>`, `proto`, `?T` (except `?ptr`)
 - any struct/enum without an explicit FFI representation (`@repr(C)` or `@repr(transparent)`)
 
 Using a non-FFI-safe type in a `@ffi` signature is ERROR.

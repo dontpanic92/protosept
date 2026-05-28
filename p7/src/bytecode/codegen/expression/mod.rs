@@ -49,7 +49,7 @@ impl Generator {
     fn extract_struct_type_id(&self, ty: &Type, field: &Identifier) -> SaResult<u32> {
         match ty {
             Type::Struct(type_id) => Ok(*type_id),
-            Type::BoxType(inner) | Type::Reference(inner) | Type::MutableReference(inner) => {
+            Type::BoxType(inner) | Type::Reference(inner) => {
                 if let Type::Struct(type_id) = **inner {
                     Ok(type_id)
                 } else {
