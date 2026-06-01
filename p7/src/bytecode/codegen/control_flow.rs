@@ -187,7 +187,7 @@ impl Generator {
             col: pos.1,
             length: 0,
         };
-        let ident_expr = |name: InternedString| Expression::Identifier(synth_ident(name));
+        let _ident_expr = |name: InternedString| Expression::Identifier(synth_ident(name));
 
         self.local_scope.as_mut().unwrap().push_scope();
         let result = (|| -> SaResult<Type> {

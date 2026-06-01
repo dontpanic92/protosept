@@ -12,8 +12,7 @@ fn run(source: &str) -> Data {
 
 #[test]
 fn ref_let_binding_is_mutable() {
-    let result = run(
-        r#"
+    let result = run(r#"
 struct S(pub x: int);
 
 pub fn entry() -> int {
@@ -22,15 +21,17 @@ pub fn entry() -> int {
     r.x = 42;
     s.x
 }
-"#,
+"#);
+    assert!(
+        matches!(result, Data::Int(42)),
+        "expected 42, got {:?}",
+        result
     );
-    assert!(matches!(result, Data::Int(42)), "expected 42, got {:?}", result);
 }
 
 #[test]
 fn ref_self_method_can_mutate_field() {
-    let result = run(
-        r#"
+    let result = run(r#"
 struct Counter(pub n: int) {
     pub fn bump(ref self) {
         self.n = self.n + 1;
@@ -44,9 +45,12 @@ pub fn entry() -> int {
     c.bump();
     c.n
 }
-"#,
+"#);
+    assert!(
+        matches!(result, Data::Int(3)),
+        "expected 3, got {:?}",
+        result
     );
-    assert!(matches!(result, Data::Int(3)), "expected 3, got {:?}", result);
 }
 
 #[test]
