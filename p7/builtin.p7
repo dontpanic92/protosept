@@ -290,3 +290,14 @@ pub fn cos(x: float) -> float;
 
 @intrinsic(name="builtin.sqrt")
 pub fn sqrt(x: float) -> float;
+
+// Convert degrees to radians (`deg * PI / 180`). Mirrors
+// `f32::to_radians`. Use this for the trig functions and any
+// engine API that takes a radian (e.g. `set_fov43`).
+@intrinsic(name="builtin.to_radians")
+pub fn to_radians(deg: float) -> float;
+
+// Convert radians to degrees (`rad * 180 / PI`). Mirrors
+// `f32::to_degrees`.
+@intrinsic(name="builtin.to_degrees")
+pub fn to_degrees(rad: float) -> float;

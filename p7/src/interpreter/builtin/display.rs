@@ -255,3 +255,41 @@ pub(crate) fn builtin_sqrt(ctx: &mut Context) -> ContextResult<()> {
         _ => Err(RuntimeError::Other("sqrt: argument must be float".into())),
     }
 }
+
+pub(crate) fn builtin_to_radians(ctx: &mut Context) -> ContextResult<()> {
+    let x = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    match x {
+        Data::Float(v) => {
+            ctx.stack_frame_mut()?
+                .stack
+                .push(Data::Float(v.to_radians()));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "to_radians: argument must be float".into(),
+        )),
+    }
+}
+
+pub(crate) fn builtin_to_degrees(ctx: &mut Context) -> ContextResult<()> {
+    let x = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    match x {
+        Data::Float(v) => {
+            ctx.stack_frame_mut()?
+                .stack
+                .push(Data::Float(v.to_degrees()));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "to_degrees: argument must be float".into(),
+        )),
+    }
+}

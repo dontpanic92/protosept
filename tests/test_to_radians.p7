@@ -1,0 +1,17 @@
+import test.test;
+
+@test(expected_type = "float", expected_value = "0.0")
+fn test_to_radians_zero() -> float { return to_radians(0.0); }
+
+@test(expected_type = "float", expected_value = "0.0")
+fn test_to_degrees_zero() -> float { return to_degrees(0.0); }
+
+@test(expected_type = "float", expected_value = "45.0")
+fn test_roundtrip_deg_to_rad_and_back() -> float {
+    return to_degrees(to_radians(45.0));
+}
+
+@test(expected_type = "float", expected_value = "1.0")
+fn test_roundtrip_rad_to_deg_and_back() -> float {
+    return to_radians(to_degrees(1.0));
+}
