@@ -126,29 +126,6 @@ impl Parser {
         }
     }
 
-    pub(crate) fn parse_qualified_identifier(&mut self) -> ParseResult<Identifier> {
-        let ident = self.parse_identifier()?;
-        if !self.peek_match(TokenType::Dot) {
-            return Ok(ident);
-        }
-
-        let mut full_name = ident.name.to_string();
-        let line = ident.line;
-        let col = ident.col;
-        while self.peek_match(TokenType::Dot) {
-            self.consume();
-            let next = self.parse_identifier()?;
-            full_name.push('.');
-            full_name.push_str(&next.name);
-        }
-
-        Ok(Identifier {
-            name: InternedString::from(full_name),
-            line,
-            col,
-        })
-    }
-
     pub(crate) fn consume(&mut self) -> Option<&Token> {
         if self.position < self.tokens.len() {
             let token = &self.tokens[self.position];

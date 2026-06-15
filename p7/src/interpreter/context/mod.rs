@@ -80,6 +80,9 @@ pub struct Context {
 /// One row in `Context::foreign_carrier_methods`: a single proto-method
 /// HostMethod symbol in a specific loaded module, along with the carrier and
 /// proto type ids needed to key the vtable.
+// Retained as diagnostic bookkeeping for foreign carrier/proto dispatch; the
+// fields are populated but not yet read back, so silence dead-code here.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(super) struct ForeignCarrierMethod {
     pub _module_idx: usize,

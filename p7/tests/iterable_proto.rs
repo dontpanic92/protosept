@@ -1,4 +1,3 @@
-use p7::compile_and_run;
 use p7::interpreter::context::Data;
 
 #[test]

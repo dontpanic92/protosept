@@ -204,17 +204,6 @@ impl RuntimeMap {
         }
     }
 
-    pub(crate) fn values_mut(&mut self) -> Vec<&mut Data> {
-        match &mut self.storage {
-            RuntimeMapStorage::Small(entries) => {
-                entries.iter_mut().map(|entry| &mut entry.value).collect()
-            }
-            RuntimeMapStorage::Large(entries) => {
-                entries.values_mut().map(|entry| &mut entry.value).collect()
-            }
-        }
-    }
-
     fn insert_large(&mut self, key_hash: MapKey, key: Data, value: Data) -> ContextResult<()> {
         let RuntimeMapStorage::Large(entries) = &mut self.storage else {
             unreachable!("insert_large requires large storage");
