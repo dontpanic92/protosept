@@ -75,6 +75,13 @@ pub struct Context {
     // Host-owned values that must survive GC compaction. These are used by
     // embedding runtimes that keep script state between calls.
     external_roots: Vec<Option<Data>>,
+    // Lazy cache resolving an (importing_module_idx, local_type_id) pair to the
+    // (defining_module_idx, defining_local_type_id) where the type's vtable
+    // actually lives. Populated on demand by `resolve_concrete_origin` when a
+    // BoxToProto/RefToProto/SAM site boxes a type imported from another module.
+    // See `gaps.md` #1: without this, proto boxes stamp the importer's module
+    // and local type id, which has no vtable entry and dispatches wrong.
+    imported_type_origin: HashMap<(u32, u32), (u32, u32)>,
 }
 
 /// One row in `Context::foreign_carrier_methods`: a single proto-method
@@ -117,6 +124,7 @@ impl Context {
             foreign_uuids: HashMap::new(),
             foreign_carrier_methods: HashMap::new(),
             external_roots: Vec::new(),
+            imported_type_origin: HashMap::new(),
         };
 
         // Register builtin host functions

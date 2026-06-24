@@ -76,6 +76,77 @@ impl Context {
         }
     }
 
+    /// Resolve a `(module_idx, local_type_id)` pair produced by codegen at a
+    /// BoxToProto/RefToProto/SAM site to the `(defining_module_idx,
+    /// defining_local_type_id)` under which the type's vtable was registered.
+    ///
+    /// When a module references a type imported from another module, the
+    /// compiler copies the type into the importer's table under a fresh local
+    /// id (with `source_module` set) but does NOT copy its methods, so the
+    /// importer has no vtable entry for it. Proto dispatch keys on the
+    /// *defining* module + local id, so a proto box must carry those. This
+    /// matches imported copies to their origin by fully-qualified name (which
+    /// embeds the module path and is globally unique). Results are cached.
+    ///
+    /// Locally-defined types (no `source_module`) resolve to themselves. If the
+    /// defining module isn't loaded, falls back to the input pair (preserving
+    /// pre-fix behaviour).
+    pub(super) fn resolve_concrete_origin(&mut self, module_idx: u32, type_id: u32) -> (u32, u32) {
+        let key = (module_idx, type_id);
+        if let Some(&resolved) = self.imported_type_origin.get(&key) {
+            return resolved;
+        }
+
+        let resolved = {
+            let Some((qualified_name, is_imported)) = self
+                .modules
+                .get(module_idx as usize)
+                .and_then(|m| m.types.get(type_id as usize))
+                .map(Self::type_origin_info)
+            else {
+                return key;
+            };
+
+            if !is_imported {
+                // Defined locally: this module owns the vtable entry.
+                key
+            } else {
+                // Imported copy: find the defining module by qualified name.
+                self.find_defining_type(&qualified_name).unwrap_or(key)
+            }
+        };
+
+        self.imported_type_origin.insert(key, resolved);
+        resolved
+    }
+
+    /// Extract `(qualified_name, is_imported)` from a type definition.
+    /// `is_imported` is true when the def carries a `source_module`, i.e. it is
+    /// a copy of a type defined in another module.
+    fn type_origin_info(def: &crate::semantic::TypeDefinition) -> (String, bool) {
+        use crate::semantic::TypeDefinition;
+        match def {
+            TypeDefinition::Struct(s) => (s.qualified_name.to_string(), s.source_module.is_some()),
+            TypeDefinition::Enum(e) => (e.qualified_name.to_string(), e.source_module.is_some()),
+            // Protos aren't concrete boxing targets; treat as local.
+            TypeDefinition::Proto(p) => (p.qualified_name.to_string(), false),
+        }
+    }
+
+    /// Find the module + local type id that natively defines the type with the
+    /// given fully-qualified name (i.e. whose copy has no `source_module`).
+    fn find_defining_type(&self, qualified_name: &str) -> Option<(u32, u32)> {
+        for (m_idx, module) in self.modules.iter().enumerate() {
+            for (t_idx, def) in module.types.iter().enumerate() {
+                let (qn, is_imported) = Self::type_origin_info(def);
+                if !is_imported && qn == qualified_name {
+                    return Some((m_idx as u32, t_idx as u32));
+                }
+            }
+        }
+        None
+    }
+
     /// Walk a freshly-built module's symbols looking for `HostMethod`
     /// children of synthetic `__ForeignCarrier_*` structs. For each
     /// distinct `type_tag` discovered, record the carrier's `TypeId` so

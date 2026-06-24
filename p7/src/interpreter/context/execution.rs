@@ -252,11 +252,12 @@ impl Context {
     /// Invoke a closure value synchronously and return its result.
     /// Used by higher-order host functions (map, filter, etc.) to call p7 closures.
     pub fn call_closure(&mut self, closure: &Data, args: Vec<Data>) -> ContextResult<Data> {
-        let (func_addr, captures) = match closure {
+        let (func_addr, closure_module_idx, captures) = match closure {
             Data::Closure {
                 func_addr,
+                module_idx,
                 captures,
-            } => (*func_addr, captures.clone()),
+            } => (*func_addr, *module_idx as usize, captures.clone()),
             _ => {
                 return Err(RuntimeError::Other(
                     "call_closure: expected closure value".to_string(),
@@ -265,18 +266,17 @@ impl Context {
         };
 
         let base_depth = self.stack.len();
-        let current_module_idx = self.stack.last().map(|f| f.module_idx).unwrap_or(0);
 
         let mut params = captures.as_ref().clone();
         params.extend(args);
         let target_pc =
-            self.resolve_instruction_address(current_module_idx, func_addr, "closure address")?;
+            self.resolve_instruction_address(closure_module_idx, func_addr, "closure address")?;
         let frame = StackFrame {
             params,
             locals: Vec::new(),
             stack: Vec::new(),
             pc: target_pc,
-            module_idx: current_module_idx,
+            module_idx: closure_module_idx,
         };
         self.stack.push(frame);
 
@@ -298,11 +298,12 @@ impl Context {
 
     /// Invoke a closure that returns no value (unit).
     pub fn call_closure_void(&mut self, closure: &Data, args: Vec<Data>) -> ContextResult<()> {
-        let (func_addr, captures) = match closure {
+        let (func_addr, closure_module_idx, captures) = match closure {
             Data::Closure {
                 func_addr,
+                module_idx,
                 captures,
-            } => (*func_addr, captures.clone()),
+            } => (*func_addr, *module_idx as usize, captures.clone()),
             _ => {
                 return Err(RuntimeError::Other(
                     "call_closure_void: expected closure value".to_string(),
@@ -311,18 +312,17 @@ impl Context {
         };
 
         let base_depth = self.stack.len();
-        let current_module_idx = self.stack.last().map(|f| f.module_idx).unwrap_or(0);
 
         let mut params = captures.as_ref().clone();
         params.extend(args);
         let target_pc =
-            self.resolve_instruction_address(current_module_idx, func_addr, "closure address")?;
+            self.resolve_instruction_address(closure_module_idx, func_addr, "closure address")?;
         let frame = StackFrame {
             params,
             locals: Vec::new(),
             stack: Vec::new(),
             pc: target_pc,
-            module_idx: current_module_idx,
+            module_idx: closure_module_idx,
         };
         self.stack.push(frame);
 
@@ -976,7 +976,11 @@ impl Context {
                 Instruction::BoxToProto(struct_type_id, _proto_type_id) => {
                     // Convert box<T> to box<P> for dynamic dispatch
                     // Pop BoxRef, push ProtoBoxRef with type info
-                    let origin_module_idx = self.stack_frame()?.module_idx as u32;
+                    let current_module_idx = self.stack_frame()?.module_idx as u32;
+                    // Resolve to the module/local-id that owns T's vtable. T may
+                    // be imported from another module (gaps.md #1).
+                    let (origin_module_idx, concrete_type_id) =
+                        self.resolve_concrete_origin(current_module_idx, struct_type_id);
                     let box_ref = self
                         .stack_frame_mut()?
                         .stack
@@ -991,7 +995,7 @@ impl Context {
                         self.stack_frame_mut()?.stack.push(Data::ProtoBoxRef {
                             box_idx,
                             generation,
-                            concrete_type_id: struct_type_id,
+                            concrete_type_id,
                             origin_module_idx,
                         });
                     } else {
@@ -1004,7 +1008,11 @@ impl Context {
                 Instruction::RefToProto(struct_type_id, _proto_type_id) => {
                     // Convert ref<T> to ref<P> for dynamic dispatch
                     // Pop StructRef, push ProtoRefRef with type info
-                    let origin_module_idx = self.stack_frame()?.module_idx as u32;
+                    let current_module_idx = self.stack_frame()?.module_idx as u32;
+                    // Resolve to the module/local-id that owns T's vtable. T may
+                    // be imported from another module (gaps.md #1).
+                    let (origin_module_idx, concrete_type_id) =
+                        self.resolve_concrete_origin(current_module_idx, struct_type_id);
                     let struct_ref = self
                         .stack_frame_mut()?
                         .stack
@@ -1016,7 +1024,7 @@ impl Context {
                         self.stack_frame_mut()?.stack.push(Data::ProtoRefRef {
                             ref_idx,
                             generation: 0,
-                            concrete_type_id: struct_type_id,
+                            concrete_type_id,
                             origin_module_idx,
                         });
                     } else {
@@ -1256,6 +1264,7 @@ impl Context {
                 }
 
                 Instruction::MakeClosure(func_addr, capture_count) => {
+                    let closure_module_idx = self.stack_frame()?.module_idx as u32;
                     let mut captures = Vec::new();
                     for _ in 0..capture_count {
                         let val = self
@@ -1268,7 +1277,7 @@ impl Context {
                     captures.reverse();
                     self.stack_frame_mut()?
                         .stack
-                        .push(Data::closure(func_addr, captures));
+                        .push(Data::closure(func_addr, closure_module_idx, captures));
                 }
 
                 Instruction::CallClosure(arg_count) => {
@@ -1294,15 +1303,18 @@ impl Context {
                     match closure {
                         Data::Closure {
                             func_addr,
+                            module_idx: closure_module_idx,
                             captures,
                         } => {
-                            let current_module_idx =
-                                self.stack.last().map(|f| f.module_idx).unwrap_or(0);
-                            // Create new frame. Params = captures + args
+                            let closure_module_idx = closure_module_idx as usize;
+                            // Create new frame. Params = captures + args.
+                            // The closure runs in its DEFINING module, not the
+                            // caller's, so `func_addr` resolves and dispatches
+                            // correctly across module boundaries.
                             let mut params = captures.as_ref().clone();
                             params.extend(args);
                             let target_pc = self.resolve_instruction_address(
-                                current_module_idx,
+                                closure_module_idx,
                                 func_addr,
                                 "closure address",
                             )?;
@@ -1311,7 +1323,7 @@ impl Context {
                                 locals: Vec::new(),
                                 stack: Vec::new(),
                                 pc: target_pc,
-                                module_idx: current_module_idx,
+                                module_idx: closure_module_idx,
                             };
                             self.stack.push(frame);
                         }

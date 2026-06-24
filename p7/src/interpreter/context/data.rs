@@ -331,9 +331,13 @@ pub enum Data {
     Null,
     /// Some(value) for nullable types
     Some(SharedData),
-    /// Closure value: function address + captured values
+    /// Closure value: function address + defining module + captured values.
+    /// `module_idx` records the module whose bytecode the closure body lives
+    /// in, so the closure can be invoked from any other module's frame
+    /// (`func_addr` is resolved against, and the closure runs in, this module).
     Closure {
         func_addr: u32,
+        module_idx: u32,
         captures: SharedCaptures,
     },
     /// Tuple value - immutable fixed-size collection of heterogeneous Data values
@@ -378,9 +382,10 @@ impl Data {
         Data::Some(Rc::new(value))
     }
 
-    pub fn closure(func_addr: u32, captures: Vec<Data>) -> Self {
+    pub fn closure(func_addr: u32, module_idx: u32, captures: Vec<Data>) -> Self {
         Data::Closure {
             func_addr,
+            module_idx,
             captures: Rc::new(captures),
         }
     }

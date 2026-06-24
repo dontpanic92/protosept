@@ -1006,6 +1006,19 @@ impl Generator {
             return Ok(function_def.return_type.clone());
         }
 
+        // Callable-field fallback (gaps.md #6): `recv.field(args)` where no
+        // method named `field` exists but the struct has a *field* of that name
+        // holding a callable — a `fn(...)` closure or a single-method
+        // `box<P>`/`ref<P>` (e.g. `box<crosscom.IAction>`). The receiver is
+        // already on the stack; load the field from it and invoke it directly,
+        // so an explicit `let cb = self.field; cb()` is no longer required.
+        if let Some(type_id) = type_id_opt
+            && let Some(result) =
+                self.try_generate_callable_field_call(type_id, field, &arguments)?
+        {
+            return Ok(result);
+        }
+
         // Fallback: look for the method in the source module (cross-module method call)
         let type_id = type_id_opt.ok_or_else(|| SemanticError::FunctionNotFound {
             name: field.name.to_string(),
@@ -1074,6 +1087,96 @@ impl Generator {
         self.builder.call_external(module_path_idx, symbol_name_idx);
 
         Ok(mapped_return_type)
+    }
+
+    /// Tries to lower `recv.field(args)` to a call on a callable *field* named
+    /// `field` (rather than a method). Supports `fn(...)`-typed fields (emits a
+    /// field-load + `CallClosure`) and single-method `box<P>`/`ref<P>` fields
+    /// such as `box<crosscom.IAction>` (emits a field-load + proto dispatch on
+    /// the proto's sole method). Returns `Ok(None)` when no such field exists or
+    /// the field isn't callable, so the caller can continue its normal
+    /// resolution. Assumes the receiver is already on the stack; the field-load
+    /// consumes it and leaves the callable value in its place.
+    fn try_generate_callable_field_call(
+        &mut self,
+        type_id: u32,
+        field: &Identifier,
+        arguments: &CallArgs,
+    ) -> SaResult<Option<Type>> {
+        // Locate a field (not a method) named `field.name`, capturing its index,
+        // type, and whether visibility allows access from here.
+        let field_info = {
+            let TypeDefinition::Struct(struct_def) = self.symbol_table.get_type(type_id) else {
+                return Ok(None);
+            };
+            let Some((idx, (_n, fty))) = struct_def
+                .fields
+                .iter()
+                .enumerate()
+                .find(|(_i, (fname, _))| fname == &field.name)
+                .map(|(idx, (n, fty))| (idx, (n.clone(), fty.clone())))
+            else {
+                return Ok(None);
+            };
+            self.ensure_struct_field_visible(struct_def, idx, &field.name, field.line, field.col)?;
+            (idx, fty)
+        };
+        let (field_idx, field_ty) = field_info;
+
+        match &field_ty {
+            // Closure field: load it and CallClosure with the supplied args.
+            Type::Function {
+                params,
+                return_type,
+            } => {
+                let params = params.clone();
+                let return_type = (**return_type).clone();
+                self.builder.ldfield(field_idx as u32);
+                let ordered = self.process_positional_arguments(
+                    field.name.as_str(),
+                    field.line,
+                    field.col,
+                    arguments.clone(),
+                    params.len(),
+                )?;
+                self.push_typed_argument_list(ordered, &params, field.line, field.col)?;
+                self.builder.call_closure(params.len() as u32);
+                Ok(Some(return_type))
+            }
+            // Single-method proto field (e.g. `box<IAction>`): load it and
+            // dispatch the proto's sole method.
+            Type::BoxType(inner) | Type::Reference(inner) => {
+                let Type::Proto(proto_id) = inner.as_ref() else {
+                    return Ok(None);
+                };
+                let proto_id = *proto_id;
+                let method_name = {
+                    let TypeDefinition::Proto(proto) = &self.symbol_table.types[proto_id as usize]
+                    else {
+                        return Ok(None);
+                    };
+                    if proto.methods.len() != 1 {
+                        return Ok(None);
+                    }
+                    proto.methods[0].0.clone()
+                };
+                self.builder.ldfield(field_idx as u32);
+                let method_ident = Identifier {
+                    name: method_name,
+                    line: field.line,
+                    col: field.col,
+                };
+                let result = self.generate_proto_dispatch(
+                    proto_id,
+                    &[],
+                    &field_ty,
+                    &method_ident,
+                    arguments.clone(),
+                )?;
+                Ok(Some(result))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Resolves a method from an imported module by looking up the type's source_module.
