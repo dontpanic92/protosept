@@ -150,10 +150,23 @@ impl Generator {
             }
         } else if let Some(expected) = expected_element_type {
             // Checking-context: every element is checked against the expected element type,
-            // which lets `null` and bare `T` widen to `?T` (and `box<T>` coerce to `box<P>`).
+            // which lets `null` and bare `T` widen to `?T` (and `box<T>` coerce to `box<P>`,
+            // or a bare `T` value auto-box to `box<P>`).
             for element in &elements {
-                let _ =
+                let got =
                     self.generate_expression_with_expected_type(element.clone(), Some(expected))?;
+                // After any checking-context coercion the produced type must
+                // be compatible with the expected element type. Without this
+                // guard a non-coercible element (e.g. a bare struct value that
+                // does NOT declare the expected proto) would be silently
+                // accepted and leave a wrongly-typed value in the array.
+                if !self.types_compatible(&got, expected) {
+                    return Err(SemanticError::TypeMismatch {
+                        lhs: self.type_to_string(expected),
+                        rhs: self.type_to_string(&got),
+                        pos: self.make_pos(line, col),
+                    });
+                }
             }
             expected.clone()
         } else {

@@ -68,8 +68,24 @@ so no explicit `import builtin;` line is needed.
 `f"{n}"`. A direct `n.to_string()` or `n.display()` method would be useful
 for building strings programmatically.
 
-### 20. No default parameter values
-**Impact: LOW** — Functions like `tui.set_bold(on: int)` could benefit from
-a default: `tui.set_bold(on: int = 1)`. Currently every call must provide
-all arguments explicitly. The spec intentionally excludes this for
-auditability, but it leads to verbose call sites for toggle-style functions.
+### 20. No default parameter values — RESOLVED
+**Status: shipped.** Default values are supported on **both function
+parameters** (`fn f(on: int = 1)`) **and record-struct fields**
+(`struct Text(content: string, color: int = WHITE, size: float = 12.0)`).
+Omitted trailing arguments — positionally (`Text("hi")`) or by name
+(`Text(content = "hi")`) — fall back to the default expression, which may
+reference module-level constants. Regression coverage:
+`radiance/protosept/p7/tests/default_values.rs`.
+
+### 21. No implicit auto-boxing of bare values to `box<P>` — RESOLVED
+**Status: shipped.** At checking-context sites (array-literal elements,
+annotated `let`, argument passing, returns) a bare struct/enum *value* whose
+type declares conformance to proto `P` now auto-boxes to `box<P>`. This lets
+declarative widget children be written `children = [Text(...), Button(...)]`
+for an `array<box<Element>>` parameter without an explicit `box(...)` per
+element. Unlike the spec's reinterpreting `box<T> -> box<P>` coercion (§18.5),
+this allocates a fresh box for the temporary. A non-conforming bare value at a
+`box<P>` site is now a compile-time type error (previously a silent
+miscompile). Regression coverage:
+`radiance/protosept/p7/tests/array_autobox_proto.rs`.
+

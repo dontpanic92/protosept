@@ -304,14 +304,25 @@ impl Generator {
     /// (including the case where `T` only *structurally* satisfies `P`
     /// without declaring it in its conformance bracket — that case
     /// requires an explicit `as box<P>` cast per the language design).
+    ///
+    /// A third form, `T -> box<P>` (auto-boxing a bare struct/enum
+    /// *value* into an owned proto handle), is also accepted at
+    /// checking-context sites. Unlike the spec's reinterpreting
+    /// `box<T> -> box<P>` coercion, this one allocates a fresh box for
+    /// the temporary before reinterpreting it. This is the affordance
+    /// that lets declarative UI children be written as
+    /// `children = [Text(...), Button(...)]` (expected
+    /// `array<box<Element>>`) without an explicit `box(...)` per element.
     fn try_emit_implicit_proto_coercion(
         &mut self,
         actual: &Type,
         expected: &Type,
     ) -> SaResult<Option<()>> {
-        let (is_box, actual_inner, expected_inner) = match (actual, expected) {
-            (Type::BoxType(a), Type::BoxType(e)) => (true, a.as_ref(), e.as_ref()),
-            (Type::Reference(a), Type::Reference(e)) => (false, a.as_ref(), e.as_ref()),
+        let (is_box, needs_box_alloc, actual_inner, expected_inner) = match (actual, expected) {
+            (Type::BoxType(a), Type::BoxType(e)) => (true, false, a.as_ref(), e.as_ref()),
+            (Type::Reference(a), Type::Reference(e)) => (false, false, a.as_ref(), e.as_ref()),
+            // Auto-box: bare struct/enum value -> owned proto handle.
+            (Type::Struct(_) | Type::Enum(_), Type::BoxType(e)) => (true, true, actual, e.as_ref()),
             _ => return Ok(None),
         };
 
@@ -343,6 +354,11 @@ impl Generator {
             return Ok(None);
         }
 
+        // Auto-box form: the bare value is on the stack; allocate a box
+        // for it before reinterpreting it as a proto handle.
+        if needs_box_alloc {
+            self.builder.box_alloc();
+        }
         self.generate_wrapper_to_proto_cast(type_id, proto_id, is_box, 0, 0)?;
         Ok(Some(()))
     }

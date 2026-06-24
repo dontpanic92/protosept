@@ -3283,7 +3283,16 @@ Conversion does not allocate a new `T`. It reinterprets the existing handle with
 
 **Coercion rule:** If `P` is declared in `T`'s conformance list (via `struct[P, ...]` or `enum[P, ...]`), then implicit coercion is allowed at assignment, argument passing, and return sites (see §18.6). Otherwise, an explicit `as box<P>` cast is required.
 
-#### 18.5.1 Converting `ref<T>` to `ref<P>` (borrowed upcast)
+**Auto-boxing a bare value (`T -> box<P>`):** As an additional ergonomic affordance, a bare struct/enum *value* of type `T` (not already a `box<T>`) may coerce directly to `box<P>` at checking-context sites — annotated `let`, argument passing, return, and **array-literal elements** — when `T` declares conformance to `P`. Unlike the reinterpreting `box<T> -> box<P>` coercion above, this **allocates a fresh box** for the temporary (equivalent to `box(v) as box<P>`). This is what lets declarative children be written as:
+
+```p7
+// `children` has type `array<box<Element>>`; each bare widget value
+// auto-boxes to `box<Element>` — no explicit `box(...)` per element.
+let children: array<box<Element>> = [Text("a"), Button("b")];
+```
+
+A bare value whose type does **not** declare `P` at a `box<P>` site is a compile-time type error (no auto-box, no silent fallback).
+
 
 A `ref<T>` can be converted to `ref<P>` when `T` satisfies `P`.
 
