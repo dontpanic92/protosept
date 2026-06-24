@@ -224,6 +224,13 @@ impl Parser {
                     self.consume_match(TokenType::CloseParen)?;
                     Expression::Ref(Box::new(expr))
                 }
+                TokenType::RefMut => {
+                    self.consume();
+                    self.consume_match(TokenType::OpenParen)?;
+                    let expr = self.parse_expression()?;
+                    self.consume_match(TokenType::CloseParen)?;
+                    Expression::RefMut(Box::new(expr))
+                }
                 TokenType::Box => {
                     // box(expr) - parse as intrinsic function call
                     let pos = (token.line, token.col);

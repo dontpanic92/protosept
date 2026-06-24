@@ -3,7 +3,24 @@
 Tracked findings from building NaviText and other real-world usage.
 Items are removed once fixed; new items added as discovered.
 
-Last updated: 2026-03-21
+Last updated: 2026-06-24
+
+---
+
+## Resolved
+
+### Mutability model: `ref<T>` / `refmut<T>` + value-type interior mutation
+**Status: shipped.** Borrows are now two-strength: `ref<T>` is a **read-only** view and
+`refmut<T>` is a **mutable** view (receivers `ref self` / `refmut self`). Writing through
+a `ref<T>` is rejected. Interior mutation of a **value** struct or array no longer
+requires `box`: it is gated on the place being mutable (a `let mut` binding, a `box`, or
+a `refmut`). `box<T>` now means identity/sharing/escape only. `let mut` **local** slots
+are addressable (`ref`/`refmut`); `let mut` module-level bindings remain non-addressable.
+Value arrays support `xs[i] = v`, `push`, `pop`, `insert`, `remove`, `clear` on a
+`let mut` local (copy-on-write with store-back); nested/handle-rooted value arrays still
+use `box<array<T>>`. Regression coverage: `p7/tests/ref_mutability.rs`,
+`p7/tests/value_array_mutation.rs`, `tests/test_ref_mut_self.p7`,
+`tests/test_proto_ref_mut_self.p7`.
 
 ---
 
@@ -28,8 +45,9 @@ unwraps one layer automatically.
 Range form (`for i in 0..n`) is still open — see item #6.
 
 ### 3. No type aliases
-**Impact: LOW** — `box<array<string>>` appears 30+ times in function signatures.
-A `type Lines = box<array<string>>` would improve readability significantly.
+**Impact: LOW** — `box<array<string>>` / `refmut<array<string>>` appear repeatedly in
+function signatures. A `type Lines = box<array<string>>` would improve readability
+significantly.
 
 ### 4. No `match` on integers reliably — RESOLVED
 **Impact: LOW** — Spec §9.6 `match` on int / bool / enum is now fully

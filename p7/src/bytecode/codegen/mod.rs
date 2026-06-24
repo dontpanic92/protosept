@@ -804,7 +804,7 @@ impl Generator {
     /// Check if a semantic type contains ref<T> anywhere
     pub(super) fn type_contains_ref(&self, ty: &Type) -> bool {
         match ty {
-            Type::Reference(_) => true,
+            Type::Reference(_) | Type::RefMut(_) => true,
             Type::Array(inner) => self.type_contains_ref(inner),
             Type::BoxType(inner) => self.type_contains_ref(inner),
             Type::Nullable(inner) => self.type_contains_ref(inner),
@@ -1252,7 +1252,7 @@ impl Generator {
                 Type::Primitive(PrimitiveType::Unit)
             };
 
-            if matches!(ret_type, Type::Reference(_)) {
+            if matches!(ret_type, Type::Reference(_) | Type::RefMut(_)) {
                 return Err(SemanticError::Other(
                     "Functions cannot return non-escapable ref types".to_string(),
                 ));
@@ -1516,7 +1516,7 @@ impl Generator {
                 Type::Primitive(PrimitiveType::Unit)
             };
 
-            if matches!(ret_type, Type::Reference(_)) {
+            if matches!(ret_type, Type::Reference(_) | Type::RefMut(_)) {
                 return Err(SemanticError::Other(
                     "Functions cannot return non-escapable ref types".to_string(),
                 ));

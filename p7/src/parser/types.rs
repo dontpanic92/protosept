@@ -23,6 +23,14 @@ impl Parser {
                     self.consume_match(TokenType::GreaterThan)?;
                     Ok(Type::Reference(Box::new(ty)))
                 }
+                TokenType::RefMut => {
+                    self.consume();
+                    // refmut<Type> syntax - must have angle brackets
+                    self.consume_match(TokenType::LessThan)?;
+                    let ty = self.parse_type()?;
+                    self.consume_match(TokenType::GreaterThan)?;
+                    Ok(Type::RefMut(Box::new(ty)))
+                }
                 TokenType::Box => {
                     let (line, col) = (token.line, token.col);
                     self.consume();

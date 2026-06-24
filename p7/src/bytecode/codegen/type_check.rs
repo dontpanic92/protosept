@@ -177,6 +177,16 @@ impl Generator {
                 }
                 return false;
             }
+            // `refmut<T>` is a subtype of `ref<T>` and of `refmut<T>` (one-way).
+            (Type::RefMut(a), Type::RefMut(e)) | (Type::RefMut(a), Type::Reference(e)) => {
+                if a == e {
+                    return true;
+                }
+                if self.inner_type_conforms_to_proto(a, e) {
+                    return true;
+                }
+                return false;
+            }
             _ => {}
         }
 
@@ -245,6 +255,10 @@ impl Generator {
             ParsedType::Reference(r) => {
                 let ty = self.get_semantic_type(r)?;
                 Ok(Type::Reference(Box::new(ty)))
+            }
+            ParsedType::RefMut(r) => {
+                let ty = self.get_semantic_type(r)?;
+                Ok(Type::RefMut(Box::new(ty)))
             }
             ParsedType::Array(a) => {
                 let ty = self.get_semantic_type(a)?;
@@ -516,6 +530,9 @@ impl Generator {
                             (Type::Reference(e), Type::Reference(a)) => {
                                 inner_is_proto(e) && inner_is_self(a)
                             }
+                            (Type::RefMut(e), Type::RefMut(a)) => {
+                                inner_is_proto(e) && inner_is_self(a)
+                            }
                             (Type::BoxType(e), Type::BoxType(a)) => {
                                 inner_is_proto(e) && inner_is_self(a)
                             }
@@ -641,6 +658,7 @@ impl Generator {
             (Type::Primitive(a), Type::Primitive(b)) => a == b,
             (Type::Array(a), Type::Array(b)) => self.types_equal(a, b),
             (Type::Reference(a), Type::Reference(b)) => self.types_equal(a, b),
+            (Type::RefMut(a), Type::RefMut(b)) => self.types_equal(a, b),
             (Type::Struct(a), Type::Struct(b)) => a == b,
             (Type::Enum(a), Type::Enum(b)) => a == b,
             (Type::Proto(a), Type::Proto(b)) => a == b,
@@ -662,6 +680,7 @@ impl Generator {
             Type::Primitive(p) => format!("{:?}", p).to_lowercase(),
             Type::Array(inner) => format!("array<{}>", self.type_to_string(inner)),
             Type::Reference(inner) => format!("ref {}", self.type_to_string(inner)),
+            Type::RefMut(inner) => format!("refmut {}", self.type_to_string(inner)),
             Type::Struct(id) => {
                 // Check bounds to handle type IDs from imported modules
                 if let Some(TypeDefinition::Struct(s)) = self.symbol_table.types.get(*id as usize) {

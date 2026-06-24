@@ -49,7 +49,7 @@ impl Generator {
     fn extract_struct_type_id(&self, ty: &Type, field: &Identifier) -> SaResult<u32> {
         match ty {
             Type::Struct(type_id) => Ok(*type_id),
-            Type::BoxType(inner) | Type::Reference(inner) => {
+            Type::BoxType(inner) | Type::Reference(inner) | Type::RefMut(inner) => {
                 if let Type::Struct(type_id) = **inner {
                     Ok(type_id)
                 } else {
@@ -125,6 +125,7 @@ impl Generator {
             }
             Expression::Unary { operator, right } => self.generate_unary(operator, *right),
             Expression::Ref(expr) => self.generate_ref(*expr),
+            Expression::RefMut(expr) => self.generate_refmut(*expr),
             Expression::Binary {
                 left,
                 operator,

@@ -1,16 +1,15 @@
-// Tests for `ref self` receivers on proto methods. After dropping the
-// readonly axis, `ref self` is the only borrowed receiver form and permits
-// mutation of fields through the borrow. Covers conformance, dynamic
-// dispatch via `box<P>`, and direct method invocation.
+// Tests for `refmut self` (mutating) and `ref self` (read-only) proto method
+// receivers. Covers conformance, dynamic dispatch via `box<P>`, and direct
+// method invocation. `refmut self` requires a mutable place (let mut / box).
 import test.test;
 
 proto Ticker {
-    fn tick(ref self);
+    fn tick(refmut self);
     fn value(ref self) -> int;
 }
 
 struct[Ticker] Tally(pub n: int) {
-    pub fn tick(ref self) { self.n = self.n + 1; }
+    pub fn tick(refmut self) { self.n = self.n + 1; }
     pub fn value(ref self) -> int { return self.n; }
 }
 
@@ -23,7 +22,7 @@ fn test_proto_ref_self_direct_let_mut() -> int {
     return t.value();
 }
 
-// Dynamic dispatch via `box<P>` for a `ref self` proto method.
+// Dynamic dispatch via `box<P>` for a `refmut self` proto method.
 @test(expected_type = "int", expected_value = "3")
 fn test_proto_ref_self_box_proto_dispatch() -> int {
     let bp: box<Ticker> = box(Tally(0)) as box<Ticker>;

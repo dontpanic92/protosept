@@ -25,10 +25,20 @@ impl Generator {
             Type::BoxType(expected_inner) => {
                 matches!(actual, Type::BoxType(actual_inner) if actual_inner.as_ref() == expected_inner.as_ref())
             }
+            // `ref self` (read-only) auto-borrows from any borrow/box/value of Self.
             Type::Reference(expected_inner) => match actual {
-                Type::Reference(actual_inner) | Type::BoxType(actual_inner) => {
+                Type::Reference(actual_inner)
+                | Type::RefMut(actual_inner)
+                | Type::BoxType(actual_inner) => actual_inner.as_ref() == expected_inner.as_ref(),
+                other => other == expected_inner.as_ref(),
+            },
+            // `refmut self` (mutable) accepts a `refmut`/`box` handle or a value place
+            // (mutability of a value place is checked at the call site), but NOT `ref`.
+            Type::RefMut(expected_inner) => match actual {
+                Type::RefMut(actual_inner) | Type::BoxType(actual_inner) => {
                     actual_inner.as_ref() == expected_inner.as_ref()
                 }
+                Type::Reference(_) => false,
                 other => other == expected_inner.as_ref(),
             },
             other => actual == other,
@@ -290,7 +300,7 @@ impl Generator {
                     // Check if the field name is a valid method on this type
                     let deref_ty = match ty {
                         Type::BoxType(inner) => *inner,
-                        Type::Reference(inner) => *inner,
+                        Type::Reference(inner) | Type::RefMut(inner) => *inner,
                         other => other,
                     };
                     if let Type::Array(_) = deref_ty {
@@ -654,6 +664,20 @@ impl Generator {
             return Ok(result);
         }
 
+        // Handle structural mutation of a value (non-boxed) array held in a
+        // mutable place (e.g. `let mut xs = [..]; xs.push(v)`), before the
+        // generic array-method path (which targets box-backed arrays).
+        if let Some(result) = self.try_generate_value_array_mut_method(
+            object.as_ref(),
+            &object_ty,
+            field,
+            &arguments,
+            call_line,
+            call_col,
+        )? {
+            return Ok(result);
+        }
+
         // Handle array method calls
         if let Some(result) =
             self.try_generate_array_method_call(&object_ty, field, &arguments, call_line, call_col)?
@@ -676,7 +700,14 @@ impl Generator {
         }
 
         // Regular struct instance method call
-        self.generate_struct_instance_method_call(&object_ty, field, arguments, call_line, call_col)
+        self.generate_struct_instance_method_call(
+            &object_ty,
+            Some(object.as_ref()),
+            field,
+            arguments,
+            call_line,
+            call_col,
+        )
     }
 
     /// Tries to generate a proto method call (dynamic dispatch)
@@ -690,7 +721,7 @@ impl Generator {
         // Accepts ref<P> / box<P> for plain protos, ref<P<...>> / box<P<...>>
         // for generic protos.
         let (proto_id, proto_args): (Option<u32>, Vec<Type>) = match object_ty {
-            Type::BoxType(inner) | Type::Reference(inner) => match inner.as_ref() {
+            Type::BoxType(inner) | Type::Reference(inner) | Type::RefMut(inner) => match inner.as_ref() {
                 Type::Proto(id) => (Some(*id), Vec::new()),
                 Type::ProtoGeneric { base, args } => (Some(*base), args.clone()),
                 _ => (None, Vec::new()),
@@ -808,9 +839,16 @@ impl Generator {
                 matches!(object_ty, Type::BoxType(inner) if object_inner_is_self(inner));
             let object_is_ref =
                 matches!(object_ty, Type::Reference(inner) if object_inner_is_self(inner));
+            let object_is_refmut =
+                matches!(object_ty, Type::RefMut(inner) if object_inner_is_self(inner));
             let allowed = match receiver_ty {
+                // `ref self` (read): box / ref / refmut callers all auto-borrow.
                 Type::Reference(inner) if object_inner_is_self(inner) => {
-                    object_is_box || object_is_ref
+                    object_is_box || object_is_ref || object_is_refmut
+                }
+                // `refmut self` (write): box / refmut callers only — not a read-only `ref`.
+                Type::RefMut(inner) if object_inner_is_self(inner) => {
+                    object_is_box || object_is_refmut
                 }
                 Type::BoxType(inner) if object_inner_is_self(inner) => object_is_box,
                 _ => true,
@@ -865,7 +903,7 @@ impl Generator {
                 Type::Primitive(p) => Some(p),
                 _ => None,
             },
-            Type::Reference(inner) => match inner.as_ref() {
+            Type::Reference(inner) | Type::RefMut(inner) => match inner.as_ref() {
                 Type::Primitive(p) => Some(p),
                 _ => None,
             },
@@ -881,6 +919,90 @@ impl Generator {
         Ok(None)
     }
 
+    /// Structural mutation of a value (non-boxed) array via copy-on-write with
+    /// store-back to its local slot. Handles `push`/`pop`/`insert`/`remove`/
+    /// `clear` on a `let mut` local array. Returns `Ok(None)` for non-value-array
+    /// receivers or non-mutating methods (which fall through to the generic path).
+    fn try_generate_value_array_mut_method(
+        &mut self,
+        object_expr: &Expression,
+        object_ty: &Type,
+        field: &Identifier,
+        arguments: &CallArgs,
+        call_line: usize,
+        call_col: usize,
+    ) -> SaResult<Option<Type>> {
+        let Type::Array(elem) = object_ty else {
+            return Ok(None);
+        };
+        let elem = elem.as_ref().clone();
+        let unit = Type::Primitive(PrimitiveType::Unit);
+        let int = Type::Primitive(PrimitiveType::Int);
+
+        let spec: Option<(&str, Vec<Type>, Type)> = match field.name.as_str() {
+            "push" => Some(("array.push_value", vec![elem.clone()], unit.clone())),
+            "clear" => Some(("array.clear_value", vec![], unit.clone())),
+            "insert" => Some((
+                "array.insert_value",
+                vec![int.clone(), elem.clone()],
+                unit.clone(),
+            )),
+            "pop" => Some((
+                "array.pop_value",
+                vec![],
+                Type::Nullable(Box::new(elem.clone())),
+            )),
+            "remove" => Some((
+                "array.remove_value",
+                vec![int.clone()],
+                Type::Nullable(Box::new(elem.clone())),
+            )),
+            _ => None,
+        };
+        let Some((intrinsic, expected_args, ret_ty)) = spec else {
+            return Ok(None);
+        };
+
+        if !self.is_mutable_place(object_expr) {
+            return Err(SemanticError::Other(format!(
+                "Cannot call mutating method '{}' on '{}': it is not a mutable place (use a `let mut` array or a `box<array<T>>`)",
+                field.name,
+                object_expr.get_name()
+            )));
+        }
+        let var_id = match object_expr {
+            Expression::Identifier(id) => self
+                .local_scope
+                .as_ref()
+                .and_then(|s| s.find_variable(&id.name)),
+            _ => None,
+        };
+        let Some(var_id) = var_id else {
+            return Err(SemanticError::Other(format!(
+                "Structural mutation of the value array '{}' is only supported when it is a `let mut` local; use `box<array<T>>` for nested or handle-rooted arrays",
+                object_expr.get_name()
+            )));
+        };
+
+        // Receiver array is already on the stack; push positional arguments.
+        let ordered = self.process_positional_arguments(
+            &format!("array.{}", field.name),
+            call_line,
+            call_col,
+            arguments.clone(),
+            expected_args.len(),
+        )?;
+        self.push_typed_argument_list(ordered, &expected_args, call_line, call_col)?;
+
+        let sid = self.add_string_constant(intrinsic);
+        self.builder.call_host_function(sid);
+        // The value intrinsic leaves the modified array on top of the stack;
+        // store it back into the local slot. Any method result sits below it.
+        self.builder.stvar(var_id);
+
+        Ok(Some(ret_ty))
+    }
+
     /// Tries to handle array method calls (e.g., arr.len(), arr.slice())
     fn try_generate_array_method_call(
         &mut self,
@@ -894,7 +1016,9 @@ impl Generator {
         let is_array_ty = match object_ty {
             Type::Array(_) => true,
             Type::BoxType(inner) => matches!(inner.as_ref(), Type::Array(_)),
-            Type::Reference(inner) => matches!(inner.as_ref(), Type::Array(_)),
+            Type::Reference(inner) | Type::RefMut(inner) => {
+                matches!(inner.as_ref(), Type::Array(_))
+            }
             _ => false,
         };
 
@@ -924,7 +1048,7 @@ impl Generator {
                 Type::Map(k, v) => (k.as_ref().clone(), v.as_ref().clone()),
                 _ => return Ok(None),
             },
-            Type::Reference(inner) => match inner.as_ref() {
+            Type::Reference(inner) | Type::RefMut(inner) => match inner.as_ref() {
                 Type::Map(k, v) => (k.as_ref().clone(), v.as_ref().clone()),
                 _ => return Ok(None),
             },
@@ -941,6 +1065,7 @@ impl Generator {
     fn generate_struct_instance_method_call(
         &mut self,
         object_ty: &Type,
+        object_expr: Option<&Expression>,
         field: &Identifier,
         arguments: CallArgs,
         _call_line: usize,
@@ -948,7 +1073,7 @@ impl Generator {
     ) -> SaResult<Type> {
         // Extract the type_id for source_module lookup (works for both struct and enum)
         let type_id_opt = match object_ty {
-            Type::Reference(inner) | Type::BoxType(inner) => match inner.as_ref() {
+            Type::Reference(inner) | Type::RefMut(inner) | Type::BoxType(inner) => match inner.as_ref() {
                 Type::Struct(id) | Type::Enum(id) => Some(*id),
                 _ => None,
             },
@@ -977,7 +1102,21 @@ impl Generator {
                 field.col,
             )?;
 
-            // Local method — emit Call(symbol_id)
+            // `refmut self` auto-borrowing from a value receiver requires that
+            // receiver to be a mutable place, so `let s = S(); s.mutate()` is
+            // rejected while `let mut s = S(); s.mutate()` is allowed. Handle
+            // receivers (`box`/`refmut`) carry their own mutability.
+            if matches!(function_def.params.first(), Some(Type::RefMut(_)))
+                && !matches!(object_ty, Type::BoxType(_) | Type::RefMut(_))
+                && let Some(obj) = object_expr
+                && !self.is_mutable_place(obj)
+            {
+                return Err(SemanticError::Other(format!(
+                    "Cannot call `refmut self` method '{}' on '{}': the receiver is not a mutable place (use a `let mut` binding, a `box<T>`, or a `refmut<T>`)",
+                    field.name,
+                    obj.get_name()
+                )));
+            }
             let param_names_full = &function_def.param_names;
             let param_defaults_full = &function_def.param_defaults;
 
@@ -1145,7 +1284,7 @@ impl Generator {
             }
             // Single-method proto field (e.g. `box<IAction>`): load it and
             // dispatch the proto's sole method.
-            Type::BoxType(inner) | Type::Reference(inner) => {
+            Type::BoxType(inner) | Type::Reference(inner) | Type::RefMut(inner) => {
                 let Type::Proto(proto_id) = inner.as_ref() else {
                     return Ok(None);
                 };

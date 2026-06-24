@@ -31,10 +31,10 @@ Normative keywords:
 - `x, y, z` are identifiers.
 - `null` denotes the null value (only inhabits nullable types).
 - **Slot**: a storage location introduced by `let`, `let mut`, or a parameter.
-- **Addressable location** (v1): a `let`-introduced slot, a parameter slot, or a field/sub-location of an addressable base where the language provides addressability (see §7.1, §7.2, §11.4). Note: `let mut` slots are NOT addressable locations in v1.
-- **Mutable place**: a syntactic expression that may appear on the left side of an assignment statement (§10.2). Mutable places are ephemeral; they are not storable values.
+- **Addressable location** (v1): a `let`- or `let mut`-introduced local slot, a parameter slot, or a field/sub-location of an addressable base where the language provides addressability (see §7.1, §7.2, §11.4). A `let mut` **module-level** binding is NOT addressable (§1.3).
+- **Mutable place**: a syntactic expression that may appear on the left side of an assignment statement (§10.2), and the only valid operand of `refmut(...)`. A place is mutable when its root is a `let mut` binding or it passes through a `box<T>`/`refmut<T>` handle. Mutable places are ephemeral; they are not storable values.
 - **Binding mutability**: whether a named slot may be reassigned. Controlled by `let` vs `let mut`. A `let mut` binding may be rebound to a new value; a `let` binding may not.
-- **Interior mutability**: whether the value behind a handle may be mutated in place. `box<T>` and `ref<T>` both permit interior mutation. `let mut` has no effect on interior mutability.
+- **Interior mutability**: whether the value behind a place may be mutated in place. A `let mut` value slot, a `box<T>`, and a `refmut<T>` permit interior mutation; an immutable `let` slot and a `ref<T>` do not.
 - **Structural-copyable**: types for which `structural_copy(x)` is well-typed (§6.2). This is a structural property determined by the type's structure.
 - **Copy type**: a type `T` such that `T: Copy` (§6.3). Types satisfying the `Copy` proto enable implicit copying at value-flow sites.
 - **Materialized temporary slot (v1)**: an implicit immutable `let` slot created by the compiler to extend the lifetime of a temporary value, enabling it to be borrowed. Used in narrowly-scoped contexts; in v1, this is currently only used for receiver temporary materialization (§11.3.1).
@@ -446,9 +446,9 @@ If the initializer of a module-level binding TRAPs, the entire thread initializa
 
 #### 1.3.4 Restrictions
 
-- Module-level bindings MUST NOT have a type that contains a `ref<T>` (borrowed view), because `ref<T>` is non-escapable (§7.3) and cannot be stored beyond the scope of the borrow.
-- `let mut` module-level bindings, like `let mut` local bindings (§5.1), are **not addressable**: taking `ref(NAME)` where `NAME` is a `let mut` module-level binding is ERROR.
-- `let` (immutable) module-level bindings are addressable: `ref(NAME)` is valid and produces a borrowed view. The borrowed view is valid for the duration of the current thread. This applies regardless of whether the type is a `box<T>` or a plain value type.
+- Module-level bindings MUST NOT have a type that contains a `ref<T>`/`refmut<T>` (borrowed view), because borrowed views are non-escapable (§7.3) and cannot be stored beyond the scope of the borrow.
+- `let mut` module-level bindings are **not addressable**: taking `ref(NAME)` or `refmut(NAME)` where `NAME` is a `let mut` module-level binding is ERROR. (Unlike `let mut` *local* slots, which are addressable; see §5.1.)
+- `let` (immutable) module-level bindings are addressable: `ref(NAME)` is valid and produces a read-only borrowed view. The borrowed view is valid for the duration of the current thread. This applies regardless of whether the type is a `box<T>` or a plain value type.
 
 #### 1.3.5 Visibility
 
@@ -502,13 +502,13 @@ Identifiers start with `_` or a letter and continue with letters, digits, or `_`
 `null` is a keyword (null literal).
 
 **Predeclared type constructors / intrinsics** (not reserved; contextual by syntactic position):  
-`ref`, `box`
+`ref`, `refmut`, `box`
 
 These identifiers have special meaning only in specific syntactic positions:
-- **Type position:** `ref<T>` and `box<T>` denote borrowed-view and owned-heap-handle types.
-- **Expression position:** `ref(expr)` and `box(expr)` construct reference and boxed values.
-- **Method receiver position:** `ref self` desugars to `self: ref<Self>`; `box self` desugars to `self: box<Self>`.
-- In all other positions, `ref` and `box` are ordinary identifiers and may be used as variable names, parameter names, etc.
+- **Type position:** `ref<T>` / `refmut<T>` denote read-only and mutable borrowed-view types; `box<T>` denotes an owned-heap-handle type.
+- **Expression position:** `ref(expr)` / `refmut(expr)` construct read-only and mutable views; `box(expr)` constructs a boxed value.
+- **Method receiver position:** `ref self` desugars to `self: ref<Self>`; `refmut self` to `self: refmut<Self>`; `box self` to `self: box<Self>`.
+- In all other positions, `ref`, `refmut`, and `box` are ordinary identifiers and may be used as variable names, parameter names, etc.
 
 **Contextual keywords** (not reserved; allowed as identifiers in most contexts):  
 `throw`, `try`, `yield`
@@ -629,9 +629,12 @@ String literal syntax and escapes are defined in §4.3.
 
 ### 3.3 `array<T>`
 
-- `array<T>` is a built-in **immutable value type**.
-- In-place mutation of a value array is not supported in v1.
-- Shared mutation/identity is provided via `box<array<T>>` with mutation APIs (§7.4, §3.3.3).
+- `array<T>` is a built-in **value type** with value semantics.
+- An `array<T>` bound to a **`let mut`** slot (or reached through a `box<T>`/`refmut<T>`
+  handle) is mutable in place — see §3.3.3. An `array<T>` bound to an immutable `let`
+  slot, or viewed through a `ref<T>`, is read-only.
+- Mutation is governed by the **mutability of the place** (binding/handle), not by an
+  identity-bearing wrapper. This mirrors `var` value-type collections in Swift.
 
 #### 3.3.1 Array literals
 
@@ -666,24 +669,41 @@ Two indexing forms:
 - `a.get(i)` returns `?T`.
 - If `i` is negative or out of bounds, returns `null`.
 
-**Boxed-array index as mutable place:**
-- When `a: box<array<T>>`, the expression `a[i]` is a **mutable place** in addition to being a read expression.
+**Boxed / mutable-place index as mutable place:**
+- When `a` is a **mutable place** of array type — i.e. a `let mut` array, a
+  `box<array<T>>`, a `refmut<array<T>>`, or a mutable sub-place reaching one of these —
+  the expression `a[i]` is a **mutable place** in addition to being a read expression.
 - As a mutable place, `a[i]` may appear on the left of an assignment (see §10.2).
-- `a[i]` is NOT a mutable place when `a: array<T>` (value arrays are immutable).
+- `a[i]` is NOT a mutable place when `a` is an immutable `let` array or a `ref<array<T>>`
+  (read-only).
+
+> Implementation note (v1): structural mutation methods (`push`, `pop`, `insert`,
+> `remove`, `clear`) and element assignment on a **value** `array<T>` are currently
+> supported when the array is a bare `let mut` **local**; nested or handle-rooted value
+> arrays should use `box<array<T>>`. Box-backed arrays support all mutation everywhere.
 
 [[TODO]] define full array API surface (`len`, `get`, etc.) and whether `get` is syntax sugar for a prelude function.
 
-#### 3.3.3 Boxed array mutation
+#### 3.3.3 Array mutation
 
-Mutation of an array requires boxing:
-- `box<array<T>>` represents a mutable, identity-bearing container.
+A mutable array is one bound to a `let mut` slot, or reached through a
+`box<array<T>>` / `refmut<array<T>>` handle. No identity-bearing wrapper is required
+to mutate a locally-owned array.
 
-**Structural mutation** (adding/removing elements) is via library operations on the boxed array, such as `push`, `pop`, `set`, and `insert`.
+**Structural mutation** (adding/removing elements) is via library operations such as
+`push`, `pop`, `insert`, `remove`, and `clear` on a mutable array.
 
-**Element mutation in place** is via mutable place assignment or method calls on elements:
+**Element mutation in place** is via mutable place assignment or method calls on
+elements:
 - `xs[i] = new_val;` — replace element at index `i`
 - `xs[i].field = 10;` — assign to a field of the element at index `i` (requires element type to be a struct with a visible field)
-- `xs[i].method()` where `method` mutates through a `ref self` or `box self` receiver — mutate element `i` in place
+- `xs[i].method()` where `method` mutates through a `refmut self` or `box self` receiver — mutate element `i` in place
+
+Element mutation requires `xs` to be a **mutable place** (§7.6); it is rejected for an
+immutable `let` array or a `ref<array<T>>`.
+
+`box<array<T>>` additionally provides **shared identity**: mutations are observable
+through all aliases of the box, and box equality is identity (§6.2.1).
 
 See §10.2 for assignment rules.
 
@@ -760,18 +780,32 @@ let y = p.1;  // y has type string, value "test"
 
 ---
 
-### 3.6 Borrowed view types: `ref<T>`
+### 3.6 Borrowed view types: `ref<T>` and `refmut<T>`
 
-`ref<T>` is a borrowed view of an existing addressable location that holds
-a `T` (§7).
+Protosept has **two** borrowed-view types, distinguished by write capability:
 
-- `ref<T>` values satisfy `Copy` (copying a `ref<T>` copies the view/handle; it does not copy the underlying `T`).
-- `ref<T>` values are **non-escapable** (§7.3).
-- Mutation of the referent through `ref<T>` is permitted: `r.field = …`
-  and `*r = …` are well-typed when the underlying location is itself a
-  mutable place (§7.6).
+- `ref<T>` — a **read-only** borrowed view of an existing place holding a `T` (§7).
+- `refmut<T>` — a **mutable** borrowed view of a mutable place holding a `T` (§7).
 
-`ref<?T>` is permitted and means a view of a nullable location.
+Both:
+- satisfy `Copy` (copying the view/handle does not copy the underlying `T`),
+- are **non-escapable** (§7.3),
+- auto-deref for member access and method calls.
+
+Differences:
+- Mutation of the referent (`r.field = …`, `r[i] = …`, calling a `refmut self` method)
+  is permitted **only** through `refmut<T>`; through `ref<T>` it is an ERROR.
+- `refmut(place)` may be formed only when `place` is a **mutable place** (§7.6);
+  `ref(place)` may be formed from any addressable place.
+- `refmut<T>` is a **subtype** of `ref<T>`: a `refmut<T>` value is accepted wherever a
+  `ref<T>` is expected (one-way; `ref<T>` does NOT satisfy a `refmut<T>` requirement).
+
+`ref<?T>` / `refmut<?T>` are permitted and mean a view of a nullable place.
+
+> Why two types: the read/write capability must be visible in a function signature so a
+> caller can tell whether `fn f(a: ref<A>)` may mutate its argument (it may not) versus
+> `fn f(a: refmut<A>)` (it may). A single always-mutable borrow cannot express this and
+> would silently defeat the immutability of `let`.
 
 ---
 
@@ -962,7 +996,7 @@ This section describes **local** `let` and `let mut` bindings — those introduc
 `let mut pattern = expr;` introduces one or more mutable slots (v1).
 
 - `let mut` slots can be reassigned: `x = new_expr;` where `new_expr` has the same type as the slot.
-- `let mut` slots are mutable but NOT addressable (see §0); borrowing via `ref(x)` where `x` is a `let mut` slot is ERROR.
+- A `let mut` **local** slot is a mutable place: it may be mutated in place (for value structs/arrays) and borrowed via `ref(x)` (read) or `refmut(x)` (write). (A `let mut` **module-level** binding is not addressable; see §1.3.)
 - `pattern` MUST be an irrefutable pattern for the static type of `expr` (see §9.6.1.2); otherwise ERROR.
 
 **Binding mutability vs. interior mutability:**
@@ -1046,17 +1080,25 @@ let list = 5;  // ok: no shadowing
 
 ### 5.3 Mutation and identity
 
-Protosept supports two forms of mutation, which operate on different axes and must not be confused:
+Protosept separates mutation along orthogonal axes; the unifying question is **"is the
+place mutable?"**:
 
-1. **Binding-slot reassignment** (v1): `let mut` slots can be reassigned (§5.1). This is purely local mutation; `let mut` slots cannot be borrowed via `ref(...)`. `let mut` expresses that the *binding slot* is mutable — it does not affect the mutability of any object or value reached through the bound handle.
+1. **Binding-slot reassignment**: `let mut` slots can be reassigned (§5.1), e.g. loop
+   counters and accumulators.
 
-2. **Interior mutation through a handle**: In-place mutation through `box<T>` (and the mutable place forms based on it).
-   - Assigning to a field is allowed through a box: `p.x = 1` is valid when `p: box<Point>`.
-   - Assigning to a boxed-array element: `xs[i] = v` or `xs[i].field = v` when `xs: box<array<T>>`.
-   - Value structs and value arrays are immutable.
-   - Interior mutability is a property of the handle type (`box<T>`), not the binding mutability.
+2. **Interior mutation of value types**: in-place mutation of a value struct's field or a
+   value array's element, permitted when the place is rooted at a `let mut` binding.
+   - `let mut p = Point(1,2); p.x = 1;` — ok (value struct, `let mut` root).
+   - `let mut xs = [1,2,3]; xs[i] = v; xs.push(w);` — ok (value array, `let mut` root).
+   - An immutable `let` value or a `ref<T>` view is read-only.
 
-The distinction ensures that shared/observable mutation is always expressed via `box<T>`, while `let mut` provides convenient local reassignment for loop counters, accumulators, and similar use cases. A reader can always identify mutation capability by inspecting the type (`box<T>`) rather than the binding form.
+3. **Mutation through a handle**: `box<T>` and `refmut<T>` permit interior mutation
+   regardless of binding mutability; `box<T>` additionally gives shared identity and
+   aliasing. `ref<T>` is read-only.
+
+A reader identifies mutation capability from the binding form (`let` vs `let mut`) and
+the handle type (`box`/`refmut` vs `ref`). `box<T>` is reserved for cases that genuinely
+need **identity/sharing**, not merely "I want to mutate".
 
 #### Example: `let mut` in a loop accumulator
 
@@ -1070,24 +1112,28 @@ fn sum(arr: array<int>) -> int {
 }
 ```
 
-#### Example: `let mut` slots cannot be borrowed
+#### Example: borrowing a `let mut` local
 
 ```p7
 let mut count = 0;
-let r = ref(count);  // ERROR
+let r = ref(count);     // ok: read-only view of an addressable local
+// let rm = refmut(count); // ok only because `count` is a mutable place
 ```
 
-This is ERROR because `let mut` slots are not addressable locations.
+A `let mut` **module-level** binding, by contrast, is not addressable (§1.3): `ref`/
+`refmut` of it is ERROR.
 
-#### Example: `let mut` binding does not affect interior mutability
+#### Example: interior mutation, value vs handle
 
 ```p7
+let mut p = Point(1, 2);
+p.x = 10;                // ok: value struct, let mut root
+
 let c = box(Counter(0));
 c.count = c.count + 1;   // ok: interior mutation via box<Counter>
 
-let mut p = box(Point(1, 2));
-p = box(Point(3, 4));    // ok: rebind the slot (let mut allows this)
-p.x = 10;               // ok: interior mutation via box<Point> (independent of let mut)
+let q = Point(1, 2);
+// q.x = 10;             // ERROR: immutable `let` value
 ```
 
 ---
@@ -1359,10 +1405,16 @@ A value of type `ref<T>` is a borrowed view of an addressable location holding a
 
 ### 7.2 Taking views
 
-`ref(place)` produces a `ref<T>` when `place` is an addressable location of type `T`.
+`ref(place)` produces a read-only `ref<T>` when `place` is an addressable location of
+type `T`. `refmut(place)` produces a mutable `refmut<T>` when `place` is additionally a
+**mutable place** (§7.6): rooted at a `let mut` binding or reached through a
+`box<T>`/`refmut<T>` handle.
 
 Requirements:
-- `place` MUST be an addressable location (see §0). Note that `let mut` slots are not addressable.
+- For `ref(place)`: `place` MUST be an addressable location (see §0). `let mut` local
+  slots are addressable; `let mut` module-level bindings are not (§1.3).
+- For `refmut(place)`: `place` MUST be a mutable place. `refmut` of an immutable `let`,
+  a parameter, or a `ref<T>` view is ERROR.
 
 In v1, borrowing is always explicit:
 - There is no implicit borrowing at call sites (except for method-call auto-borrow sugar; see §11.3.1).
@@ -1436,18 +1488,23 @@ The following expressions are mutable places in v1:
 
 | Expression | Requirement | Note |
 |---|---|---|
-| `x` | `x` introduced by `let mut` | binding-slot reassignment |
+| `x` | `x` introduced by `let mut` | binding-slot reassignment / value interior mutation |
 | `*b` | `b: box<T>` | boxed deref (write) |
-| `b.field` | `b` is a mutable place of struct type `S`, `field` is a field of `S` | nested field of mutable place |
-| `b[i]` | `b: box<array<T>>` | element of boxed array |
-| `b[i].field` | `b: box<array<T>>`, element type is struct `S`, `field` is a field of `S` | nested field of boxed-array element |
+| `*r` | `r: refmut<T>` | mutable-view deref (write) |
+| `b.field` | `b` is a mutable place of struct type `S`, OR `b: box<S>` / `b: refmut<S>` | nested field of a mutable place |
+| `b[i]` | `b` is a mutable place of array type, OR `b: box<array<T>>` / `b: refmut<array<T>>` | element of a mutable array |
+| `b[i].field` | `b[i]` is a mutable place of struct type `S` | nested field of a mutable array element |
 
 The mutable place forms compose: if `b[i]` is a mutable place of struct type `S`, then `b[i].field` is also a mutable place for any visible field `field` of `S`.
 
+A place is mutable when its **root** is a mutable binding (`let mut`) or it passes through
+a `box<T>` / `refmut<T>` handle. An immutable `let` root, a parameter, or a `ref<T>`
+view yields a non-mutable (read-only) place.
+
 The following are **not** mutable places:
 - `let`-introduced slots (immutable bindings)
-- Parameter slots (parameters are not reassignable in v1)
-- `a[i]` where `a: array<T>` (value arrays are immutable)
+- Parameter slots whose type is not `box`/`refmut` (parameters are not reassignable in v1)
+- `a[i]` / `a.field` reached through a `ref<T>` (read-only view)
 
 #### 7.6.2 Restriction: ephemeral and non-storable
 
@@ -2259,13 +2316,17 @@ Rules:
 - `place` must be a mutable place (§7.6.1):
   1. A `let mut` slot: `x = expr` where `x` was introduced by `let mut`.
      - `expr` MUST have the same type as the slot.
-  2. A boxed deref: `*b = expr` where `b: box<T>`.
-  3. A boxed field: `b.field = expr` where `b: box<S>` or `b` is a mutable place of struct type `S`.
-  4. A boxed-array element: `b[i] = expr` where `b: box<array<T>>`.
+  2. A handle deref: `*b = expr` where `b: box<T>` or `b: refmut<T>`.
+  3. A field of a mutable place: `b.field = expr` where `b` is a mutable place of struct
+     type `S` (a `let mut` value struct, a `box<S>`, or a `refmut<S>`).
+  4. An element of a mutable array: `b[i] = expr` where `b` is a mutable place of array
+     type (a `let mut` array, a `box<array<T>>`, or a `refmut<array<T>>`).
      - `expr` MUST have type `T`.
-  5. A nested field of a boxed-array element: `b[i].field = expr` where `b: box<array<T>>` and the element type is struct `S` with a visible field `field`.
+  5. A nested field of a mutable array element: `b[i].field = expr` where the element
+     type is struct `S` with a visible field `field`.
      - `expr` MUST have the declared type of `field`.
 - Assigning to a `let` slot (`x = expr` where `x` was introduced by `let`) is ERROR.
+- Assigning to a field/element reached only through a `ref<T>` (read-only view) is ERROR.
 - Assignment does not produce a value.
 
 #### 10.2.1 Local exclusivity for boxed-array element assignment
@@ -2443,13 +2504,23 @@ Methods on structs, enums, and protos may declare a receiver parameter. The rece
    - Type: `Self` (the declaring type).
    - Passes ownership; subject to value-flow rules (§6.1).
 
-2. `self: ref<Self>` or shorthand `ref self` – borrowed receiver:
+2. `self: ref<Self>` or shorthand `ref self` – **read-only** borrowed receiver:
    - Type: `ref<Self>`.
    - Caller passes a borrowed view of an addressable location.
    - Method-call syntax automatically applies the auto-borrow sugar (§11.3.1).
-   - Within the method body, `self` may be used to read and write fields of `Self`, subject to field-visibility rules (§12.1.1).
+   - Within the method body, `self` may **read** fields of `Self` but NOT write them
+     (writing a field of a `ref self` is ERROR; use `refmut self`).
 
-3. `self: box<Self>` or shorthand `box self` – boxed receiver:
+3. `self: refmut<Self>` or shorthand `refmut self` – **mutable** borrowed receiver:
+   - Type: `refmut<Self>`.
+   - Within the method body, `self` may read and write fields of `Self`, subject to
+     field-visibility rules (§12.1.1).
+   - At a call site, the receiver must be a **mutable place** (§7.6): a `let mut` value,
+     a `box<Self>`, or a `refmut<Self>`. Calling a `refmut self` method on an immutable
+     `let` value is ERROR. A `refmut self` method auto-borrows from these the same way
+     `ref self` does for reads.
+
+4. `self: box<Self>` or shorthand `box self` – boxed receiver:
    - Type: `box<Self>`.
    - Caller passes a boxed handle to the instance.
    - The boxed handle satisfies `Copy` (§6.3); passing does not move the box itself.
@@ -2661,13 +2732,21 @@ let val = id.value();     // OK
 - Field access is ERROR if the field is not visible.
 
 **Field writes:**
-- `s.x = v` is ERROR unless `s: box<S>` (mutation requires boxing).
+- `s.x = v` requires `s` to be a **mutable place** (§7.6): a `let mut` value struct, a
+  `box<S>`, a `refmut<S>`, or a mutable sub-place reaching one of these. It is ERROR
+  for an immutable `let` struct, a parameter, or a `ref<S>` (read-only view).
 - Field write is also ERROR if the field is not visible.
 
 Example:
 ```p7
-let p = box(Point(1, 2));
-p.x = 10; // ok: p is boxed and x is visible
+let mut p = Point(1, 2);
+p.x = 10;          // ok: `p` is a `let mut` value struct
+
+let q = box(Point(1, 2));
+q.x = 10;          // ok: interior mutation through box<Point>
+
+let r = Point(1, 2);
+// r.x = 10;       // ERROR: `r` is an immutable `let` binding
 ```
 
 ### 12.5 Methods

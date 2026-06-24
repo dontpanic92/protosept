@@ -36,6 +36,15 @@ pub(crate) fn register_builtin_functions(ctx: &mut Context) {
     ctx.register_host_function("array.clear".to_string(), array::array_clear);
     ctx.register_host_function("array.pop".to_string(), array::array_pop);
     ctx.register_host_function("array.set".to_string(), array::array_set);
+    ctx.register_host_function(
+        "array.set_in_place".to_string(),
+        array::array_set_in_place,
+    );
+    ctx.register_host_function("array.push_value".to_string(), array::array_push_value);
+    ctx.register_host_function("array.clear_value".to_string(), array::array_clear_value);
+    ctx.register_host_function("array.insert_value".to_string(), array::array_insert_value);
+    ctx.register_host_function("array.pop_value".to_string(), array::array_pop_value);
+    ctx.register_host_function("array.remove_value".to_string(), array::array_remove_value);
     ctx.register_host_function("array.insert".to_string(), array::array_insert);
     ctx.register_host_function("array.remove".to_string(), array::array_remove);
     ctx.register_host_function("array.index_of".to_string(), array::array_index_of);

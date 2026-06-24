@@ -1471,7 +1471,7 @@ impl Generator {
                     }
                 }
 
-                if matches!(ty, Type::Reference(_)) {
+                if matches!(ty, Type::Reference(_) | Type::RefMut(_)) {
                     return Err(SemanticError::Other(
                         "Cannot return a non-escapable ref value".to_string(),
                     ));
@@ -2037,6 +2037,9 @@ impl Generator {
         let mapped = match ty {
             Type::Primitive(p) => Type::Primitive(*p),
             Type::Reference(inner) => Type::Reference(Box::new(
+                self.map_type_from_module(module, inner, type_map)?,
+            )),
+            Type::RefMut(inner) => Type::RefMut(Box::new(
                 self.map_type_from_module(module, inner, type_map)?,
             )),
             Type::Array(inner) => Type::Array(Box::new(

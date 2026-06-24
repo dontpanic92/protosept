@@ -239,7 +239,7 @@ impl Generator {
         // Extract the element type from the array receiver
         let element_type = match object_ty {
             Type::Array(inner) => inner.as_ref().clone(),
-            Type::Reference(inner) => match inner.as_ref() {
+            Type::Reference(inner) | Type::RefMut(inner) => match inner.as_ref() {
                 Type::Array(elem) => elem.as_ref().clone(),
                 _ => Type::Primitive(PrimitiveType::Unit),
             },
@@ -383,7 +383,7 @@ impl Generator {
             // Extract the actual array type from object_ty
             match object_ty {
                 Type::Array(_) => object_ty.clone(),
-                Type::Reference(inner) => match inner.as_ref() {
+                Type::Reference(inner) | Type::RefMut(inner) => match inner.as_ref() {
                     Type::Array(_) => inner.as_ref().clone(),
                     _ => return_type,
                 },

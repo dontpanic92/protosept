@@ -153,7 +153,11 @@ impl Generator {
             }
 
             match (param_ty, &arg_ty) {
-                (Type::Reference(param_inner), Type::Reference(arg_inner)) => {
+                (Type::Reference(param_inner), Type::Reference(arg_inner))
+                | (Type::Reference(param_inner), Type::RefMut(arg_inner))
+                | (Type::RefMut(param_inner), Type::RefMut(arg_inner)) => {
+                    // `refmut<T>` coerces to a `ref<T>` parameter; `ref<T>` does NOT
+                    // satisfy a `refmut<T>` parameter (handled by the guards below).
                     if **param_inner != **arg_inner {
                         return Err(SemanticError::TypeMismatch {
                             lhs: arg_ty.to_string(),
@@ -162,15 +166,15 @@ impl Generator {
                         });
                     }
                 }
-                (Type::Reference(_), _) => {
+                (Type::Reference(_), _) | (Type::RefMut(_), _) => {
                     return Err(SemanticError::TypeMismatch {
                         lhs: arg_ty.to_string(),
                         rhs: param_ty.to_string(),
                         pos: SourcePos::at(call_line, call_col),
                     });
                 }
-                (_, Type::Reference(_)) => {
-                    // No implicit deref: `ref` values cannot be passed to non-ref parameters.
+                (_, Type::Reference(_)) | (_, Type::RefMut(_)) => {
+                    // No implicit deref: `ref`/`refmut` values cannot be passed to non-ref parameters.
                     return Err(SemanticError::TypeMismatch {
                         lhs: arg_ty.to_string(),
                         rhs: param_ty.to_string(),

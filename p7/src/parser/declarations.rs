@@ -23,15 +23,13 @@ impl Parser {
             let parameter = match_token! {
                 self.peek(),
                 TokenType::Ref => {
-                    // Receiver shortcut: `ref self` == `self: ref<Self>`.
-                    // `ref<T>` is a (mutable) borrowed view; the readonly axis
-                    // was removed, so `ref mut self` is no longer accepted.
+                    // Receiver shortcut: `ref self` == `self: ref<Self>` (read-only view).
                     self.consume(); // consume 'ref'
 
                     if matches!(self.peek().map(|t| &t.token_type), Some(TokenType::Mut)) {
                         let mut_tok = self.peek().cloned();
                         return Err(ParseError::UnexpectedToken {
-                            found: "`ref mut self` is no longer supported; `ref self` is now mutable. Use `ref self`.".to_string(),
+                            found: "`ref mut self` is not supported; use `refmut self` for a mutable receiver or `ref self` for a read-only one.".to_string(),
                             pos: mut_tok.map(|t| SourcePos { line: t.line, col: t.col, module: None }),
                         });
                     }
@@ -51,6 +49,28 @@ impl Parser {
                     });
 
                     let arg_type = Type::Reference(Box::new(self_type));
+
+                    Ok(Parameter { name, arg_type, default_value: None })
+                },
+                TokenType::RefMut => {
+                    // Receiver shortcut: `refmut self` == `self: refmut<Self>` (mutable view).
+                    self.consume(); // consume 'refmut'
+
+                    let name = self.parse_identifier()?;
+                    if name.name != "self" {
+                        return Err(ParseError::UnexpectedToken {
+                            found: format!("{:?}", TokenType::Identifier(name.name)),
+                            pos: Some(SourcePos { line: name.line, col: name.col, module: None }),
+                        });
+                    }
+
+                    let self_type = Type::Identifier(Identifier {
+                        name: InternedString::from("Self"),
+                        line: name.line,
+                        col: name.col,
+                    });
+
+                    let arg_type = Type::RefMut(Box::new(self_type));
 
                     Ok(Parameter { name, arg_type, default_value: None })
                 },

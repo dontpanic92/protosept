@@ -74,7 +74,7 @@ impl Generator {
             return Ok(None);
         }
         match &method_params[0] {
-            Type::Reference(inner) => match inner.as_ref() {
+            Type::Reference(inner) | Type::RefMut(inner) => match inner.as_ref() {
                 Type::Proto(pid) if *pid == proto_id => {}
                 _ => return Ok(None),
             },

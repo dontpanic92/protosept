@@ -311,6 +311,144 @@ pub(crate) fn array_pop(ctx: &mut Context) -> ContextResult<()> {
     }
 }
 
+/// Value-array element setter for `xs[i] = v` where `xs` is a non-boxed
+/// (value) array held in a mutable place. Pops `[array, index, value]`,
+/// applies the write via copy-on-write, and pushes the **modified array** so
+/// codegen can store it back into the place. TRAPs on out-of-bounds (matching
+/// trap-indexing semantics for `xs[i] = v`).
+pub(crate) fn array_set_in_place(ctx: &mut Context) -> ContextResult<()> {
+    let elem = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let index = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+    let array = ctx
+        .stack_frame_mut()?
+        .stack
+        .pop()
+        .ok_or(RuntimeError::StackUnderflow)?;
+
+    match (array, index) {
+        (Data::Array(mut elements), Data::Int(idx)) => {
+            let vec = std::rc::Rc::make_mut(&mut elements);
+            if idx < 0 || (idx as usize) >= vec.len() {
+                return Err(RuntimeError::Other(format!(
+                    "array index {} out of bounds (len {})",
+                    idx,
+                    vec.len()
+                )));
+            }
+            vec[idx as usize] = elem;
+            ctx.stack_frame_mut()?.stack.push(Data::Array(elements));
+            Ok(())
+        }
+        (Data::Array(_), _) => Err(RuntimeError::Other(
+            "array.set_in_place: index must be an integer".to_string(),
+        )),
+        _ => Err(RuntimeError::Other(
+            "array.set_in_place: first argument must be a value array".to_string(),
+        )),
+    }
+}
+
+/// Value-array `push`: pops `[array, elem]`, pushes the modified array.
+pub(crate) fn array_push_value(ctx: &mut Context) -> ContextResult<()> {
+    let elem = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let array = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    match array {
+        Data::Array(mut elements) => {
+            std::rc::Rc::make_mut(&mut elements).push(elem);
+            ctx.stack_frame_mut()?.stack.push(Data::Array(elements));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "array.push_value: receiver must be a value array".to_string(),
+        )),
+    }
+}
+
+/// Value-array `clear`: pops `[array]`, pushes the modified (empty) array.
+pub(crate) fn array_clear_value(ctx: &mut Context) -> ContextResult<()> {
+    let array = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    match array {
+        Data::Array(mut elements) => {
+            std::rc::Rc::make_mut(&mut elements).clear();
+            ctx.stack_frame_mut()?.stack.push(Data::Array(elements));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "array.clear_value: receiver must be a value array".to_string(),
+        )),
+    }
+}
+
+/// Value-array `insert`: pops `[array, index, elem]`, pushes the modified array.
+pub(crate) fn array_insert_value(ctx: &mut Context) -> ContextResult<()> {
+    let elem = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let index = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let array = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    match (array, index) {
+        (Data::Array(mut elements), Data::Int(idx)) => {
+            let vec = std::rc::Rc::make_mut(&mut elements);
+            let len = vec.len() as i64;
+            let clamped = idx.max(0).min(len) as usize;
+            vec.insert(clamped, elem);
+            ctx.stack_frame_mut()?.stack.push(Data::Array(elements));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "array.insert_value: invalid arguments".to_string(),
+        )),
+    }
+}
+
+/// Value-array `pop`: pops `[array]`, pushes `[popped ?T, modified array]`.
+pub(crate) fn array_pop_value(ctx: &mut Context) -> ContextResult<()> {
+    let array = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    match array {
+        Data::Array(mut elements) => {
+            let popped = std::rc::Rc::make_mut(&mut elements).pop();
+            let popped = match popped {
+                Some(elem) => Data::some(elem),
+                None => Data::Null,
+            };
+            ctx.stack_frame_mut()?.stack.push(popped);
+            ctx.stack_frame_mut()?.stack.push(Data::Array(elements));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "array.pop_value: receiver must be a value array".to_string(),
+        )),
+    }
+}
+
+/// Value-array `remove`: pops `[array, index]`, pushes `[removed ?T, modified array]`.
+pub(crate) fn array_remove_value(ctx: &mut Context) -> ContextResult<()> {
+    let index = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    let array = ctx.stack_frame_mut()?.stack.pop().ok_or(RuntimeError::StackUnderflow)?;
+    match (array, index) {
+        (Data::Array(mut elements), Data::Int(idx)) => {
+            let vec = std::rc::Rc::make_mut(&mut elements);
+            let removed = if idx < 0 || (idx as usize) >= vec.len() {
+                Data::Null
+            } else {
+                Data::some(vec.remove(idx as usize))
+            };
+            ctx.stack_frame_mut()?.stack.push(removed);
+            ctx.stack_frame_mut()?.stack.push(Data::Array(elements));
+            Ok(())
+        }
+        _ => Err(RuntimeError::Other(
+            "array.remove_value: invalid arguments".to_string(),
+        )),
+    }
+}
+
 pub(crate) fn array_set(ctx: &mut Context) -> ContextResult<()> {
     // Pop element to set from stack
     let elem = ctx

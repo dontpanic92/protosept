@@ -48,7 +48,7 @@ impl Generator {
     ) -> SaResult<Type> {
         // `*r` where `r: ref<T>` yields a `T`. No runtime op yet.
         // `*b` where `b: box<T>` yields a `T` (only for primitive T).
-        if let Type::Reference(inner) = ty {
+        if let Type::Reference(inner) | Type::RefMut(inner) = ty {
             Ok(*inner)
         } else if let Type::BoxType(inner) = ty {
             match &*inner {
@@ -100,11 +100,168 @@ impl Generator {
 
         let ty = self.generate_expression(expr)?;
 
-        if matches!(ty, Type::Reference(_)) {
+        if ty.is_ref() {
             return Err(SemanticError::Other("Cannot take ref of ref".to_string()));
         }
 
         Ok(Type::Reference(Box::new(ty)))
+    }
+
+    /// `refmut(place)` forms a mutable borrowed view. Permitted only when
+    /// `place` is a mutable place rooted at a mutable binding (§7).
+    pub(in crate::bytecode::codegen) fn generate_refmut(
+        &mut self,
+        expr: Expression,
+    ) -> SaResult<Type> {
+        // Special case: refmut(*b) where b is a box
+        if let Expression::Unary { operator, right } = &expr
+            && operator.token_type == TokenType::Multiply
+        {
+            let inner_ty = self.generate_expression((**right).clone())?;
+            if let Type::BoxType(boxed_inner) = inner_ty {
+                return Ok(Type::RefMut(boxed_inner));
+            }
+            return Err(SemanticError::Other(
+                "refmut(*x) requires x to be a box<T>".to_string(),
+            ));
+        }
+
+        if let Expression::Identifier(ref id) = expr
+            && let Some(mod_var) = self.find_module_variable(&id.name)
+            && mod_var.is_mutable
+        {
+            return Err(SemanticError::Other(format!(
+                "Cannot take refmut of mutable module-level binding '{}' (let mut module-level bindings are not addressable)",
+                id.name
+            )));
+        }
+
+        if !self.is_mutable_place(&expr) {
+            return Err(SemanticError::Other(format!(
+                "Cannot take refmut of '{}': it is not a mutable place (the root must be a `let mut` binding, a `box<T>`, or a `refmut<T>`)",
+                expr.get_name()
+            )));
+        }
+
+        let ty = self.generate_expression(expr)?;
+
+        if ty.is_ref() {
+            return Err(SemanticError::Other("Cannot take refmut of a ref".to_string()));
+        }
+
+        Ok(Type::RefMut(Box::new(ty)))
+    }
+
+    /// Pure (no codegen) type query for a place expression. Returns `None` for
+    /// expressions that are not addressable places.
+    pub(in crate::bytecode::codegen) fn infer_place_type(
+        &self,
+        expr: &Expression,
+    ) -> Option<Type> {
+        match expr {
+            Expression::Identifier(id) => {
+                if let Some(scope) = &self.local_scope {
+                    if let Some(var_id) = scope.find_variable(&id.name) {
+                        return Some(scope.get_variable_type(var_id));
+                    }
+                    if let Some(param_id) = scope.find_param(&id.name) {
+                        return Some(scope.get_param_type(param_id));
+                    }
+                }
+                self.find_module_variable(&id.name).map(|mv| mv.ty.clone())
+            }
+            Expression::FieldAccess { object, field } => {
+                let oty = self.infer_place_type(object)?;
+                let base = oty.referent().unwrap_or(&oty);
+                let base = match base {
+                    Type::BoxType(inner) => inner.as_ref(),
+                    other => other,
+                };
+                if let Type::Struct(type_id) = base {
+                    if let TypeDefinition::Struct(s) = self.symbol_table.get_type(*type_id) {
+                        return s
+                            .fields
+                            .iter()
+                            .find(|(fname, _)| fname == &field.name)
+                            .map(|(_, fty)| fty.clone());
+                    }
+                }
+                None
+            }
+            Expression::ArrayIndex { array, .. } => {
+                let aty = self.infer_place_type(array)?;
+                let base = aty.referent().unwrap_or(&aty);
+                let base = match base {
+                    Type::BoxType(inner) => inner.as_ref(),
+                    other => other,
+                };
+                if let Type::Array(elem) = base {
+                    return Some(elem.as_ref().clone());
+                }
+                None
+            }
+            Expression::Unary { operator, right } if operator.token_type == TokenType::Multiply => {
+                let rty = self.infer_place_type(right)?;
+                match rty {
+                    Type::BoxType(inner) | Type::Reference(inner) | Type::RefMut(inner) => {
+                        Some(*inner)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether `expr` denotes a mutable place: writable in place / borrowable as
+    /// `refmut`. A place is mutable when its root is a `let mut` binding, or it
+    /// passes through a `box<T>`/`refmut<T>` handle (interior mutability). A
+    /// `ref<T>` handle or an immutable `let`/parameter root is NOT mutable.
+    pub(in crate::bytecode::codegen) fn is_mutable_place(&self, expr: &Expression) -> bool {
+        match expr {
+            Expression::Identifier(id) => {
+                if let Some(scope) = &self.local_scope {
+                    if let Some(var_id) = scope.find_variable(&id.name) {
+                        let ty = scope.get_variable_type(var_id);
+                        // A handle binding (box/refmut) is a mutable place regardless of
+                        // binding mutability; a `ref` binding is not; a value binding is
+                        // mutable iff declared `let mut`.
+                        return match ty {
+                            Type::BoxType(_) | Type::RefMut(_) => true,
+                            Type::Reference(_) => false,
+                            _ => scope.is_variable_mutable(var_id),
+                        };
+                    }
+                    if let Some(param_id) = scope.find_param(&id.name) {
+                        // Parameters are immutable bindings; only handle params allow
+                        // mutation through them.
+                        return matches!(
+                            scope.get_param_type(param_id),
+                            Type::BoxType(_) | Type::RefMut(_)
+                        );
+                    }
+                }
+                // Module-level bindings are not addressable for through-mutation.
+                false
+            }
+            Expression::FieldAccess { object, .. } => match self.infer_place_type(object) {
+                Some(Type::BoxType(_)) | Some(Type::RefMut(_)) => true,
+                Some(Type::Reference(_)) => false,
+                _ => self.is_mutable_place(object),
+            },
+            Expression::ArrayIndex { array, .. } => match self.infer_place_type(array) {
+                Some(Type::BoxType(_)) | Some(Type::RefMut(_)) => true,
+                Some(Type::Reference(_)) => false,
+                _ => self.is_mutable_place(array),
+            },
+            Expression::Unary { operator, right } if operator.token_type == TokenType::Multiply => {
+                matches!(
+                    self.infer_place_type(right),
+                    Some(Type::BoxType(_)) | Some(Type::RefMut(_))
+                )
+            }
+            _ => false,
+        }
     }
 
     pub(in crate::bytecode::codegen) fn generate_force_unwrap(
@@ -350,6 +507,22 @@ impl Generator {
 
         let object_ty = self.generate_expression(object.clone())?;
 
+        // Interior mutation requires a mutable place: a `box`/`refmut` handle, or a
+        // value struct rooted at a `let mut` binding. `ref<T>` and immutable `let`
+        // roots are read-only.
+        let writable = match &object_ty {
+            Type::BoxType(_) | Type::RefMut(_) => true,
+            Type::Reference(_) => false,
+            _ => self.is_mutable_place(&object),
+        };
+        if !writable {
+            return Err(SemanticError::Other(format!(
+                "Cannot assign to field '{}' of '{}': it is not a mutable place (the base must be a `let mut` binding, a `box<T>`, or a `refmut<T>`; a `ref<T>` is read-only)",
+                field.name,
+                object.get_name()
+            )));
+        }
+
         let struct_type_id = self.extract_struct_type_id(&object_ty, &field)?;
 
         let udt = self.symbol_table.get_type(struct_type_id);
@@ -405,11 +578,29 @@ impl Generator {
     ) -> SaResult<Type> {
         let (line, col) = pos;
 
-        // Generate array expression — must be box<array<T>>
+        // Resolve the local slot of the base (if it is a bare local identifier),
+        // needed for store-back when mutating a value (non-boxed) array in place.
+        let base_var_id = match &array {
+            Expression::Identifier(id) => self
+                .local_scope
+                .as_ref()
+                .and_then(|scope| scope.find_variable(&id.name)),
+            _ => None,
+        };
+
+        // Generate the array base. For `box<array<T>>` this pushes a box ref
+        // (mutated in place); for a value `array<T>` it pushes the array value
+        // (mutated via copy-on-write and stored back to its slot).
         let array_ty = self.generate_expression(array.clone())?;
-        let element_type = match &array_ty {
+
+        enum IndexTarget {
+            Boxed,
+            ValueLocal(u32),
+        }
+
+        let (element_type, target) = match &array_ty {
             Type::BoxType(inner) => match inner.as_ref() {
-                Type::Array(elem_type) => elem_type.as_ref().clone(),
+                Type::Array(elem_type) => (elem_type.as_ref().clone(), IndexTarget::Boxed),
                 other => {
                     return Err(SemanticError::TypeMismatch {
                         lhs: "box<array<T>>".to_string(),
@@ -418,9 +609,27 @@ impl Generator {
                     });
                 }
             },
+            Type::Array(elem_type) => {
+                // Value array: element assignment is allowed when the base is a
+                // mutable place. Store-back currently supports a bare `let mut`
+                // local array; nested/handle bases should use `box<array<T>>`.
+                if !self.is_mutable_place(&array) {
+                    return Err(SemanticError::Other(format!(
+                        "Cannot assign to index of '{}': it is not a mutable place (use a `let mut` array, or a `box<array<T>>`)",
+                        array.get_name()
+                    )));
+                }
+                let Some(var_id) = base_var_id else {
+                    return Err(SemanticError::Other(format!(
+                        "Element assignment to the value array '{}' is only supported when it is a `let mut` local; use `box<array<T>>` for nested or handle-rooted arrays",
+                        array.get_name()
+                    )));
+                };
+                (elem_type.as_ref().clone(), IndexTarget::ValueLocal(var_id))
+            }
             _ => {
                 return Err(SemanticError::Other(format!(
-                    "Cannot assign to index of non-boxed array '{}'; only box<array<T>> supports element assignment",
+                    "Cannot assign to index of '{}': expected an array (`box<array<T>>` or a `let mut` array)",
                     array.get_name()
                 )));
             }
@@ -446,12 +655,21 @@ impl Generator {
             });
         }
 
-        // Stack is now: [box_ref, index, elem] — call array.set
-        let string_id = self.add_string_constant("array.set");
-        self.builder.call_host_function(string_id);
-
-        // array.set pushes old element; discard it (assignment yields unit)
-        self.builder.pop();
+        match target {
+            IndexTarget::Boxed => {
+                // Stack: [box_ref, index, elem] — array.set pushes old element.
+                let string_id = self.add_string_constant("array.set");
+                self.builder.call_host_function(string_id);
+                self.builder.pop();
+            }
+            IndexTarget::ValueLocal(var_id) => {
+                // Stack: [array, index, elem] — set_in_place pushes the modified
+                // array; store it back into the local slot.
+                let string_id = self.add_string_constant("array.set_in_place");
+                self.builder.call_host_function(string_id);
+                self.builder.stvar(var_id);
+            }
+        }
 
         Ok(Type::Primitive(PrimitiveType::Unit))
     }
@@ -768,6 +986,7 @@ impl Generator {
         // Auto-deref references and boxes
         let object_ty = match object_ty {
             Type::Reference(inner) => *inner,
+            Type::RefMut(inner) => *inner,
             Type::BoxType(inner) => *inner,
             other => other,
         };
