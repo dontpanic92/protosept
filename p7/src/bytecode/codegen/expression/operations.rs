@@ -1188,7 +1188,7 @@ impl Generator {
             self.builder.unwrap_exception();
 
             let exception_ty = Type::Primitive(PrimitiveType::Int);
-            self.generate_pattern_matching(&else_arms, exception_ty)?;
+            self.generate_pattern_matching_ex(&else_arms, exception_ty, false)?;
 
             let end_address = self.builder.next_address();
             self.builder

@@ -11,8 +11,22 @@ impl Generator {
         arms: &[MatchArm],
         scrutinee_ty: Type,
     ) -> SaResult<Type> {
+        self.generate_pattern_matching_ex(arms, scrutinee_ty, true)
+    }
+
+    /// `check_exhaustive`: whether to enforce match exhaustiveness (§9.6.4).
+    /// `try`/`else` handler arms pass `false` because their scrutinee is a
+    /// placeholder type, not the real thrown-error enum.
+    pub(crate) fn generate_pattern_matching_ex(
+        &mut self,
+        arms: &[MatchArm],
+        scrutinee_ty: Type,
+        check_exhaustive: bool,
+    ) -> SaResult<Type> {
         // Spec §9.6.4: match must be exhaustive.
-        self.check_match_exhaustive(arms, &scrutinee_ty)?;
+        if check_exhaustive {
+            self.check_match_exhaustive(arms, &scrutinee_ty)?;
+        }
 
         // Track jump addresses for all arms to jump to end
         let mut end_jumps = Vec::new();
@@ -528,6 +542,14 @@ impl Generator {
         if arms.is_empty() {
             return Ok(());
         }
+
+        // Look through borrowed/boxed views: matching on `ref<E>`/`refmut<E>`/
+        // `box<E>` (e.g. `match self` in a `ref self` method) is exhaustiveness-
+        // checked against the underlying type `E`.
+        let scrutinee_ty = match scrutinee_ty {
+            Type::Reference(inner) | Type::RefMut(inner) | Type::BoxType(inner) => inner.as_ref(),
+            other => other,
+        };
 
         // Any irrefutable arm anywhere makes the match exhaustive.
         if arms
