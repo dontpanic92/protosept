@@ -1,7 +1,12 @@
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::bytecode::Module;
 use crate::errors::RuntimeError;
+use crate::interpreter::native::{NativeCallback, NativeSignature};
+
+static NEXT_CONTEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[macro_use]
 mod data;
@@ -35,7 +40,19 @@ pub(super) struct ForeignTypeReg {
     pub carrier_type_ids: Vec<(usize, u32)>, // (module_idx, type_id)
 }
 
+pub(crate) struct NativeRegistrationCheckpoint {
+    host_functions: HashMap<String, HostFunction>,
+    foreign_types: HashMap<String, ForeignTypeReg>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ForeignHandleState {
+    generation: u64,
+    valid: bool,
+}
+
 pub struct Context {
+    instance_id: u64,
     pub stack: Vec<StackFrame>,
     modules: Vec<Module>,
     pub heap: Vec<Struct>,
@@ -72,6 +89,9 @@ pub struct Context {
     // a foreign value stamped by one module flows to another. See
     // `discover_foreign_carriers` for the maintenance logic.
     pub(super) foreign_carrier_methods: HashMap<String, Vec<ForeignCarrierMethod>>,
+    // Invalidated identities remain recorded so a reused host token receives
+    // a generation newer than every stale value still held by script code.
+    foreign_handles: HashMap<(String, i64), ForeignHandleState>,
     // Host-owned values that must survive GC compaction. These are used by
     // embedding runtimes that keep script state between calls.
     external_roots: Vec<Option<Data>>,
@@ -108,6 +128,7 @@ impl Default for Context {
 impl Context {
     pub fn new() -> Self {
         let mut ctx = Self {
+            instance_id: NEXT_CONTEXT_ID.fetch_add(1, Ordering::Relaxed),
             stack: vec![StackFrame::new()],
             modules: Vec::new(),
             heap: Vec::new(),
@@ -123,6 +144,7 @@ impl Context {
             foreign_types: HashMap::new(),
             foreign_uuids: HashMap::new(),
             foreign_carrier_methods: HashMap::new(),
+            foreign_handles: HashMap::new(),
             external_roots: Vec::new(),
             imported_type_origin: HashMap::new(),
         };
@@ -130,6 +152,10 @@ impl Context {
         // Register builtin host functions
         ctx.register_builtin_host_functions();
         ctx
+    }
+
+    pub fn instance_id(&self) -> u64 {
+        self.instance_id
     }
 
     /// Set the containing directory of the entry script (filesystem-only).
@@ -182,8 +208,43 @@ impl Context {
     }
 
     /// Register a custom host function
-    pub fn register_host_function(&mut self, name: String, func: HostFunction) {
-        self.host_functions.insert(name, func);
+    pub fn register_host_function<F>(&mut self, name: String, func: F)
+    where
+        F: Fn(&mut Context) -> ContextResult<()> + 'static,
+    {
+        self.host_functions.insert(name, Rc::new(func));
+    }
+
+    /// Register a typed native function without exposing VM stack layout.
+    pub fn register_native_function<F>(
+        &mut self,
+        name: impl Into<String>,
+        signature: NativeSignature,
+        func: F,
+    ) where
+        F: Fn(&mut Context, &[Data]) -> ContextResult<Option<Data>> + 'static,
+    {
+        let name = name.into();
+        let callback: Rc<NativeCallback> = Rc::new(func);
+        self.register_host_function(
+            name.clone(),
+            crate::interpreter::native::stack_adapter(name, signature, callback),
+        );
+    }
+
+    pub(crate) fn native_registration_checkpoint(&self) -> NativeRegistrationCheckpoint {
+        NativeRegistrationCheckpoint {
+            host_functions: self.host_functions.clone(),
+            foreign_types: self.foreign_types.clone(),
+        }
+    }
+
+    pub(crate) fn rollback_native_registration(
+        &mut self,
+        checkpoint: NativeRegistrationCheckpoint,
+    ) {
+        self.host_functions = checkpoint.host_functions;
+        self.foreign_types = checkpoint.foreign_types;
     }
 
     /// Register an `@foreign` proto's runtime metadata.
@@ -286,13 +347,21 @@ impl Context {
     /// Use [`Context::push_foreign_ref`] for borrowed (`ref<F>`) values
     /// where the host retains ownership and no finalizer should fire.
     pub fn push_foreign(&mut self, type_tag: &str, handle: i64) -> ContextResult<()> {
-        self.push_foreign_inner(type_tag, handle, true)
+        self.push_foreign_inner(type_tag, handle, true, None)
     }
 
     /// Push a borrowed foreign value (`ref<F>` semantics). The finalizer
     /// will not fire for this value when it is collected.
     pub fn push_foreign_ref(&mut self, type_tag: &str, handle: i64) -> ContextResult<()> {
-        self.push_foreign_inner(type_tag, handle, false)
+        self.push_foreign_inner(type_tag, handle, false, None)
+    }
+
+    /// Push a persistent non-owning foreign handle. Every value created for
+    /// the same `(type_tag, handle)` identity becomes stale when invalidated.
+    pub fn push_foreign_handle(&mut self, type_tag: &str, handle: i64) -> ContextResult<()> {
+        let data = self.alloc_foreign_handle(type_tag, handle)?;
+        self.stack_frame_mut()?.stack.push(data);
+        Ok(())
     }
 
     fn push_foreign_inner(
@@ -300,8 +369,9 @@ impl Context {
         type_tag: &str,
         handle: i64,
         owned: bool,
+        handle_generation: Option<u64>,
     ) -> ContextResult<()> {
-        let data = self.alloc_foreign_inner(type_tag, handle, owned)?;
+        let data = self.alloc_foreign_inner(type_tag, handle, owned, handle_generation)?;
         self.stack_frame_mut()?.stack.push(data);
         Ok(())
     }
@@ -318,14 +388,52 @@ impl Context {
     /// `type_tag` (the entry-point module is the typical site, since
     /// `@foreign` protos are declared once per module).
     pub fn alloc_foreign(&mut self, type_tag: &str, handle: i64) -> ContextResult<Data> {
-        self.alloc_foreign_inner(type_tag, handle, true)
+        self.alloc_foreign_inner(type_tag, handle, true, None)
     }
 
     /// Like [`Context::alloc_foreign`], but marks the foreign payload
     /// as borrowed (`owned: false`), suppressing the carrier's
     /// finalizer when the box is reclaimed by GC.
     pub fn alloc_foreign_ref(&mut self, type_tag: &str, handle: i64) -> ContextResult<Data> {
-        self.alloc_foreign_inner(type_tag, handle, false)
+        self.alloc_foreign_inner(type_tag, handle, false, None)
+    }
+
+    /// Construct a persistent non-owning foreign handle.
+    pub fn alloc_foreign_handle(&mut self, type_tag: &str, handle: i64) -> ContextResult<Data> {
+        let key = (type_tag.to_string(), handle);
+        let generation = match self.foreign_handles.get_mut(&key) {
+            Some(state) if state.valid => state.generation,
+            Some(state) => {
+                state.valid = true;
+                state.generation = state.generation.wrapping_add(1);
+                state.generation
+            }
+            None => {
+                self.foreign_handles.insert(
+                    key,
+                    ForeignHandleState {
+                        generation: 1,
+                        valid: true,
+                    },
+                );
+                1
+            }
+        };
+        self.alloc_foreign_inner(type_tag, handle, false, Some(generation))
+    }
+
+    /// Invalidate all persistent non-owning values for a host object.
+    pub fn invalidate_foreign_handle(&mut self, type_tag: &str, handle: i64) -> ContextResult<()> {
+        let state = self
+            .foreign_handles
+            .get_mut(&(type_tag.to_string(), handle))
+            .ok_or_else(|| RuntimeError::StaleForeignHandle {
+                type_tag: type_tag.to_string(),
+                handle,
+            })?;
+        state.valid = false;
+        state.generation = state.generation.wrapping_add(1);
+        Ok(())
     }
 
     fn alloc_foreign_inner(
@@ -333,6 +441,7 @@ impl Context {
         type_tag: &str,
         handle: i64,
         owned: bool,
+        handle_generation: Option<u64>,
     ) -> ContextResult<Data> {
         // When there is no active frame (e.g. host is preparing args
         // before push_function), fall back to the first registered
@@ -367,6 +476,7 @@ impl Context {
             type_tag: type_tag.to_string(),
             handle,
             owned,
+            handle_generation,
         };
         let (box_idx, generation) = self.box_heap.alloc(payload);
         self.allocation_count += 1;
@@ -448,13 +558,28 @@ impl Context {
 
         match payload {
             Data::Foreign {
-                type_tag, handle, ..
+                type_tag,
+                handle,
+                handle_generation,
+                ..
             } => {
                 if type_tag != expected_tag {
                     return Err(RuntimeError::Other(format!(
                         "pop_foreign: expected type_tag '{}', got '{}'",
                         expected_tag, type_tag
                     )));
+                }
+                if let Some(generation) = handle_generation {
+                    let valid = self
+                        .foreign_handles
+                        .get(&(type_tag.clone(), *handle))
+                        .is_some_and(|state| state.valid && state.generation == *generation);
+                    if !valid {
+                        return Err(RuntimeError::StaleForeignHandle {
+                            type_tag: type_tag.clone(),
+                            handle: *handle,
+                        });
+                    }
                 }
                 Ok(*handle)
             }

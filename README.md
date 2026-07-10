@@ -152,6 +152,20 @@ Notes:
 cargo run -p p7-cli -- run path/to/script.p7 -- --any -args you-want
 ```
 
+- Project commands load `p7.toml` from the given directory (or the current
+  directory when omitted):
+
+```bash
+cargo run -p p7-cli -- check
+cargo run -p p7-cli -- build
+cargo run -p p7-cli -- run
+cargo run -p p7-cli -- test
+```
+
+The initial package implementation supports path dependencies, canonical
+package-qualified imports, relative imports, package-root imports, and
+`p7.lock`. See `specs/package-project.md`.
+
 - `repl`: starts a minimal REPL shell (evaluation is not implemented yet)
 
 ```bash

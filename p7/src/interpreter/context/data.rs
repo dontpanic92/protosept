@@ -13,9 +13,12 @@ pub type SharedCaptures = Rc<Vec<Data>>;
 
 pub(crate) const SMALL_MAP_MAX_ENTRIES: usize = 8;
 
-/// Type for host functions that can be called from p7 code
-/// Takes a mutable reference to the context to access the stack
-pub type HostFunction = fn(&mut super::Context) -> ContextResult<()>;
+/// Compatibility host function called through the interpreter stack.
+///
+/// The reference-counted closure permits extensions to capture state. New
+/// integrations should prefer `Context::register_native_function`, which
+/// validates typed arguments and hides stack layout.
+pub type HostFunction = Rc<dyn Fn(&mut super::Context) -> ContextResult<()>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MapKey {
@@ -346,12 +349,14 @@ pub enum Data {
     Map(SharedMap),
     /// A handle to a host-owned object backing an `@foreign` proto value.
     /// `type_tag` identifies the proto (matches `@foreign(type_tag="...")`),
-    /// `handle` is an opaque host-defined token, and `owned` distinguishes
-    /// owning `box<F>` (finalizer fires on drop) from borrowing `ref<F>`.
+    /// `handle` is an opaque host-defined token, `owned` distinguishes owning
+    /// `box<F>` from non-owning values, and `handle_generation` identifies a
+    /// persistent invalidatable `handle<F>`.
     Foreign {
         type_tag: String,
         handle: i64,
         owned: bool,
+        handle_generation: Option<u64>,
     },
 }
 

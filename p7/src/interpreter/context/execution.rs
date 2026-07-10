@@ -69,6 +69,19 @@ impl Context {
             .is_some()
     }
 
+    pub fn function_arity(&self, module_path: &str, name: &str) -> Option<usize> {
+        let module_idx = self.module_index(module_path)?;
+        let symbol = self.modules.get(module_idx)?.get_function(name)?;
+        let crate::semantic::SymbolKind::Function { func_id, .. } = &symbol.kind else {
+            return None;
+        };
+        self.modules
+            .get(module_idx)?
+            .functions
+            .get(*func_id as usize)
+            .map(|function| function.params.len())
+    }
+
     fn module_index(&self, module_path: &str) -> Option<usize> {
         if module_path == "$root" {
             return (!self.modules.is_empty()).then_some(0);
@@ -230,7 +243,10 @@ impl Context {
 
         let result = self.run_interpreter_loop();
         self.stop_depth = prev_stop;
-        result?;
+        if let Err(error) = result {
+            self.stack.truncate(base_depth);
+            return Err(error);
+        }
 
         // Defensive cleanup: if the just-pushed function exited by running
         // past the end of its module's instructions rather than via `Ret`
@@ -286,7 +302,10 @@ impl Context {
         let result = self.run_interpreter_loop();
 
         self.stop_depth = prev_stop;
-        result?;
+        if let Err(error) = result {
+            self.stack.truncate(base_depth);
+            return Err(error);
+        }
 
         self.stack_frame_mut()?
             .stack
@@ -332,7 +351,11 @@ impl Context {
         let result = self.run_interpreter_loop();
 
         self.stop_depth = prev_stop;
-        result
+        if let Err(error) = result {
+            self.stack.truncate(base_depth);
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub(super) fn run_interpreter_loop(&mut self) -> ContextResult<()> {
@@ -1140,8 +1163,11 @@ impl Context {
                                 .stack
                                 .push(Data::string(method_name));
                             self.stack_frame_mut()?.stack.push(Data::string(type_tag));
-                            let host_fn =
-                                self.host_functions.get(&dispatcher_name).ok_or_else(|| {
+                            let host_fn = self
+                                .host_functions
+                                .get(&dispatcher_name)
+                                .cloned()
+                                .ok_or_else(|| {
                                     RuntimeError::Other(format!(
                                         "Foreign-proto dispatcher host fn not found: {}",
                                         dispatcher_name
@@ -1165,9 +1191,16 @@ impl Context {
                         })?;
 
                     // Look up and call the host function
-                    let host_fn = self.host_functions.get(function_name).ok_or_else(|| {
-                        RuntimeError::Other(format!("Host function not found: {}", function_name))
-                    })?;
+                    let host_fn =
+                        self.host_functions
+                            .get(function_name)
+                            .cloned()
+                            .ok_or_else(|| {
+                                RuntimeError::Other(format!(
+                                    "Host function not found: {}",
+                                    function_name
+                                ))
+                            })?;
 
                     // Call the host function
                     host_fn(self)?;

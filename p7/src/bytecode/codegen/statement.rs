@@ -1496,8 +1496,12 @@ impl Generator {
         module_path: InternedString,
         alias: Option<InternedString>,
     ) -> SaResult<Type> {
+        let resolved_module_path = self.resolve_import_path(&module_path)?;
         // Import semantics: try module first, then symbol from parent module
-        let segments: Vec<&str> = module_path.split('.').filter(|s| !s.is_empty()).collect();
+        let segments: Vec<&str> = resolved_module_path
+            .split('.')
+            .filter(|s| !s.is_empty())
+            .collect();
         if segments.is_empty() {
             return Err(SemanticError::ImportError {
                 module_path: module_path.to_string(),
@@ -1515,17 +1519,25 @@ impl Generator {
             .unwrap_or_else(|| InternedString::from(segments.last().unwrap().to_string()));
 
         // 1) Try module import: load full module_path
-        if let Some(source) = self.module_provider.load_module(&module_path) {
-            if !self.imported_modules.contains_key(&module_path) {
-                let imported_module = self.compile_module(&module_path, source)?;
+        if let Some(source) = self
+            .module_provider
+            .load_module_from(&self._current_module_path, &resolved_module_path)
+        {
+            if !self
+                .imported_modules
+                .contains_key(resolved_module_path.as_str())
+            {
+                let imported_module = self.compile_module(&resolved_module_path, source)?;
                 self.imported_modules
-                    .insert(module_path.clone(), imported_module);
+                    .insert(resolved_module_path.clone(), imported_module);
             }
 
-            let module_id = self.symbol_table.register_module(module_path.clone(), 0);
+            let module_id = self
+                .symbol_table
+                .register_module(resolved_module_path.clone(), 0);
             let module_symbol = Symbol::new(
                 binding_name.clone(),
-                module_path.clone(),
+                resolved_module_path.clone(),
                 SymbolKind::Module(module_id),
             );
             self.symbol_table.insert_symbol(module_symbol);
@@ -1549,7 +1561,7 @@ impl Generator {
 
         let parent_source = self
             .module_provider
-            .load_module(&parent_path)
+            .load_module_from(&self._current_module_path, &parent_path)
             .ok_or_else(|| SemanticError::ImportError {
                 module_path: parent_path.clone(),
                 pos: SourcePos {
@@ -1624,6 +1636,52 @@ impl Generator {
             "Symbol '{}' not found in module '{}'",
             symbol_name, parent_path
         )))
+    }
+
+    fn resolve_import_path(&self, requested: &str) -> SaResult<InternedString> {
+        if let Some(relative) = requested.strip_prefix('.') {
+            if relative.is_empty() {
+                return Err(SemanticError::Other(
+                    "Relative import must name a module".to_string(),
+                ));
+            }
+            if self._current_module_path.as_str() == "$root" {
+                return Ok(InternedString::from(relative));
+            }
+            let parent = if self
+                .module_provider
+                .module_is_directory(&self._current_module_path)
+            {
+                self._current_module_path.as_str()
+            } else {
+                self._current_module_path
+                    .as_str()
+                    .rsplit_once('.')
+                    .map(|(parent, _)| parent)
+                    .unwrap_or(self._current_module_path.as_str())
+            };
+            return Ok(InternedString::from(format!("{parent}.{relative}")));
+        }
+
+        if let Some(package_relative) = requested.strip_prefix("_.") {
+            if package_relative.is_empty() {
+                return Err(SemanticError::Other(
+                    "Package-root import must name a module".to_string(),
+                ));
+            }
+            if self._current_module_path.as_str() == "$root" {
+                return Ok(InternedString::from(package_relative));
+            }
+            let package_name =
+                self._current_module_path.split('.').next().ok_or_else(|| {
+                    SemanticError::Other("Invalid current module path".to_string())
+                })?;
+            return Ok(InternedString::from(format!(
+                "{package_name}.{package_relative}"
+            )));
+        }
+
+        Ok(InternedString::from(requested))
     }
 
     /// Helper to resolve protocol conformances from identifiers

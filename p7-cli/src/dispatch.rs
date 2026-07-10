@@ -1,6 +1,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Subcommand {
     Run,
+    Check,
+    Build,
     Test,
     Repl,
     Version,
@@ -12,6 +14,8 @@ impl Subcommand {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "run" => Some(Self::Run),
+            "check" => Some(Self::Check),
+            "build" => Some(Self::Build),
             "test" => Some(Self::Test),
             "repl" => Some(Self::Repl),
             "version" => Some(Self::Version),
@@ -87,19 +91,20 @@ pub fn dispatch_from_argv(argv: &[String]) -> DispatchResult {
     }
 
     if let Some(i) = subcommand_pos
-        && let Some(subcommand) = Subcommand::parse(tokens[i].as_str()) {
-            let global_argv = std::iter::once(program_name.clone())
-                .chain(tokens[..i].iter().cloned())
-                .collect::<Vec<_>>();
-            let subcommand_args = tokens[i + 1..].to_vec();
-            return DispatchResult {
-                mode: DispatchMode::Subcommand {
-                    global_argv,
-                    subcommand,
-                    subcommand_args,
-                },
-            };
-        }
+        && let Some(subcommand) = Subcommand::parse(tokens[i].as_str())
+    {
+        let global_argv = std::iter::once(program_name.clone())
+            .chain(tokens[..i].iter().cloned())
+            .collect::<Vec<_>>();
+        let subcommand_args = tokens[i + 1..].to_vec();
+        return DispatchResult {
+            mode: DispatchMode::Subcommand {
+                global_argv,
+                subcommand,
+                subcommand_args,
+            },
+        };
+    }
 
     // 2) Direct script detection: find first *.p7 token (continue scanning past `--`).
     let mut script_pos: Option<usize> = None;
@@ -238,6 +243,14 @@ mod tests {
                 assert_eq!(global_argv, vec!["p7".to_string(), "-v".to_string()]);
             }
             _ => panic!("expected subcommand mode"),
+        }
+    }
+
+    #[test]
+    fn project_commands_are_subcommands() {
+        for command in ["check", "build"] {
+            let d = dispatch_from_argv(&argv(&["p7", command]));
+            assert!(matches!(d.mode, DispatchMode::Subcommand { .. }));
         }
     }
 }

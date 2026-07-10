@@ -271,6 +271,10 @@ pub enum RuntimeError {
         expected_gen: u32,
         actual_gen: u32,
     },
+    StaleForeignHandle {
+        type_tag: String,
+        handle: i64,
+    },
     Other(String),
 }
 
@@ -295,6 +299,11 @@ impl fmt::Display for RuntimeError {
                 f,
                 "Stale box handle: box {} expected generation {} but slot is at generation {} (the slot was freed by GC and possibly reused)",
                 idx, expected_gen, actual_gen
+            ),
+            RuntimeError::StaleForeignHandle { type_tag, handle } => write!(
+                f,
+                "Stale foreign handle: '{}' object {} has been invalidated",
+                type_tag, handle
             ),
             RuntimeError::Other(msg) => write!(f, "Runtime error: {}", msg),
         }

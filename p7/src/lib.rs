@@ -1,9 +1,11 @@
 pub mod ast;
 pub mod bytecode;
+pub mod embedding;
 pub mod errors;
 pub mod intern;
 pub mod interpreter;
 pub mod lexer;
+pub mod native_abi;
 pub mod parser;
 pub mod semantic;
 
@@ -17,6 +19,22 @@ pub trait ModuleProvider {
     /// Load a module by its path (e.g., "test.test" or "std.collections.list")
     /// Returns the source code for the module, or None if not found
     fn load_module(&self, module_path: &str) -> Option<String>;
+
+    /// Load a module on behalf of another canonical module.
+    ///
+    /// Package-aware providers can use `requester` to enforce dependency
+    /// visibility. Legacy providers inherit the unrestricted behavior.
+    fn load_module_from(&self, _requester: &str, module_path: &str) -> Option<String> {
+        self.load_module(module_path)
+    }
+
+    /// Whether `module_path` represents a directory index such as `mod.p7`.
+    ///
+    /// Relative imports from directory modules resolve beneath the module
+    /// itself, while relative imports from leaf modules resolve beside it.
+    fn module_is_directory(&self, _module_path: &str) -> bool {
+        false
+    }
 
     /// Clone the provider into a Box for recursive compilation
     fn clone_boxed(&self) -> Box<dyn ModuleProvider>;
@@ -40,6 +58,7 @@ impl ModuleProvider for NoModuleProvider {
 #[derive(Clone)]
 pub struct InMemoryModuleProvider {
     modules: Rc<HashMap<String, String>>,
+    directory_modules: Rc<std::collections::HashSet<String>>,
 }
 
 impl Default for InMemoryModuleProvider {
@@ -52,6 +71,7 @@ impl InMemoryModuleProvider {
     pub fn new() -> Self {
         InMemoryModuleProvider {
             modules: Rc::new(HashMap::new()),
+            directory_modules: Rc::new(std::collections::HashSet::new()),
         }
     }
 
@@ -60,6 +80,13 @@ impl InMemoryModuleProvider {
         let mut map = (*self.modules).clone();
         map.insert(module_path, source);
         self.modules = Rc::new(map);
+    }
+
+    pub fn add_directory_module(&mut self, module_path: String, source: String) {
+        self.add_module(module_path.clone(), source);
+        let mut modules = (*self.directory_modules).clone();
+        modules.insert(module_path);
+        self.directory_modules = Rc::new(modules);
     }
 }
 
@@ -70,6 +97,10 @@ impl ModuleProvider for InMemoryModuleProvider {
 
     fn clone_boxed(&self) -> Box<dyn ModuleProvider> {
         Box::new(self.clone())
+    }
+
+    fn module_is_directory(&self, module_path: &str) -> bool {
+        self.directory_modules.contains(module_path)
     }
 }
 
@@ -107,6 +138,15 @@ impl ModuleProvider for BuiltinModuleProvider {
     fn clone_boxed(&self) -> Box<dyn ModuleProvider> {
         Box::new(self.clone())
     }
+
+    fn load_module_from(&self, requester: &str, module_path: &str) -> Option<String> {
+        Self::get_builtin_module(module_path)
+            .or_else(|| self.inner.load_module_from(requester, module_path))
+    }
+
+    fn module_is_directory(&self, module_path: &str) -> bool {
+        self.inner.module_is_directory(module_path)
+    }
 }
 
 pub fn compile(contents: String) -> Result<bytecode::Module, Proto7Error> {
@@ -115,6 +155,19 @@ pub fn compile(contents: String) -> Result<bytecode::Module, Proto7Error> {
 
 pub fn compile_with_provider(
     contents: String,
+    provider: Box<dyn ModuleProvider>,
+) -> Result<bytecode::Module, Proto7Error> {
+    compile_module_with_provider(contents, "$root", provider)
+}
+
+/// Compile a root module with an explicit canonical module path.
+///
+/// Package-aware hosts should use a path such as `my_package.main`. Legacy
+/// script hosts may continue using [`compile_with_provider`], whose root path
+/// remains `$root`.
+pub fn compile_module_with_provider(
+    contents: String,
+    module_path: &str,
     provider: Box<dyn ModuleProvider>,
 ) -> Result<bytecode::Module, Proto7Error> {
     // Wrap the provider with builtin support
@@ -135,7 +188,8 @@ pub fn compile_with_provider(
     let mut parser = parser::Parser::new(tokens);
     let statements = parser.parse()?;
 
-    let mut codegen = bytecode::codegen::Generator::new(provider_with_builtins);
+    let mut codegen =
+        bytecode::codegen::Generator::new_with_module_path(provider_with_builtins, module_path);
     let module = codegen.generate(statements)?;
 
     Ok(module)

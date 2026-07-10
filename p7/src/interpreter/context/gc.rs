@@ -137,6 +137,7 @@ impl Context {
                 type_tag,
                 handle,
                 owned: true,
+                ..
             }) = self.box_heap.get_unchecked(idx)
                 && let Some(reg) = self.foreign_types.get(type_tag.as_str())
                 && let Some(name) = &reg.finalizer
@@ -150,7 +151,7 @@ impl Context {
         // ordinary host fn registered via `register_host_function`; it
         // receives type_tag at the top of the stack and handle below it.
         for (name, type_tag, handle) in pending_finalizers {
-            let host_fn = self.host_functions.get(&name).copied().ok_or_else(|| {
+            let host_fn = self.host_functions.get(&name).cloned().ok_or_else(|| {
                 RuntimeError::Other(format!(
                     "Foreign finalizer '{}' for type_tag '{}' is not registered",
                     name, type_tag

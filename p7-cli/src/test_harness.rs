@@ -8,6 +8,7 @@ use p7::{
 use std::{fs, path::PathBuf};
 
 use crate::module_provider::FileSystemModuleProvider;
+use crate::project::{Project, ProjectModuleProvider};
 
 /// Composite module provider: tries in-memory modules first, then falls back
 /// to filesystem resolution (for std.* and other on-disk modules).
@@ -15,6 +16,7 @@ use crate::module_provider::FileSystemModuleProvider;
 struct CompositeModuleProvider {
     in_mem: InMemoryModuleProvider,
     fs: FileSystemModuleProvider,
+    project: Option<ProjectModuleProvider>,
 }
 
 impl CompositeModuleProvider {
@@ -22,6 +24,19 @@ impl CompositeModuleProvider {
         Self {
             in_mem,
             fs: FileSystemModuleProvider::new(test_file.as_path()),
+            project: None,
+        }
+    }
+
+    fn new_project(
+        in_mem: InMemoryModuleProvider,
+        test_file: &PathBuf,
+        project: ProjectModuleProvider,
+    ) -> Self {
+        Self {
+            in_mem,
+            fs: FileSystemModuleProvider::new(test_file.as_path()),
+            project: Some(project),
         }
     }
 }
@@ -30,11 +45,33 @@ impl p7::ModuleProvider for CompositeModuleProvider {
     fn load_module(&self, module_path: &str) -> Option<String> {
         self.in_mem
             .load_module(module_path)
+            .or_else(|| {
+                self.project
+                    .as_ref()
+                    .and_then(|project| project.load_module(module_path))
+            })
             .or_else(|| self.fs.load_module(module_path))
     }
 
     fn clone_boxed(&self) -> Box<dyn p7::ModuleProvider> {
         Box::new(self.clone())
+    }
+
+    fn load_module_from(&self, requester: &str, module_path: &str) -> Option<String> {
+        self.in_mem.load_module(module_path).or_else(|| {
+            self.project
+                .as_ref()
+                .and_then(|project| project.load_module_from(requester, module_path))
+                .or_else(|| self.fs.load_module_from(requester, module_path))
+        })
+    }
+
+    fn module_is_directory(&self, module_path: &str) -> bool {
+        self.project
+            .as_ref()
+            .is_some_and(|project| project.module_is_directory(module_path))
+            || self.in_mem.module_is_directory(module_path)
+            || self.fs.module_is_directory(module_path)
     }
 }
 
@@ -77,8 +114,14 @@ pub fn value() -> int {
 pub enum FailureReason {
     NoTestFunctions,
     ExecutionError(Proto7Error),
-    TypeMismatch { expected: String, found: String },
-    ValueMismatch { expected: String, found: String },
+    TypeMismatch {
+        expected: String,
+        found: String,
+    },
+    ValueMismatch {
+        expected: String,
+        found: String,
+    },
     InvalidTestAttribute(String),
     CompileDidNotFail,
     /// `@test(runtime_error = ...)` was set but the function returned Ok.
@@ -243,18 +286,41 @@ fn run_test_case(
     module: p7::bytecode::Module,
     test_case: &TestCase,
     options: RunOptions,
+    project: Option<&Project>,
 ) -> Result<TestResult, Proto7Error> {
     let disassembly = unp7::disassemble_module(&module);
-    let run_result = p7::run_with_options(module, &test_case.function_name, options);
+    let run_result = if let Some(project) = project {
+        let mut runtime = p7::embedding::Runtime::new();
+        project
+            .load_native_extensions(&mut runtime)
+            .map_err(|error| Proto7Error::RuntimeError(p7::errors::RuntimeError::Other(error)))?;
+        runtime.set_script_dir(options.script_dir);
+        runtime.load_module(module);
+        match runtime.call(&test_case.function_name, Vec::new()) {
+            Ok(p7::embedding::CallOutcome::Returned(Some(value))) => Ok(value),
+            Ok(p7::embedding::CallOutcome::Returned(None)) => Err(Proto7Error::RuntimeError(
+                p7::errors::RuntimeError::StackUnderflow,
+            )),
+            Ok(p7::embedding::CallOutcome::Threw(value)) => Err(Proto7Error::RuntimeError(
+                p7::errors::RuntimeError::Other(format!("Script threw {value:?}")),
+            )),
+            Ok(p7::embedding::CallOutcome::Trapped(error)) => Err(Proto7Error::RuntimeError(error)),
+            Err(error) => Err(Proto7Error::RuntimeError(error)),
+        }
+    } else {
+        p7::run_with_options(module, &test_case.function_name, options)
+    };
 
     match &test_case.expectation {
         TestExpectation::RuntimeError { substring } => match run_result {
             Ok(value) => {
                 let returned = format_value(&value);
-                Ok(TestResult::Failure(FailureReason::RuntimeErrorDidNotOccur {
-                    expected_substring: substring.clone(),
-                    returned,
-                }))
+                Ok(TestResult::Failure(
+                    FailureReason::RuntimeErrorDidNotOccur {
+                        expected_substring: substring.clone(),
+                        returned,
+                    },
+                ))
             }
             Err(err) => {
                 let rendered = format!("{}", err);
@@ -324,9 +390,7 @@ fn run_test_case(
                 P7Value::Float(actual_val) => expected_value
                     .parse::<f64>()
                     .is_ok_and(|expected_val| (actual_val - expected_val).abs() < 1e-9),
-                P7Value::String(actual_val) => {
-                    actual_val.as_ref() == expected_value.as_str()
-                }
+                P7Value::String(actual_val) => actual_val.as_ref() == expected_value.as_str(),
                 P7Value::Array(elements) => {
                     let formatted = format_array(elements);
                     formatted == *expected_value
@@ -375,7 +439,10 @@ fn format_array(elements: &[P7Value]) -> String {
     format!("[{}]", items.join(", "))
 }
 
-fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestResult)>> {
+fn run_tests_in_file(
+    file_path: &PathBuf,
+    project: Option<&Project>,
+) -> anyhow::Result<Vec<(String, TestResult)>> {
     let content = fs::read_to_string(file_path)?;
 
     // Compute the script directory for __script_dir__
@@ -390,14 +457,33 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
     in_mem.add_module("test".to_string(), TEST_MODULE_SOURCE.to_string());
     in_mem.add_module("foo".to_string(), FOO_MODULE_SOURCE.to_string());
     in_mem.add_module("foo.bar_mod".to_string(), FOO_BAR_MOD_SOURCE.to_string());
-    let module_provider = CompositeModuleProvider::new(in_mem, file_path);
+    let module_provider = match project {
+        Some(project) => CompositeModuleProvider::new_project(
+            in_mem,
+            file_path,
+            ProjectModuleProvider::new(project.clone()),
+        ),
+        None => CompositeModuleProvider::new(in_mem, file_path),
+    };
+    let module_path = project
+        .map(|project| project.test_module_name(file_path))
+        .transpose()
+        .map_err(anyhow::Error::msg)?;
 
     // Compile-fail tests: add `// compile_fail` anywhere in the file.
     if content
         .lines()
         .any(|l| l.trim_start().starts_with("// compile_fail"))
     {
-        match p7::compile_with_provider(content.clone(), Box::new(module_provider.clone())) {
+        let compile_result = match &module_path {
+            Some(module_path) => p7::compile_module_with_provider(
+                content.clone(),
+                module_path,
+                Box::new(module_provider.clone()),
+            ),
+            None => p7::compile_with_provider(content.clone(), Box::new(module_provider.clone())),
+        };
+        match compile_result {
             Ok(_) => {
                 return Ok(vec![(
                     "compile_fail".to_string(),
@@ -411,8 +497,15 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
     }
 
     // Compile the p7 code with the module provider
-    let module = match p7::compile_with_provider(content.clone(), Box::new(module_provider.clone()))
-    {
+    let compile_result = match &module_path {
+        Some(module_path) => p7::compile_module_with_provider(
+            content.clone(),
+            module_path,
+            Box::new(module_provider.clone()),
+        ),
+        None => p7::compile_with_provider(content.clone(), Box::new(module_provider.clone())),
+    };
+    let module = match compile_result {
         Ok(m) => m,
         Err(e) => {
             return Ok(vec![(
@@ -451,6 +544,7 @@ fn run_tests_in_file(file_path: &PathBuf) -> anyhow::Result<Vec<(String, TestRes
             RunOptions {
                 script_dir: script_dir.clone(),
             },
+            project,
         ) {
             Ok(result) => results.push((test_case.function_name.clone(), result)),
             Err(e) => results.push((
@@ -476,7 +570,28 @@ pub fn print_help(program_name: &str) {
 /// - Prints per-test output and summary.
 /// - Returns a `TestSummary`.
 pub fn run_cli(program_name: &str, args: &[String]) -> anyhow::Result<TestSummary> {
-    let tests_dir = PathBuf::from("tests");
+    run_cli_in_dir(program_name, args, &PathBuf::from("tests"), None)
+}
+
+pub fn run_project_cli(
+    program_name: &str,
+    args: &[String],
+    project: &Project,
+) -> anyhow::Result<TestSummary> {
+    run_cli_in_dir(
+        program_name,
+        args,
+        &project.root_package().root.join("tests"),
+        Some(project),
+    )
+}
+
+fn run_cli_in_dir(
+    program_name: &str,
+    args: &[String],
+    tests_dir: &PathBuf,
+    project: Option<&Project>,
+) -> anyhow::Result<TestSummary> {
     if !tests_dir.exists() || !tests_dir.is_dir() {
         println!("'tests' directory not found.");
         return Ok(TestSummary::default());
@@ -532,7 +647,7 @@ pub fn run_cli(program_name: &str, args: &[String]) -> anyhow::Result<TestSummar
     let mut summary = TestSummary::default();
 
     for path in files {
-        match run_tests_in_file(&path) {
+        match run_tests_in_file(&path, project) {
             Ok(results) => {
                 for (test_name, result) in results {
                     print!("Running test: {:?}::{} ... ", path, test_name);
@@ -758,7 +873,7 @@ mod tests {
         let mut f = std::fs::File::create(&path).expect("create");
         f.write_all(src.as_bytes()).expect("write");
         drop(f);
-        let results = super::run_tests_in_file(&path).expect("run");
+        let results = super::run_tests_in_file(&path, None).expect("run");
         let _ = std::fs::remove_file(&path);
         results
     }

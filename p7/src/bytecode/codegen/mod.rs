@@ -199,7 +199,15 @@ impl Generator {
     }
 
     pub fn new(module_provider: Box<dyn crate::ModuleProvider>) -> Self {
-        Generator {
+        Self::new_with_module_path(module_provider, "$root")
+    }
+
+    pub fn new_with_module_path(
+        module_provider: Box<dyn crate::ModuleProvider>,
+        module_path: &str,
+    ) -> Self {
+        let module_path = InternedString::from(module_path);
+        let mut generator = Generator {
             builder: ByteCodeBuilder::new(),
             symbol_table: SymbolTable::new(),
             local_scope: None,
@@ -208,7 +216,7 @@ impl Generator {
             imported_modules: std::collections::HashMap::new(),
             compiling_modules: Rc::new(RefCell::new(std::collections::HashSet::new())),
             compiled_module_cache: Rc::new(RefCell::new(HashMap::new())),
-            _current_module_path: InternedString::from("$root"),
+            _current_module_path: module_path.clone(),
             moved_variables: std::collections::HashSet::new(),
             moved_params: std::collections::HashSet::new(),
             loop_context_stack: Vec::new(),
@@ -223,7 +231,18 @@ impl Generator {
             seen_foreign_type_tags: std::collections::HashMap::new(),
             sam_anon_counter: 0,
             for_in_counter: 0,
+        };
+        if module_path.as_str() != "$root" {
+            if let Some(root) = generator.symbol_table.symbols.get_mut(0) {
+                root.name = module_path.clone();
+                root.qualified_name = module_path.clone();
+                root.kind = crate::semantic::SymbolKind::Module(0);
+            }
+            if let Some(root_info) = generator.symbol_table.modules.get_mut(0) {
+                root_info.path = module_path;
+            }
         }
+        generator
     }
 
     pub fn generate(&mut self, statements: Vec<Statement>) -> SaResult<Module> {

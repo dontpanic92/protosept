@@ -13,6 +13,7 @@ num-derive = "0.4"
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
 indexmap = "2"
+libloading = "0.8"
 
 [dev-dependencies]
 criterion = "0.5"
