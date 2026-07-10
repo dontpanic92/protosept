@@ -143,6 +143,8 @@ pub struct P7CallApi {
         *mut P7Value,
     ) -> P7Status,
     pub set_error: unsafe extern "C" fn(*const P7CallApi, *const u8, usize) -> P7Status,
+    pub get_foreign:
+        unsafe extern "C" fn(*const P7CallApi, P7Value, *const u8, usize, *mut i64) -> P7Status,
 }
 
 pub type P7ExtensionInit = unsafe extern "C" fn(*const P7HostApi) -> P7Status;
@@ -408,6 +410,7 @@ impl CallBridge {
             invalidate_foreign_handle,
             invoke_callback,
             set_error,
+            get_foreign,
         }
     }
 
@@ -780,6 +783,41 @@ unsafe extern "C" fn set_error(
         };
         bridge.error = Some(message.to_string());
         P7Status::Ok
+    })
+}
+
+unsafe extern "C" fn get_foreign(
+    api: *const P7CallApi,
+    value: P7Value,
+    type_tag: *const u8,
+    type_tag_len: usize,
+    output: *mut i64,
+) -> P7Status {
+    catch_status(|| {
+        if output.is_null() {
+            return P7Status::InvalidArgument;
+        }
+        let Some(bridge) = (unsafe { bridge(api) }) else {
+            return P7Status::InvalidArgument;
+        };
+        let Some(value) = bridge.get(value).cloned() else {
+            return P7Status::InvalidArgument;
+        };
+        let Some(type_tag) = bytes_string(type_tag, type_tag_len) else {
+            return P7Status::InvalidArgument;
+        };
+        match bridge.context().foreign_handle(&value, type_tag) {
+            Ok(handle) => {
+                // SAFETY: output was checked for null.
+                unsafe { *output = handle };
+                P7Status::Ok
+            }
+            Err(RuntimeError::StaleForeignHandle { .. }) => P7Status::StaleHandle,
+            Err(error) => {
+                bridge.error = Some(error.to_string());
+                P7Status::TypeMismatch
+            }
+        }
     })
 }
 

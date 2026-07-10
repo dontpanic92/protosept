@@ -66,6 +66,9 @@ The call API distinguishes:
 - `make_foreign_handle`: persistent non-owning identity tracked by the
   runtime.
 
+`get_foreign` validates a foreign value against an expected type tag, checks
+its box and persistent-handle generations, and returns the opaque host token.
+
 `invalidate_foreign_handle` invalidates every persistent value with the same
 type tag and host token. It is available both during a callback and through
 the runtime-level host table, allowing native destruction notifications to

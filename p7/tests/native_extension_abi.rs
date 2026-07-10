@@ -203,6 +203,76 @@ unsafe extern "C" fn add_userdata(
     unsafe { ((*api).make_int)(api, value, output) }
 }
 
+unsafe extern "C" fn make_foreign_callback(
+    _userdata: *mut c_void,
+    api: *const P7CallApi,
+    _args: *const P7Value,
+    _arg_count: usize,
+    output: *mut P7Value,
+) -> P7Status {
+    let type_tag = b"abi.Widget";
+    unsafe { ((*api).make_foreign_handle)(api, type_tag.as_ptr(), type_tag.len(), 42, output) }
+}
+
+unsafe extern "C" fn read_foreign_callback(
+    _userdata: *mut c_void,
+    api: *const P7CallApi,
+    args: *const P7Value,
+    arg_count: usize,
+    output: *mut P7Value,
+) -> P7Status {
+    if arg_count != 1 {
+        return P7Status::InvalidArgument;
+    }
+    let type_tag = b"abi.Widget";
+    let mut handle = 0;
+    let status =
+        unsafe { ((*api).get_foreign)(api, *args, type_tag.as_ptr(), type_tag.len(), &mut handle) };
+    if status != P7Status::Ok {
+        return status;
+    }
+    unsafe { ((*api).make_int)(api, handle, output) }
+}
+
+unsafe extern "C" fn foreign_init(api: *const P7HostApi) -> P7Status {
+    let type_tag = CString::new("abi.Widget").expect("type tag");
+    let status = unsafe {
+        ((*api).register_foreign_type)((*api).runtime, type_tag.as_ptr(), std::ptr::null())
+    };
+    if status != P7Status::Ok {
+        return status;
+    }
+    for status in [
+        unsafe {
+            register(
+                api,
+                "abi.make_foreign",
+                &[],
+                Some(P7NativeType::Foreign),
+                make_foreign_callback,
+                std::ptr::null_mut(),
+                None,
+            )
+        },
+        unsafe {
+            register(
+                api,
+                "abi.read_foreign",
+                &[P7NativeType::Foreign],
+                Some(P7NativeType::Int),
+                read_foreign_callback,
+                std::ptr::null_mut(),
+                None,
+            )
+        },
+    ] {
+        if status != P7Status::Ok {
+            return status;
+        }
+    }
+    P7Status::Ok
+}
+
 fn compile(source: &str) -> p7::bytecode::Module {
     p7::compile(source.to_string()).expect("compile")
 }
@@ -233,6 +303,37 @@ fn run() -> int {
         CallOutcome::Returned(Some(Data::Int(value))) => assert_eq!(value, 42),
         other => panic!("unexpected outcome: {other:?}"),
     }
+}
+
+#[test]
+fn extension_reads_validated_foreign_values() {
+    let module = compile(
+        r#"
+@foreign(type_tag="abi.Widget", dispatcher="abi.unused")
+proto Widget {
+}
+
+@intrinsic(name="abi.make_foreign")
+fn make_foreign() -> box<Widget>;
+
+@intrinsic(name="abi.read_foreign")
+fn read_foreign(value: box<Widget>) -> int;
+
+fn run() -> int {
+    read_foreign(make_foreign())
+}
+"#,
+    );
+    let mut runtime = Runtime::new();
+    runtime
+        .register_native_extension(foreign_init)
+        .expect("register extension");
+    runtime.load_module(module);
+
+    assert!(matches!(
+        runtime.call("run", Vec::new()).expect("run"),
+        CallOutcome::Returned(Some(Data::Int(42)))
+    ));
 }
 
 #[test]

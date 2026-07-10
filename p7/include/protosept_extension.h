@@ -123,6 +123,12 @@ struct P7CallApi {
         size_t,
         P7Value *);
     P7Status (*set_error)(const P7CallApi *, const uint8_t *, size_t);
+    P7Status (*get_foreign)(
+        const P7CallApi *,
+        P7Value,
+        const uint8_t *,
+        size_t,
+        int64_t *);
 };
 
 typedef P7Status (*P7ExtensionInit)(const P7HostApi *api);

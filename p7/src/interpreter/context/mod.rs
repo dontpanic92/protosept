@@ -526,29 +526,33 @@ impl Context {
             .stack
             .pop()
             .ok_or(RuntimeError::StackUnderflow)?;
+        self.foreign_handle(&v, expected_tag)
+    }
 
+    /// Validate a foreign-bearing value and return its opaque host handle.
+    pub fn foreign_handle(&self, value: &Data, expected_tag: &str) -> ContextResult<i64> {
         // The receiver is a box-bearing reference; either a ProtoBoxRef
         // (the foreign carrier wrapping the host handle), a ProtoRefRef
         // (a ref-typed view onto the same), or a raw BoxRef (untyped
         // box). All three carry a stable `(idx, generation)` pair we use to
         // dereference into the box heap below.
-        let (box_idx, generation, _ctid) = match v {
+        let (box_idx, generation, _ctid) = match value {
             Data::ProtoBoxRef {
                 box_idx,
                 generation,
                 concrete_type_id,
                 ..
-            } => (box_idx, generation, concrete_type_id),
+            } => (*box_idx, *generation, *concrete_type_id),
             Data::ProtoRefRef {
                 ref_idx,
                 generation,
                 concrete_type_id,
                 ..
-            } => (ref_idx, generation, concrete_type_id),
-            Data::BoxRef { idx, generation } => (idx, generation, 0),
+            } => (*ref_idx, *generation, *concrete_type_id),
+            Data::BoxRef { idx, generation } => (*idx, *generation, 0),
             other => {
                 return Err(RuntimeError::Other(format!(
-                    "pop_foreign: expected a foreign-bearing reference, got {:?}",
+                    "foreign_handle: expected a foreign-bearing reference, got {:?}",
                     other
                 )));
             }
@@ -565,7 +569,7 @@ impl Context {
             } => {
                 if type_tag != expected_tag {
                     return Err(RuntimeError::Other(format!(
-                        "pop_foreign: expected type_tag '{}', got '{}'",
+                        "foreign_handle: expected type_tag '{}', got '{}'",
                         expected_tag, type_tag
                     )));
                 }
@@ -584,7 +588,7 @@ impl Context {
                 Ok(*handle)
             }
             other => Err(RuntimeError::Other(format!(
-                "pop_foreign: box did not contain a Foreign value, got {:?}",
+                "foreign_handle: box did not contain a Foreign value, got {:?}",
                 other
             ))),
         }
