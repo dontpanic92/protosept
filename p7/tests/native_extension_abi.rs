@@ -142,6 +142,52 @@ unsafe extern "C" fn extension_init(api: *const P7HostApi) -> P7Status {
 
 static USERDATA_DROPS: AtomicUsize = AtomicUsize::new(0);
 static USERDATA_TEST_LOCK: Mutex<()> = Mutex::new(());
+static ROOTED_CALLBACK_TOKEN: Mutex<u64> = Mutex::new(0);
+static ROOTED_CALLBACK_RUNTIME: Mutex<usize> = Mutex::new(0);
+static ROOTED_CALLBACK_INVOKE: Mutex<Option<unsafe extern "C" fn(*mut c_void, u64) -> P7Status>> =
+    Mutex::new(None);
+static ROOTED_CALLBACK_RELEASE: Mutex<Option<unsafe extern "C" fn(*mut c_void, u64) -> P7Status>> =
+    Mutex::new(None);
+
+unsafe extern "C" fn retain_callback(
+    _userdata: *mut c_void,
+    api: *const P7CallApi,
+    args: *const P7Value,
+    arg_count: usize,
+    _output: *mut P7Value,
+) -> P7Status {
+    if arg_count != 1 {
+        return P7Status::InvalidArgument;
+    }
+    let mut token = 0;
+    let status = unsafe { ((*api).retain_callback)(api, *args, &mut token) };
+    if status == P7Status::Ok {
+        *ROOTED_CALLBACK_TOKEN.lock().expect("callback token lock") = token;
+    }
+    status
+}
+
+unsafe extern "C" fn rooted_callback_init(api: *const P7HostApi) -> P7Status {
+    *ROOTED_CALLBACK_RUNTIME
+        .lock()
+        .expect("callback runtime lock") = unsafe { (*api).runtime } as usize;
+    *ROOTED_CALLBACK_INVOKE.lock().expect("callback invoke lock") =
+        Some(unsafe { (*api).invoke_rooted_callback });
+    *ROOTED_CALLBACK_RELEASE
+        .lock()
+        .expect("callback release lock") = Some(unsafe { (*api).release_rooted_callback });
+    unsafe {
+        register(
+            api,
+            "abi.retain_callback",
+            &[P7NativeType::Closure],
+            None,
+            retain_callback,
+            std::ptr::null_mut(),
+            None,
+        )
+    }
+}
 
 unsafe extern "C" fn drop_userdata(userdata: *mut c_void) {
     if !userdata.is_null() {
@@ -303,6 +349,57 @@ fn run() -> int {
         CallOutcome::Returned(Some(Data::Int(value))) => assert_eq!(value, 42),
         other => panic!("unexpected outcome: {other:?}"),
     }
+}
+
+#[test]
+fn extension_can_retain_invoke_and_release_callback() {
+    *ROOTED_CALLBACK_TOKEN.lock().expect("callback token lock") = 0;
+    let module = compile(
+        r#"
+@intrinsic(name="abi.retain_callback")
+fn retain_callback(callback: fn());
+
+let calls: box<array<int>> = box([0]);
+
+fn install() {
+    retain_callback(() => calls.push(1))
+}
+
+fn call_count() -> int {
+    calls.len()
+}
+"#,
+    );
+    let mut runtime = Runtime::new();
+    runtime
+        .register_native_extension(rooted_callback_init)
+        .expect("register extension");
+    runtime.load_module(module);
+    assert!(matches!(
+        runtime.call("install", Vec::new()).expect("install"),
+        CallOutcome::Returned(_)
+    ));
+
+    let token = *ROOTED_CALLBACK_TOKEN.lock().expect("callback token lock");
+    let runtime_ptr = *ROOTED_CALLBACK_RUNTIME
+        .lock()
+        .expect("callback runtime lock") as *mut c_void;
+    assert_ne!(token, 0);
+    let invoke = ROOTED_CALLBACK_INVOKE
+        .lock()
+        .expect("callback invoke lock")
+        .expect("invoke callback function");
+    let release = ROOTED_CALLBACK_RELEASE
+        .lock()
+        .expect("callback release lock")
+        .expect("release callback function");
+    assert_eq!(unsafe { invoke(runtime_ptr, token) }, P7Status::Ok);
+    assert!(matches!(
+        runtime.call("call_count", Vec::new()).expect("count"),
+        CallOutcome::Returned(Some(Data::Int(2)))
+    ));
+    assert_eq!(unsafe { release(runtime_ptr, token) }, P7Status::Ok);
+    assert_eq!(unsafe { invoke(runtime_ptr, token) }, P7Status::Error);
 }
 
 #[test]

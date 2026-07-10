@@ -91,5 +91,18 @@ thread-affine. Extensions must not call it concurrently or after teardown.
 the interpreter's suspended state. The callback and argument tokens are
 borrowed; the returned token is transient like every other call value.
 
-Long-lived rooted callback subscriptions are a separate event-interop layer
-and are not represented by transient `P7Value` tokens.
+For long-lived subscriptions, `retain_callback` converts a transient closure
+value into a runtime-owned callback token. The extension copies the
+runtime-level host table during initialization and later uses:
+
+- `invoke_rooted_callback(runtime, token)` to invoke the zero-argument closure.
+- `release_rooted_callback(runtime, token)` to unregister it and release its
+  GC root.
+
+Tokens are monotonic within a runtime, so a released token cannot alias a
+later callback. Invoking or releasing a stale token returns an error status.
+The runtime pointer and callback operations are thread-affine.
+
+Version 1 rooted callbacks currently support zero arguments and no return
+value. Typed event arguments and mutable/in-out event values require a later
+append-only ABI extension.

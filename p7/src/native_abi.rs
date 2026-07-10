@@ -109,6 +109,8 @@ pub struct P7HostApi {
         unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> P7Status,
     pub invalidate_foreign_handle:
         unsafe extern "C" fn(*mut c_void, *const u8, usize, i64) -> P7Status,
+    pub invoke_rooted_callback: unsafe extern "C" fn(*mut c_void, u64) -> P7Status,
+    pub release_rooted_callback: unsafe extern "C" fn(*mut c_void, u64) -> P7Status,
 }
 
 #[repr(C)]
@@ -145,6 +147,8 @@ pub struct P7CallApi {
     pub set_error: unsafe extern "C" fn(*const P7CallApi, *const u8, usize) -> P7Status,
     pub get_foreign:
         unsafe extern "C" fn(*const P7CallApi, P7Value, *const u8, usize, *mut i64) -> P7Status,
+    pub retain_callback: unsafe extern "C" fn(*const P7CallApi, P7Value, *mut u64) -> P7Status,
+    pub runtime: *mut c_void,
 }
 
 pub type P7ExtensionInit = unsafe extern "C" fn(*const P7HostApi) -> P7Status;
@@ -192,6 +196,8 @@ pub fn register_initializer(
         register_function,
         register_foreign_type,
         invalidate_foreign_handle: invalidate_runtime_foreign_handle,
+        invoke_rooted_callback,
+        release_rooted_callback,
     };
     let status = match catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: The initializer receives a valid API table for this call.
@@ -316,6 +322,7 @@ unsafe extern "C" fn invalidate_runtime_foreign_handle(
         if runtime.is_null() {
             return Err(P7Status::InvalidArgument);
         }
+
         let type_tag = bytes_string(type_tag, type_tag_len).ok_or(P7Status::InvalidArgument)?;
         // SAFETY: runtime points at the live Context exposed by P7HostApi.
         let context = unsafe { &mut *runtime.cast::<Context>() };
@@ -324,6 +331,42 @@ unsafe extern "C" fn invalidate_runtime_foreign_handle(
             Err(RuntimeError::StaleForeignHandle { .. }) => Err(P7Status::StaleHandle),
             Err(_) => Err(P7Status::Error),
         }
+    }));
+    match result {
+        Ok(Ok(())) => P7Status::Ok,
+        Ok(Err(status)) => status,
+        Err(_) => P7Status::Panic,
+    }
+}
+
+unsafe extern "C" fn invoke_rooted_callback(runtime: *mut c_void, token: u64) -> P7Status {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        if runtime.is_null() || token == 0 {
+            return Err(P7Status::InvalidArgument);
+        }
+        // SAFETY: runtime points at the live Context exposed by P7HostApi.
+        let context = unsafe { &mut *runtime.cast::<Context>() };
+        context
+            .invoke_native_callback(token)
+            .map_err(|_| P7Status::Error)
+    }));
+    match result {
+        Ok(Ok(())) => P7Status::Ok,
+        Ok(Err(status)) => status,
+        Err(_) => P7Status::Panic,
+    }
+}
+
+unsafe extern "C" fn release_rooted_callback(runtime: *mut c_void, token: u64) -> P7Status {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        if runtime.is_null() || token == 0 {
+            return Err(P7Status::InvalidArgument);
+        }
+        // SAFETY: runtime points at the live Context exposed by P7HostApi.
+        let context = unsafe { &mut *runtime.cast::<Context>() };
+        context
+            .release_native_callback(token)
+            .map_err(|_| P7Status::StaleHandle)
     }));
     match result {
         Ok(Ok(())) => P7Status::Ok,
@@ -378,14 +421,21 @@ fn invoke_native(
 struct CallBridge {
     context: *mut Context,
     values: Vec<Data>,
+    roots: Vec<usize>,
     error: Option<String>,
 }
 
 impl CallBridge {
     fn new(context: &mut Context, args: &[Data]) -> Self {
+        let roots = args
+            .iter()
+            .cloned()
+            .map(|value| context.add_external_root(value))
+            .collect();
         Self {
             context,
             values: args.to_vec(),
+            roots,
             error: None,
         }
     }
@@ -411,6 +461,8 @@ impl CallBridge {
             invoke_callback,
             set_error,
             get_foreign,
+            retain_callback,
+            runtime: self.context.cast(),
         }
     }
 
@@ -422,6 +474,8 @@ impl CallBridge {
     }
 
     fn push(&mut self, value: Data) -> P7Value {
+        let root = self.context().add_external_root(value.clone());
+        self.roots.push(root);
         self.values.push(value);
         P7Value(self.values.len() as u64)
     }
@@ -430,6 +484,17 @@ impl CallBridge {
         // SAFETY: CallBridge never outlives the native invocation and has
         // exclusive access to the callback's Context.
         unsafe { &mut *self.context }
+    }
+}
+
+impl Drop for CallBridge {
+    fn drop(&mut self) {
+        // SAFETY: CallBridge is dropped before the native invocation returns,
+        // while its Context is still alive and exclusively owned by Runtime.
+        let context = unsafe { &mut *self.context };
+        for root in self.roots.drain(..) {
+            context.remove_external_root(root);
+        }
     }
 }
 
@@ -797,6 +862,7 @@ unsafe extern "C" fn get_foreign(
         if output.is_null() {
             return P7Status::InvalidArgument;
         }
+
         let Some(bridge) = (unsafe { bridge(api) }) else {
             return P7Status::InvalidArgument;
         };
@@ -813,6 +879,35 @@ unsafe extern "C" fn get_foreign(
                 P7Status::Ok
             }
             Err(RuntimeError::StaleForeignHandle { .. }) => P7Status::StaleHandle,
+            Err(error) => {
+                bridge.error = Some(error.to_string());
+                P7Status::TypeMismatch
+            }
+        }
+    })
+}
+
+unsafe extern "C" fn retain_callback(
+    api: *const P7CallApi,
+    callback: P7Value,
+    output: *mut u64,
+) -> P7Status {
+    catch_status(|| {
+        if output.is_null() {
+            return P7Status::InvalidArgument;
+        }
+        let Some(bridge) = (unsafe { bridge(api) }) else {
+            return P7Status::InvalidArgument;
+        };
+        let Some(callback) = bridge.get(callback).cloned() else {
+            return P7Status::InvalidArgument;
+        };
+        match bridge.context().retain_native_callback(callback) {
+            Ok(token) => {
+                // SAFETY: output was checked for null.
+                unsafe { *output = token };
+                P7Status::Ok
+            }
             Err(error) => {
                 bridge.error = Some(error.to_string());
                 P7Status::TypeMismatch

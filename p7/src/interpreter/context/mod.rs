@@ -95,6 +95,10 @@ pub struct Context {
     // Host-owned values that must survive GC compaction. These are used by
     // embedding runtimes that keep script state between calls.
     external_roots: Vec<Option<Data>>,
+    // Native extensions use monotonic tokens so a released callback can
+    // never alias a later callback that reuses an external-root slot.
+    native_callback_roots: HashMap<u64, usize>,
+    next_native_callback_token: u64,
     // Lazy cache resolving an (importing_module_idx, local_type_id) pair to the
     // (defining_module_idx, defining_local_type_id) where the type's vtable
     // actually lives. Populated on demand by `resolve_concrete_origin` when a
@@ -146,6 +150,8 @@ impl Context {
             foreign_carrier_methods: HashMap::new(),
             foreign_handles: HashMap::new(),
             external_roots: Vec::new(),
+            native_callback_roots: HashMap::new(),
+            next_native_callback_token: 1,
             imported_type_origin: HashMap::new(),
         };
 
@@ -199,6 +205,44 @@ impl Context {
         if let Some(slot) = self.external_roots.get_mut(idx) {
             *slot = None;
         }
+    }
+
+    pub(crate) fn retain_native_callback(&mut self, callback: Data) -> Result<u64, RuntimeError> {
+        if !matches!(callback, Data::Closure { .. }) {
+            return Err(RuntimeError::Other(
+                "Only closures can be retained as native callbacks".to_string(),
+            ));
+        }
+        let token = self.next_native_callback_token;
+        self.next_native_callback_token = self
+            .next_native_callback_token
+            .checked_add(1)
+            .ok_or_else(|| {
+                RuntimeError::Other("Native callback token space exhausted".to_string())
+            })?;
+        let root = self.add_external_root(callback);
+        self.native_callback_roots.insert(token, root);
+        Ok(token)
+    }
+
+    pub(crate) fn invoke_native_callback(&mut self, token: u64) -> Result<(), RuntimeError> {
+        let root = *self
+            .native_callback_roots
+            .get(&token)
+            .ok_or_else(|| RuntimeError::Other("Native callback handle is stale".to_string()))?;
+        let callback = self
+            .external_root(root)
+            .ok_or_else(|| RuntimeError::Other("Native callback handle is stale".to_string()))?;
+        self.call_closure_void(&callback, Vec::new())
+    }
+
+    pub(crate) fn release_native_callback(&mut self, token: u64) -> Result<(), RuntimeError> {
+        let root = self
+            .native_callback_roots
+            .remove(&token)
+            .ok_or_else(|| RuntimeError::Other("Native callback handle is stale".to_string()))?;
+        self.remove_external_root(root);
+        Ok(())
     }
 
     /// Register all builtin host functions

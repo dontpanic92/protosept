@@ -91,6 +91,8 @@ struct P7HostApi {
         const uint8_t *type_tag,
         size_t type_tag_len,
         int64_t host_handle);
+    P7Status (*invoke_rooted_callback)(void *runtime, uint64_t callback_token);
+    P7Status (*release_rooted_callback)(void *runtime, uint64_t callback_token);
 };
 
 struct P7CallApi {
@@ -129,6 +131,11 @@ struct P7CallApi {
         const uint8_t *,
         size_t,
         int64_t *);
+    P7Status (*retain_callback)(
+        const P7CallApi *,
+        P7Value,
+        uint64_t *);
+    void *runtime;
 };
 
 typedef P7Status (*P7ExtensionInit)(const P7HostApi *api);
