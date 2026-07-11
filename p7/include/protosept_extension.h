@@ -30,7 +30,15 @@ typedef enum P7NativeType {
     P7_TYPE_TUPLE = 6,
     P7_TYPE_MAP = 7,
     P7_TYPE_CLOSURE = 8,
-    P7_TYPE_FOREIGN = 9
+    P7_TYPE_FOREIGN = 9,
+    P7_TYPE_I8 = 10,
+    P7_TYPE_U8 = 11,
+    P7_TYPE_I16 = 12,
+    P7_TYPE_U16 = 13,
+    P7_TYPE_I32 = 14,
+    P7_TYPE_U32 = 15,
+    P7_TYPE_I64 = 16,
+    P7_TYPE_U64 = 17
 } P7NativeType;
 
 typedef enum P7ValueKind {
@@ -46,6 +54,22 @@ typedef enum P7ValueKind {
     P7_VALUE_NULL = 9,
     P7_VALUE_OTHER = 10
 } P7ValueKind;
+
+typedef enum P7CallbackValueKind {
+    P7_CALLBACK_UNIT = 0,
+    P7_CALLBACK_INT = 1,
+    P7_CALLBACK_FLOAT = 2,
+    P7_CALLBACK_BOOL = 3,
+    P7_CALLBACK_STRING = 4
+} P7CallbackValueKind;
+
+typedef struct P7CallbackValue {
+    uint32_t kind;
+    int64_t int_value;
+    double float_value;
+    const uint8_t *bytes;
+    size_t length;
+} P7CallbackValue;
 
 typedef struct P7Value {
     uint64_t token;
@@ -93,6 +117,12 @@ struct P7HostApi {
         int64_t host_handle);
     P7Status (*invoke_rooted_callback)(void *runtime, uint64_t callback_token);
     P7Status (*release_rooted_callback)(void *runtime, uint64_t callback_token);
+    P7Status (*invoke_rooted_callback_values)(
+        void *runtime,
+        uint64_t callback_token,
+        const P7CallbackValue *args,
+        size_t arg_count,
+        P7CallbackValue *output);
 };
 
 struct P7CallApi {
@@ -136,9 +166,21 @@ struct P7CallApi {
         P7Value,
         uint64_t *);
     void *runtime;
+    P7Status (*set_error_details)(
+        const P7CallApi *,
+        const uint8_t *,
+        size_t,
+        const uint8_t *,
+        size_t,
+        const uint8_t *,
+        size_t);
 };
 
 typedef P7Status (*P7ExtensionInit)(const P7HostApi *api);
+
+#define P7_API_HAS_FIELD(api, type, field) \
+    ((api) != NULL && \
+     (api)->struct_size >= offsetof(type, field) + sizeof(((type *)0)->field))
 
 #ifdef __cplusplus
 }

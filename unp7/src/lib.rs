@@ -276,7 +276,10 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
         Instruction::ForceUnwrap => format!("{}  force_unwrap", offset_hex),
         Instruction::NullCoalesce => format!("{}  null_coalesce", offset_hex),
         Instruction::MakeClosure(func_addr, capture_count) => {
-            format!("{}  make_closure func@{} captures={}", offset_hex, func_addr, capture_count)
+            format!(
+                "{}  make_closure func@{} captures={}",
+                offset_hex, func_addr, capture_count
+            )
         }
         Instruction::CallClosure(arg_count) => {
             format!("{}  call_closure args={}", offset_hex, arg_count)
@@ -286,9 +289,19 @@ fn format_instruction(entry: &InstEntry, module: &Module) -> String {
         Instruction::BitXor => format!("{}  bitxor", offset_hex),
         Instruction::LdModVar(var_id) => format!("{}  ldmodvar {}", offset_hex, var_id),
         Instruction::StModVar(var_id) => format!("{}  stmodvar {}", offset_hex, var_id),
-        Instruction::LdExtModVar(mod_id, var_id) => format!("{}  ldextmodvar {} {}", offset_hex, mod_id, var_id),
-        Instruction::StExtModVar(mod_id, var_id) => format!("{}  stextmodvar {} {}", offset_hex, mod_id, var_id),
+        Instruction::LdExtModVar(mod_id, var_id) => {
+            format!("{}  ldextmodvar {} {}", offset_hex, mod_id, var_id)
+        }
+        Instruction::StExtModVar(mod_id, var_id) => {
+            format!("{}  stextmodvar {} {}", offset_hex, mod_id, var_id)
+        }
         Instruction::IntToFloat => format!("{}  int_to_float", offset_hex),
+        Instruction::ForeignDowncast(type_tag_id) => {
+            format!("{}  foreign_downcast {}", offset_hex, type_tag_id)
+        }
+        Instruction::CheckIntRange(min, max) => {
+            format!("{}  check_int_range {} {}", offset_hex, min, max)
+        }
     }
 }
 

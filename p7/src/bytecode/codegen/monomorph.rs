@@ -415,6 +415,7 @@ impl Generator {
         let monomorphized_func = Function {
             qualified_name: monomorphized_name.clone(),
             is_pub: base_func.is_pub,
+            is_associated_value: base_func.is_associated_value,
             params: monomorphized_params.clone(),
             param_names: base_func.param_names.clone(),
             param_defaults: base_func.param_defaults.clone(),
@@ -473,6 +474,14 @@ impl Generator {
             Type::Primitive(p) => {
                 let name = match p {
                     PrimitiveType::Int => "int",
+                    PrimitiveType::I8 => "i8",
+                    PrimitiveType::U8 => "u8",
+                    PrimitiveType::I16 => "i16",
+                    PrimitiveType::U16 => "u16",
+                    PrimitiveType::I32 => "i32",
+                    PrimitiveType::U32 => "u32",
+                    PrimitiveType::I64 => "i64",
+                    PrimitiveType::U64 => "u64",
                     PrimitiveType::Float => "float",
                     PrimitiveType::Bool => "bool",
                     PrimitiveType::Char => "char",
@@ -492,6 +501,14 @@ impl Generator {
             Type::BoxType(inner) => ParsedType::Generic {
                 base: Identifier {
                     name: InternedString::from("box"),
+                    line: SYNTHETIC_LINE,
+                    col: SYNTHETIC_COL,
+                },
+                type_args: vec![self.type_to_parsed_type(inner)],
+            },
+            Type::HandleType(inner) => ParsedType::Generic {
+                base: Identifier {
+                    name: InternedString::from("handle"),
                     line: SYNTHETIC_LINE,
                     col: SYNTHETIC_COL,
                 },

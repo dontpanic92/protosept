@@ -41,7 +41,7 @@ pub enum TokenType {
 
     // Identifiers and Literals
     Identifier(InternedString),
-    Integer(i64),
+    Integer(i128),
     Float(f64),
     StringLiteral(InternedString),
     InterpolatedString(Vec<InterpolatedStringPart>),
@@ -913,21 +913,25 @@ impl Lexer {
                     }
                 } else if c.is_numeric() {
                     let num = self.read_number();
+                    let normalized = num.replace('_', "");
 
-                    let parsed_number = num.parse::<f64>();
-
-                    match parsed_number {
-                        Ok(n) => {
-                            if num.contains('.') {
-                                TokenType::Float(n)
-                            } else {
-                                TokenType::Integer(n as i64)
+                    if num.contains('.') {
+                        match normalized.parse::<f64>() {
+                            Ok(n) => TokenType::Float(n),
+                            Err(_) => {
+                                self.errors
+                                    .push(LexerError::InvalidNumber(num, (self.line, self.col)));
+                                TokenType::EOF
                             }
                         }
-                        Err(_) => {
-                            self.errors
-                                .push(LexerError::InvalidNumber(num, (self.line, self.col)));
-                            TokenType::EOF
+                    } else {
+                        match normalized.parse::<i128>() {
+                            Ok(n) => TokenType::Integer(n),
+                            Err(_) => {
+                                self.errors
+                                    .push(LexerError::InvalidNumber(num, (self.line, self.col)));
+                                TokenType::EOF
+                            }
                         }
                     }
                 } else {

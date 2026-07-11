@@ -25,6 +25,13 @@ removed before the library is unloaded.
 The runtime loads dependency extensions before root-package extensions and
 keeps every successful library loaded until its runtime is destroyed.
 
+All ABI tables are append-only. Before reading an extension field, test that
+`struct_size` reaches the end of that field. The C header provides
+`P7_API_HAS_FIELD(api, P7HostApi, field)` and
+`P7_API_HAS_FIELD(api, P7CallApi, field)` for this purpose. An extension must
+not require the current full structure size when it only needs an older
+prefix, and must not read or call a field that is outside the advertised size.
+
 ## Function registration
 
 `P7NativeFunctionDescriptor` contains:
@@ -33,6 +40,28 @@ keeps every successful library loaded until its runtime is destroyed.
 - A monomorphic parameter and result signature.
 - A C callback.
 - An opaque userdata pointer and optional destructor.
+
+`P7NativeType` is append-only in ABI v1. The original values `ANY` through
+`FOREIGN` remain discriminants 0 through 9. Fixed-width integer kinds are:
+
+| Kind | Discriminant | Accepted `Data::Int` range |
+|---|---:|---:|
+| `I8` | 10 | `-128..=127` |
+| `U8` | 11 | `0..=255` |
+| `I16` | 12 | `-32768..=32767` |
+| `U16` | 13 | `0..=65535` |
+| `I32` | 14 | signed 32-bit |
+| `U32` | 15 | unsigned 32-bit |
+| `I64` | 16 | signed 64-bit |
+| `U64` | 17 | `0..=INT64_MAX` (temporary runtime limitation) |
+
+The stack adapter validates every incoming argument and outgoing callback
+result against its declared fixed-width range. A mismatch traps the script
+call before an invalid value crosses the typed boundary. The ABI still uses
+`get_int`/`make_int` with `int64_t` as the value carrier.
+
+No field was inserted into an ABI v1 structure for this feature; only enum
+values were appended, preserving existing structure sizes and field offsets.
 
 The runtime takes ownership of `userdata` only when `register_function`
 returns `P7_STATUS_OK`. The destructor runs once when the registration is
@@ -44,9 +73,24 @@ The callback receives transient opaque `P7Value` tokens. Tokens and the
 are borrowed. A token written to `output` is copied by the runtime before the
 callback returns. `output.token == 0` represents a unit return.
 
-Callbacks report a detailed failure by calling `set_error` and then returning
-a non-OK status. No C++, Pascal, Rust, or other language exception may unwind
-across an ABI function. Extensions must catch their own exceptions.
+Callbacks report a failure by setting error information and then returning a
+non-OK status. `set_error` remains supported and records an unstructured
+native error whose message is the supplied UTF-8 text. When
+`P7_API_HAS_FIELD(api, P7CallApi, set_error_details)` is true,
+`set_error_details` records UTF-8 operation identifier, exception/error class,
+and message fields. Each pointer may be null only when its corresponding
+length is zero. Invalid UTF-8 or pointer/length combinations return
+`P7_STATUS_INVALID_ARGUMENT` without replacing a previously recorded error.
+
+Error state is scoped to one callback invocation. It is cleared before every
+call and is stacked across nested or re-entrant calls. A non-OK return uses the
+most recently explicitly set error; generic status mapping only applies when
+the callback did not record one. Native errors that trap during callback
+re-entry, including rooted callback invocation, retain their structured
+fields.
+
+No C++, Pascal, Rust, or other language exception may unwind across an ABI
+function. Extensions must catch their own exceptions.
 
 ## Strings and values
 
@@ -98,11 +142,16 @@ runtime-level host table during initialization and later uses:
 - `invoke_rooted_callback(runtime, token)` to invoke the zero-argument closure.
 - `release_rooted_callback(runtime, token)` to unregister it and release its
   GC root.
+- `invoke_rooted_callback_values(runtime, token, args, count, output)` to pass
+  copied integer, float, boolean, or UTF-8 string arguments and receive an
+  integer or float result.
 
 Tokens are monotonic within a runtime, so a released token cannot alias a
 later callback. Invoking or releasing a stale token returns an error status.
 The runtime pointer and callback operations are thread-affine.
 
-Version 1 rooted callbacks currently support zero arguments and no return
-value. Typed event arguments and mutable/in-out event values require a later
-append-only ABI extension.
+`P7CallbackValue.kind` is an integer wire discriminant and is always validated;
+unknown values return `P7_STATUS_TYPE_MISMATCH`. Strings are input-only because
+the ABI does not expose borrowed runtime string storage. Protosept booleans use
+integer results (`0` or `1`) on this callback-result path. Mutable native event
+arguments are represented by returning their replacement value.

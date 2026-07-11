@@ -14,19 +14,53 @@ impl Generator {
         operator: Token,
         right: Expression,
     ) -> SaResult<Type> {
+        let right = match (operator.token_type.clone(), right) {
+            (TokenType::Minus, Expression::IntegerLiteral(magnitude)) => {
+                let value = magnitude
+                    .checked_neg()
+                    .and_then(|value| i64::try_from(value).ok())
+                    .ok_or_else(|| {
+                        SemanticError::Other(format!(
+                            "integer literal -{} exceeds the runtime int range",
+                            magnitude
+                        ))
+                    })?;
+                self.builder.ldi(value);
+                return Ok(Type::Primitive(PrimitiveType::Int));
+            }
+            (_, right) => right,
+        };
+
         let ty = self.generate_expression(right)?;
         match operator.token_type {
             TokenType::Minus => {
-                if !matches!(
-                    ty,
-                    Type::Primitive(PrimitiveType::Int) | Type::Primitive(PrimitiveType::Float)
-                ) {
+                if !matches!(ty, Type::Primitive(primitive)
+                    if primitive == PrimitiveType::Int
+                        || primitive == PrimitiveType::Float
+                        || primitive.is_fixed_integer())
+                {
                     return Err(self.type_mismatch_error(
                         ty.to_string(),
                         "numeric type".to_string(),
                         operator.line,
                         operator.col,
                     ));
+                }
+                if let Type::Primitive(primitive) = ty {
+                    if primitive.is_unsigned_integer() {
+                        return Err(self.type_mismatch_error(
+                            primitive.name().to_string(),
+                            "signed numeric type".to_string(),
+                            operator.line,
+                            operator.col,
+                        ));
+                    }
+                    self.builder.neg();
+                    if primitive.is_fixed_integer() {
+                        let (min, max) = primitive.integer_bounds().unwrap();
+                        self.builder.check_int_range(min, max);
+                    }
+                    return Ok(Type::Primitive(primitive));
                 }
                 self.builder.neg();
                 Ok(ty)
@@ -146,7 +180,9 @@ impl Generator {
         let ty = self.generate_expression(expr)?;
 
         if ty.is_ref() {
-            return Err(SemanticError::Other("Cannot take refmut of a ref".to_string()));
+            return Err(SemanticError::Other(
+                "Cannot take refmut of a ref".to_string(),
+            ));
         }
 
         Ok(Type::RefMut(Box::new(ty)))
@@ -154,10 +190,7 @@ impl Generator {
 
     /// Pure (no codegen) type query for a place expression. Returns `None` for
     /// expressions that are not addressable places.
-    pub(in crate::bytecode::codegen) fn infer_place_type(
-        &self,
-        expr: &Expression,
-    ) -> Option<Type> {
+    pub(in crate::bytecode::codegen) fn infer_place_type(&self, expr: &Expression) -> Option<Type> {
         match expr {
             Expression::Identifier(id) => {
                 if let Some(scope) = &self.local_scope {
@@ -736,24 +769,31 @@ impl Generator {
             TokenType::Ampersand | TokenType::Pipe | TokenType::Caret
         );
 
-        // Bitwise operators require int operands only
+        // Integer bitwise operators are intrinsic. User-defined values dispatch
+        // through the corresponding builtin operator protocol.
         if is_bitwise {
-            if lhs_ty != Type::Primitive(PrimitiveType::Int)
-                || rhs_ty != Type::Primitive(PrimitiveType::Int)
-            {
-                return Err(self.type_mismatch_error(
-                    "int".to_string(),
-                    if lhs_ty != Type::Primitive(PrimitiveType::Int) {
-                        lhs_ty.to_string()
-                    } else {
-                        rhs_ty.to_string()
-                    },
-                    operator.line,
-                    operator.col,
-                ));
+            if lhs_ty == rhs_ty {
+                if let Type::Primitive(primitive) = lhs_ty
+                    && primitive.is_integer()
+                {
+                    self.emit_binary_instruction(&operator.token_type);
+                    return Ok(Type::Primitive(primitive));
+                }
+                if matches!(lhs_ty, Type::Struct(_) | Type::Enum(_)) {
+                    return self.generate_bitwise_protocol_call(
+                        &lhs_ty,
+                        &operator.token_type,
+                        operator.line,
+                        operator.col,
+                    );
+                }
             }
-            self.emit_binary_instruction(&operator.token_type);
-            return Ok(Type::Primitive(PrimitiveType::Int));
+            return Err(self.type_mismatch_error(
+                lhs_ty.to_string(),
+                rhs_ty.to_string(),
+                operator.line,
+                operator.col,
+            ));
         }
         let is_logical = matches!(operator.token_type, TokenType::And | TokenType::Or);
         let is_arithmetic = matches!(
@@ -766,6 +806,11 @@ impl Generator {
         );
 
         let numeric_result = |lhs: &Type, rhs: &Type| match (lhs, rhs) {
+            (Type::Primitive(lhs), Type::Primitive(rhs))
+                if lhs == rhs && lhs.is_fixed_integer() =>
+            {
+                Some(Type::Primitive(*lhs))
+            }
             (Type::Primitive(PrimitiveType::Int), Type::Primitive(PrimitiveType::Int)) => {
                 Some(Type::Primitive(PrimitiveType::Int))
             }
@@ -810,6 +855,14 @@ impl Generator {
                 }
                 Type::Primitive(PrimitiveType::Int)
             } else if let Some(result) = numeric_result(&lhs_ty, &rhs_ty) {
+                if let Type::Primitive(primitive) = result
+                    && primitive.is_fixed_integer()
+                {
+                    self.emit_binary_instruction(&operator.token_type);
+                    let (min, max) = primitive.integer_bounds().unwrap();
+                    self.builder.check_int_range(min, max);
+                    return Ok(Type::Primitive(primitive));
+                }
                 result
             } else {
                 return Err(self.type_mismatch_error(
@@ -1136,14 +1189,7 @@ impl Generator {
         };
 
         if is_static_access {
-            return Err(SemanticError::TypeMismatch {
-                lhs: format!("Struct type '{}'", struct_def.qualified_name),
-                rhs: format!(
-                    "Static field access on Struct type '{}' (not supported)",
-                    field.name
-                ),
-                pos: self.make_pos(field.line, field.col),
-            });
+            return self.generate_associated_value_access(type_id, field);
         }
 
         if let Some((idx, (_fname, ftype))) = struct_def
@@ -1213,8 +1259,36 @@ impl Generator {
         target_type: crate::ast::Type,
     ) -> SaResult<Type> {
         let (line, col) = expression.get_pos();
-        let expr_ty = self.generate_expression(expression)?;
         let target_ty = self.get_semantic_type(&target_type)?;
+        let literal = match &expression {
+            Expression::IntegerLiteral(value) => Some(*value),
+            Expression::Unary { operator, right } if operator.token_type == TokenType::Minus => {
+                match right.as_ref() {
+                    Expression::IntegerLiteral(value) => value.checked_neg(),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(value) = literal {
+            if let Type::Primitive(target) = target_ty
+                && target.is_fixed_integer()
+            {
+                let (min, max) = target.integer_bounds().unwrap();
+                if !(i128::from(min)..=i128::from(max)).contains(&value) {
+                    return Err(SemanticError::Other(format!(
+                        "integer literal {} is outside range of {} ({}..={})",
+                        value,
+                        target.name(),
+                        min,
+                        max
+                    )));
+                }
+            }
+        }
+
+        let expr_ty = self.generate_expression(expression)?;
 
         match (&expr_ty, &target_ty) {
             (Type::BoxType(inner_ty), Type::BoxType(target_inner_ty)) => {
@@ -1223,6 +1297,9 @@ impl Generator {
             (Type::Reference(inner_ty), Type::Reference(target_inner_ty)) => {
                 self.generate_wrapper_cast(inner_ty, target_inner_ty, false, &target_ty, line, col)
             }
+            (Type::HandleType(inner_ty), Type::HandleType(target_inner_ty)) => {
+                self.generate_handle_cast(inner_ty, target_inner_ty, &target_ty, line, col)
+            }
             // Numeric casts (spec §15.1.2).
             // - `int as float` lifts via the IntToFloat opcode.
             // - `int as int` and `float as float` are accepted no-ops for consistency.
@@ -1230,6 +1307,21 @@ impl Generator {
             //   `float_to_int_checked(x: float) -> ?int` prelude function to handle NaN,
             //   infinity and out-of-range explicitly.
             (Type::Primitive(PrimitiveType::Int), Type::Primitive(PrimitiveType::Float)) => {
+                self.builder.int_to_float();
+                Ok(target_ty.clone())
+            }
+            (Type::Primitive(source), Type::Primitive(target))
+                if source.is_integer() && target.is_integer() =>
+            {
+                if target.is_fixed_integer() {
+                    let (min, max) = target.integer_bounds().unwrap();
+                    self.builder.check_int_range(min, max);
+                }
+                Ok(target_ty.clone())
+            }
+            (Type::Primitive(source), Type::Primitive(PrimitiveType::Float))
+                if source.is_fixed_integer() =>
+            {
                 self.builder.int_to_float();
                 Ok(target_ty.clone())
             }
@@ -1273,5 +1365,48 @@ impl Generator {
                 pos: self.make_pos(line, col),
             }),
         }
+    }
+
+    fn generate_handle_cast(
+        &mut self,
+        inner_ty: &Type,
+        target_inner_ty: &Type,
+        target_ty: &Type,
+        line: usize,
+        col: usize,
+    ) -> SaResult<Type> {
+        let (Type::Proto(source_id), Type::Proto(target_id)) = (inner_ty, target_inner_ty) else {
+            return Err(SemanticError::TypeMismatch {
+                lhs: format!("handle<{}>", self.type_to_string(inner_ty)),
+                rhs: format!("handle<{}>", self.type_to_string(target_inner_ty)),
+                pos: self.make_pos(line, col),
+            });
+        };
+
+        if self.proto_is_subtype(*source_id, *target_id) {
+            return Ok(target_ty.clone());
+        }
+        if !self.proto_is_subtype(*target_id, *source_id) {
+            return Err(SemanticError::Other(format!(
+                "Cast from unrelated foreign proto handles '{}' to '{}' is not supported at line {} column {}",
+                self.type_to_string(inner_ty),
+                self.type_to_string(target_inner_ty),
+                line,
+                col
+            )));
+        }
+
+        let source_tag = self.foreign_proto_tag(*source_id).map(str::to_string);
+        let target_tag = self.foreign_proto_tag(*target_id).map(str::to_string);
+        let (Some(_source_tag), Some(target_tag)) = (source_tag, target_tag) else {
+            return Err(SemanticError::Other(format!(
+                "Checked handle downcasts require related @foreign protos, found '{}' and '{}'",
+                self.type_to_string(inner_ty),
+                self.type_to_string(target_inner_ty)
+            )));
+        };
+        let tag_id = self.add_string_constant(&target_tag);
+        self.builder.foreign_downcast(tag_id);
+        Ok(target_ty.clone())
     }
 }

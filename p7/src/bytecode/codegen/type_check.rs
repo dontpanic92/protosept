@@ -6,6 +6,43 @@ use crate::semantic::{PrimitiveType, SymbolKind, Type, TypeDefinition, TypeId};
 use super::{Generator, SaResult};
 
 impl Generator {
+    fn conformance_type_matches(
+        &self,
+        expected: &Type,
+        actual: &Type,
+        declared_proto_id: TypeId,
+        concrete: &Type,
+        accept_base_proto: bool,
+    ) -> bool {
+        match (expected, actual) {
+            (Type::Proto(id), actual)
+                if *id == declared_proto_id
+                    || (accept_base_proto && self.proto_is_subtype(declared_proto_id, *id)) =>
+            {
+                actual == concrete
+            }
+            (Type::ProtoGeneric { base, .. }, actual)
+                if *base == declared_proto_id
+                    || (accept_base_proto && self.proto_is_subtype(declared_proto_id, *base)) =>
+            {
+                actual == concrete
+            }
+            (Type::Reference(expected), Type::Reference(actual))
+            | (Type::RefMut(expected), Type::RefMut(actual))
+            | (Type::BoxType(expected), Type::BoxType(actual))
+            | (Type::Nullable(expected), Type::Nullable(actual)) => {
+                self.conformance_type_matches(
+                    expected,
+                    actual,
+                    declared_proto_id,
+                    concrete,
+                    accept_base_proto,
+                )
+            }
+            _ => expected == actual,
+        }
+    }
+
     fn type_from_id(&self, type_id: TypeId) -> SaResult<Type> {
         match self.symbol_table.get_type_checked(type_id) {
             Some(TypeDefinition::Struct(_)) => Ok(Type::Struct(type_id)),
@@ -86,6 +123,34 @@ impl Generator {
                 name: name.to_string(),
                 pos: SourcePos::at(line, col),
             })?;
+
+        if module_path == "std.ffi"
+            && let Some(primitive) =
+                crate::semantic::SymbolTable::to_ffi_primitive_type(&member_name)
+        {
+            let root = module
+                .symbols
+                .first()
+                .ok_or_else(|| SemanticError::TypeNotFound {
+                    name: name.to_string(),
+                    pos: SourcePos::at(line, col),
+                })?;
+            let child_id = root.children.get(member_name.as_str()).ok_or_else(|| {
+                SemanticError::TypeNotFound {
+                    name: name.to_string(),
+                    pos: SourcePos::at(line, col),
+                }
+            })?;
+            let member = module.symbols.get(*child_id as usize).ok_or_else(|| {
+                SemanticError::TypeNotFound {
+                    name: name.to_string(),
+                    pos: SourcePos::at(line, col),
+                }
+            })?;
+            if self.imported_symbol_is_public(&module, member) {
+                return Ok(primitive);
+            }
+        }
 
         let (imported_type_id, qualified_name) = {
             let root = module
@@ -177,6 +242,17 @@ impl Generator {
                 }
                 return false;
             }
+            (Type::HandleType(a), Type::HandleType(e)) => {
+                if a == e {
+                    return true;
+                }
+                // `handle<T> -> handle<P>` when T conforms to P, mirroring
+                // `box<T> -> box<P>` (§18.5, §18.6).
+                if self.inner_type_conforms_to_proto(a, e) {
+                    return true;
+                }
+                return false;
+            }
             // `refmut<T>` is a subtype of `ref<T>` and of `refmut<T>` (one-way).
             (Type::RefMut(a), Type::RefMut(e)) | (Type::RefMut(a), Type::Reference(e)) => {
                 if a == e {
@@ -212,24 +288,58 @@ impl Generator {
         false
     }
 
-    /// Return true when `actual_inner` is a struct or enum that declares
-    /// conformance to the proto in `expected_inner`. Used to recognize
-    /// `box<T> -> box<P>` and `ref<T> -> ref<P>` as compatible after
-    /// `generate_expression_with_expected_type` emits the coercion.
+    /// Return true when `actual_inner` conforms to, or inherits from, the
+    /// proto in `expected_inner`.
     fn inner_type_conforms_to_proto(&self, actual_inner: &Type, expected_inner: &Type) -> bool {
-        let Type::Proto(proto_id) = expected_inner else {
-            return false;
-        };
-        let type_id = match actual_inner {
-            Type::Struct(sid) => *sid,
-            Type::Enum(eid) => *eid,
+        let proto_id = match expected_inner {
+            Type::Proto(proto_id) => *proto_id,
+            Type::ProtoGeneric { base, .. } => *base,
             _ => return false,
         };
-        match self.symbol_table.types.get(type_id as usize) {
-            Some(TypeDefinition::Struct(s)) => s.conforming_to.contains(proto_id),
-            Some(TypeDefinition::Enum(e)) => e.conforming_to.contains(proto_id),
+        match actual_inner {
+            Type::Struct(type_id) => match self.symbol_table.types.get(*type_id as usize) {
+                Some(TypeDefinition::Struct(s)) => s.conforming_to.contains(&proto_id),
+                _ => false,
+            },
+            Type::Enum(type_id) => match self.symbol_table.types.get(*type_id as usize) {
+                Some(TypeDefinition::Enum(e)) => e.conforming_to.contains(&proto_id),
+                _ => false,
+            },
+            Type::Proto(actual_id) => self.proto_is_subtype(*actual_id, proto_id),
+            Type::ProtoGeneric { base, .. } => self.proto_is_subtype(*base, proto_id),
             _ => false,
         }
+    }
+
+    pub(super) fn proto_is_subtype(&self, actual: TypeId, expected: TypeId) -> bool {
+        if actual == expected {
+            return true;
+        }
+        let mut pending = vec![actual];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(current) = pending.pop() {
+            if !seen.insert(current) {
+                continue;
+            }
+            let Some(TypeDefinition::Proto(proto)) = self.symbol_table.types.get(current as usize)
+            else {
+                continue;
+            };
+            for &base in &proto.bases {
+                if base == expected {
+                    return true;
+                }
+                pending.push(base);
+            }
+        }
+        false
+    }
+
+    pub(super) fn foreign_proto_tag(&self, proto_id: TypeId) -> Option<&str> {
+        let TypeDefinition::Proto(proto) = self.symbol_table.types.get(proto_id as usize)? else {
+            return None;
+        };
+        proto.foreign_type_tag.as_deref()
     }
 
     pub(super) fn get_semantic_type(&mut self, parsed_type: &ParsedType) -> SaResult<Type> {
@@ -281,6 +391,23 @@ impl Generator {
                     }
                     let inner_ty = self.get_semantic_type(&type_args[0])?;
                     return Ok(Type::BoxType(Box::new(inner_ty)));
+                }
+
+                // Handle handle<T> specially (builtin generic type). Distinct
+                // from box<T>: a `handle<T>` is a persistent, non-owning
+                // foreign identity (see `Type::HandleType`) and must never
+                // alias `Type::BoxType`.
+                if base.name == "handle" {
+                    if type_args.len() != 1 {
+                        return Err(SemanticError::Other(format!(
+                            "handle<T> requires exactly one type argument, found {} at line {} column {}",
+                            type_args.len(),
+                            base.line,
+                            base.col
+                        )));
+                    }
+                    let inner_ty = self.get_semantic_type(&type_args[0])?;
+                    return Ok(Type::HandleType(Box::new(inner_ty)));
                 }
 
                 // Handle array<T> specially (builtin generic type)
@@ -409,15 +536,18 @@ impl Generator {
         col: usize,
     ) -> SaResult<()> {
         // Get the type definition (struct or enum)
-        let (type_name, qualified_name) = match &self.symbol_table.types[type_id as usize] {
-            TypeDefinition::Struct(s) => ("Struct", s.qualified_name.clone()),
-            TypeDefinition::Enum(e) => ("Enum", e.qualified_name.clone()),
-            TypeDefinition::Proto(_) => {
-                return Err(SemanticError::Other(
-                    "Expected struct or enum type".to_string(),
-                ));
-            }
-        };
+        let (type_name, qualified_name, concrete_type) =
+            match &self.symbol_table.types[type_id as usize] {
+                TypeDefinition::Struct(s) => {
+                    ("Struct", s.qualified_name.clone(), Type::Struct(type_id))
+                }
+                TypeDefinition::Enum(e) => ("Enum", e.qualified_name.clone(), Type::Enum(type_id)),
+                TypeDefinition::Proto(_) => {
+                    return Err(SemanticError::Other(
+                        "Expected struct or enum type".to_string(),
+                    ));
+                }
+            };
 
         for (entry_idx, &proto_id) in conforming_to.iter().enumerate() {
             let empty_args: Vec<Type> = Vec::new();
@@ -486,6 +616,10 @@ impl Generator {
             };
 
             for (method_name, param_types, return_type) in &expected_methods {
+                let is_operator_proto = matches!(
+                    proto_qualified_name.rsplit('.').next(),
+                    Some("BitAnd" | "BitOr" | "BitXor")
+                );
                 let type_method = self.find_type_method(type_id, method_name);
 
                 if type_method.is_none() {
@@ -514,36 +648,26 @@ impl Generator {
                 for (i, (expected_type, actual_type)) in
                     param_types.iter().zip(method_params.iter()).enumerate()
                 {
-                    if i == 0 {
-                        let inner_is_self = |inner: &Type| -> bool {
-                            matches!(inner, Type::Struct(sid) if *sid == type_id)
-                                || matches!(inner, Type::Enum(eid) if *eid == type_id)
-                        };
-                        let inner_is_proto = |inner: &Type| -> bool {
-                            matches!(inner, Type::Proto(pid) if *pid == proto_id)
-                                || matches!(
-                                    inner,
-                                    Type::ProtoGeneric { base, .. } if *base == proto_id
-                                )
-                        };
-                        let receiver_forms_match = match (expected_type, actual_type) {
-                            (Type::Reference(e), Type::Reference(a)) => {
-                                inner_is_proto(e) && inner_is_self(a)
-                            }
-                            (Type::RefMut(e), Type::RefMut(a)) => {
-                                inner_is_proto(e) && inner_is_self(a)
-                            }
-                            (Type::BoxType(e), Type::BoxType(a)) => {
-                                inner_is_proto(e) && inner_is_self(a)
-                            }
-                            _ => false,
-                        };
-                        if receiver_forms_match {
-                            continue;
-                        }
-                    }
-
-                    if !self.types_equal(expected_type, actual_type) {
+                    let matches = if i == 0 {
+                        self.conformance_type_matches(
+                            expected_type,
+                            actual_type,
+                            proto_id,
+                            &concrete_type,
+                            true,
+                        )
+                    } else if is_operator_proto {
+                        self.conformance_type_matches(
+                            expected_type,
+                            actual_type,
+                            proto_id,
+                            &concrete_type,
+                            false,
+                        )
+                    } else {
+                        expected_type == actual_type
+                    };
+                    if !matches {
                         return Err(SemanticError::Other(format!(
                             "Method '{}' in {} '{}' has parameter {} with type '{}', but protocol '{}' requires type '{}' at line {} column {}",
                             method_name,
@@ -566,7 +690,17 @@ impl Generator {
                         let actual_is_unit = matches!(actual, Type::Primitive(PrimitiveType::Unit));
 
                         if expected_is_unit && actual_is_unit {
-                        } else if !self.types_equal(expected, &actual) {
+                        } else if !(if is_operator_proto {
+                            self.conformance_type_matches(
+                                expected,
+                                &actual,
+                                proto_id,
+                                &concrete_type,
+                                false,
+                            )
+                        } else {
+                            expected == &actual
+                        }) {
                             return Err(SemanticError::Other(format!(
                                 "Method '{}' in {} '{}' returns type '{}', but protocol '{}' requires return type '{}' at line {} column {}",
                                 method_name,
@@ -652,28 +786,6 @@ impl Generator {
         None
     }
 
-    /// Helper to check if two types are equal
-    pub(super) fn types_equal(&self, a: &Type, b: &Type) -> bool {
-        match (a, b) {
-            (Type::Primitive(a), Type::Primitive(b)) => a == b,
-            (Type::Array(a), Type::Array(b)) => self.types_equal(a, b),
-            (Type::Reference(a), Type::Reference(b)) => self.types_equal(a, b),
-            (Type::RefMut(a), Type::RefMut(b)) => self.types_equal(a, b),
-            (Type::Struct(a), Type::Struct(b)) => a == b,
-            (Type::Enum(a), Type::Enum(b)) => a == b,
-            (Type::Proto(a), Type::Proto(b)) => a == b,
-            (Type::BoxType(a), Type::BoxType(b)) => self.types_equal(a, b),
-            (Type::Nullable(a), Type::Nullable(b)) => self.types_equal(a, b),
-            (Type::Tuple(a), Type::Tuple(b)) => {
-                a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| self.types_equal(x, y))
-            }
-            (Type::Map(ka, va), Type::Map(kb, vb)) => {
-                self.types_equal(ka, kb) && self.types_equal(va, vb)
-            }
-            _ => false,
-        }
-    }
-
     /// Helper to convert a type to a string for error messages
     pub(super) fn type_to_string(&self, ty: &Type) -> String {
         match ty {
@@ -717,6 +829,7 @@ impl Generator {
                 format!("{}<{}>", base_name, args_str.join(", "))
             }
             Type::BoxType(inner) => format!("box<{}>", self.type_to_string(inner)),
+            Type::HandleType(inner) => format!("handle<{}>", self.type_to_string(inner)),
             Type::Nullable(inner) => format!("?{}", self.type_to_string(inner)),
             Type::Function {
                 params,

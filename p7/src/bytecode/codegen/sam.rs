@@ -210,6 +210,7 @@ impl Generator {
         let func = Function {
             qualified_name: method_qualified_name.clone(),
             is_pub: true,
+            is_associated_value: false,
             params: method_param_vars.iter().map(|v| v.ty.clone()).collect(),
             param_names: method_param_vars.iter().map(|v| v.name.clone()).collect(),
             param_defaults: vec![None; method_param_vars.len()],

@@ -89,6 +89,9 @@ pub struct Context {
     // a foreign value stamped by one module flows to another. See
     // `discover_foreign_carriers` for the maintenance logic.
     pub(super) foreign_carrier_methods: HashMap<String, Vec<ForeignCarrierMethod>>,
+    // Dynamic foreign type_tag -> direct base type_tags, discovered from
+    // serialized Proto inheritance metadata as modules are loaded.
+    foreign_tag_bases: HashMap<String, std::collections::HashSet<String>>,
     // Invalidated identities remain recorded so a reused host token receives
     // a generation newer than every stale value still held by script code.
     foreign_handles: HashMap<(String, i64), ForeignHandleState>,
@@ -99,6 +102,9 @@ pub struct Context {
     // never alias a later callback that reuses an external-root slot.
     native_callback_roots: HashMap<u64, usize>,
     next_native_callback_token: u64,
+    // One error slot per active native invocation. A stack is required
+    // because native callbacks may synchronously re-enter the interpreter.
+    native_error_frames: Vec<Option<RuntimeError>>,
     // Lazy cache resolving an (importing_module_idx, local_type_id) pair to the
     // (defining_module_idx, defining_local_type_id) where the type's vtable
     // actually lives. Populated on demand by `resolve_concrete_origin` when a
@@ -148,10 +154,12 @@ impl Context {
             foreign_types: HashMap::new(),
             foreign_uuids: HashMap::new(),
             foreign_carrier_methods: HashMap::new(),
+            foreign_tag_bases: HashMap::new(),
             foreign_handles: HashMap::new(),
             external_roots: Vec::new(),
             native_callback_roots: HashMap::new(),
             next_native_callback_token: 1,
+            native_error_frames: Vec::new(),
             imported_type_origin: HashMap::new(),
         };
 
@@ -226,14 +234,48 @@ impl Context {
     }
 
     pub(crate) fn invoke_native_callback(&mut self, token: u64) -> Result<(), RuntimeError> {
+        let callback = self.native_callback(token)?;
+        self.call_closure_void(&callback, Vec::new())
+    }
+
+    pub(crate) fn invoke_native_callback_with_args(
+        &mut self,
+        token: u64,
+        args: Vec<Data>,
+    ) -> Result<Data, RuntimeError> {
+        let callback = self.native_callback(token)?;
+        self.call_closure(&callback, args)
+    }
+
+    pub(crate) fn begin_native_invocation(&mut self) {
+        self.native_error_frames.push(None);
+    }
+
+    pub(crate) fn record_native_error(&mut self, error: RuntimeError) {
+        if let Some(slot) = self.native_error_frames.last_mut() {
+            *slot = Some(error);
+        }
+    }
+
+    pub(crate) fn record_native_error_if_empty(&mut self, error: RuntimeError) {
+        if let Some(slot) = self.native_error_frames.last_mut()
+            && slot.is_none()
+        {
+            *slot = Some(error);
+        }
+    }
+
+    pub(crate) fn end_native_invocation(&mut self) -> Option<RuntimeError> {
+        self.native_error_frames.pop().flatten()
+    }
+
+    fn native_callback(&self, token: u64) -> Result<Data, RuntimeError> {
         let root = *self
             .native_callback_roots
             .get(&token)
             .ok_or_else(|| RuntimeError::Other("Native callback handle is stale".to_string()))?;
-        let callback = self
-            .external_root(root)
-            .ok_or_else(|| RuntimeError::Other("Native callback handle is stale".to_string()))?;
-        self.call_closure_void(&callback, Vec::new())
+        self.external_root(root)
+            .ok_or_else(|| RuntimeError::Other("Native callback handle is stale".to_string()))
     }
 
     pub(crate) fn release_native_callback(&mut self, token: u64) -> Result<(), RuntimeError> {
@@ -326,6 +368,55 @@ impl Context {
     /// the right interface pointer.
     pub fn foreign_uuid(&self, type_tag: &str) -> Option<&str> {
         self.foreign_uuids.get(type_tag).map(String::as_str)
+    }
+
+    /// Return whether a foreign-bearing runtime value has `expected_tag` as
+    /// its dynamic tag or one of its transitive foreign proto bases.
+    pub fn foreign_is_a(&self, value: &Data, expected_tag: &str) -> bool {
+        self.foreign_dynamic_tag(value)
+            .is_some_and(|dynamic_tag| self.foreign_tag_is_a(dynamic_tag, expected_tag))
+    }
+
+    pub(super) fn foreign_tag_is_a(&self, dynamic_tag: &str, expected_tag: &str) -> bool {
+        if dynamic_tag == expected_tag {
+            return true;
+        }
+        let mut pending = vec![dynamic_tag.to_string()];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(tag) = pending.pop() {
+            if !seen.insert(tag.clone()) {
+                continue;
+            }
+            let Some(bases) = self.foreign_tag_bases.get(&tag) else {
+                continue;
+            };
+            if bases.contains(expected_tag) {
+                return true;
+            }
+            pending.extend(bases.iter().cloned());
+        }
+        false
+    }
+
+    pub(super) fn foreign_dynamic_tag<'a>(&'a self, value: &Data) -> Option<&'a str> {
+        let (box_idx, generation) = match value {
+            Data::ProtoBoxRef {
+                box_idx,
+                generation,
+                ..
+            } => (*box_idx, *generation),
+            Data::ProtoRefRef {
+                ref_idx,
+                generation,
+                ..
+            } => (*ref_idx, *generation),
+            Data::BoxRef { idx, generation } => (*idx, *generation),
+            _ => return None,
+        };
+        match self.box_heap.get(box_idx, generation).ok()? {
+            Data::Foreign { type_tag, .. } => Some(type_tag),
+            _ => None,
+        }
     }
 
     /// Returns the `type_tag` of the first `@foreign` proto that the
@@ -611,7 +702,7 @@ impl Context {
                 handle_generation,
                 ..
             } => {
-                if type_tag != expected_tag {
+                if !self.foreign_tag_is_a(type_tag, expected_tag) {
                     return Err(RuntimeError::Other(format!(
                         "foreign_handle: expected type_tag '{}', got '{}'",
                         expected_tag, type_tag

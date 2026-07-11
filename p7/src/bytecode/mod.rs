@@ -281,6 +281,16 @@ pub enum Instruction {
     /// Expects: [..., Data::Int(i)] -> [..., Data::Float(i as f64)]
     #[brw(magic = 54u8)]
     IntToFloat,
+
+    /// Eagerly verify that a foreign-bearing value's dynamic tag is the
+    /// expected tag or a derived tag. Leaves the value unchanged on success.
+    /// Parameter: string constant index for the expected foreign type_tag.
+    #[brw(magic = 55u8)]
+    ForeignDowncast(u32),
+
+    /// Validate that the top-of-stack Data::Int is within [min, max].
+    #[brw(magic = 56u8)]
+    CheckIntRange(i64, i64),
 }
 
 pub fn disassemble(instructions: &[u8]) -> Vec<Instruction> {

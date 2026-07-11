@@ -110,6 +110,12 @@ impl Generator {
         match expression {
             Expression::Identifier(identifier) => self.generate_identifier(identifier),
             Expression::IntegerLiteral(value) => {
+                let value = i64::try_from(value).map_err(|_| {
+                    SemanticError::Other(format!(
+                        "integer literal {} exceeds the runtime int range",
+                        value
+                    ))
+                })?;
                 self.builder.ldi(value);
                 Ok(Type::Primitive(PrimitiveType::Int))
             }
@@ -208,6 +214,44 @@ impl Generator {
         expression: Expression,
         expected_type: Option<&Type>,
     ) -> SaResult<Type> {
+        let expression = match expression {
+            Expression::BlockValue(inner) => {
+                return self.generate_expression_with_expected_type(*inner, expected_type);
+            }
+            other => other,
+        };
+
+        if let Some(Type::Primitive(expected)) = expected_type
+            && expected.is_integer()
+        {
+            let literal = match &expression {
+                Expression::IntegerLiteral(value) => Some(*value),
+                Expression::Unary { operator, right }
+                    if operator.token_type == crate::lexer::TokenType::Minus =>
+                {
+                    match right.as_ref() {
+                        Expression::IntegerLiteral(value) => value.checked_neg(),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(value) = literal {
+                let (min, max) = expected.integer_bounds().unwrap();
+                if !(i128::from(min)..=i128::from(max)).contains(&value) {
+                    return Err(SemanticError::Other(format!(
+                        "integer literal {} is outside range of {} ({}..={})",
+                        value,
+                        expected.name(),
+                        min,
+                        max
+                    )));
+                }
+                self.builder.ldi(value as i64);
+                return Ok(Type::Primitive(*expected));
+            }
+        }
+
         match expression {
             Expression::NullLiteral => {
                 // Null literal needs expected type to determine inner type
@@ -319,6 +363,34 @@ impl Generator {
         actual: &Type,
         expected: &Type,
     ) -> SaResult<Option<()>> {
+        let proto_wrapper_pair = match (actual, expected) {
+            (Type::BoxType(a), Type::BoxType(e))
+            | (Type::Reference(a), Type::Reference(e))
+            | (Type::RefMut(a), Type::RefMut(e))
+            | (Type::RefMut(a), Type::Reference(e))
+            | (Type::HandleType(a), Type::HandleType(e)) => Some((a.as_ref(), e.as_ref())),
+            _ => None,
+        };
+        if let Some((actual_inner, expected_inner)) = proto_wrapper_pair {
+            let actual_proto = match actual_inner {
+                Type::Proto(id) => Some(*id),
+                Type::ProtoGeneric { base, .. } => Some(*base),
+                _ => None,
+            };
+            let expected_proto = match expected_inner {
+                Type::Proto(id) => Some(*id),
+                Type::ProtoGeneric { base, .. } => Some(*base),
+                _ => None,
+            };
+            if let (Some(actual_proto), Some(expected_proto)) = (actual_proto, expected_proto)
+                && self.proto_is_subtype(actual_proto, expected_proto)
+            {
+                // Proto wrappers already carry dynamic carrier metadata.
+                // Widening only changes the static view.
+                return Ok(Some(()));
+            }
+        }
+
         let (is_box, needs_box_alloc, actual_inner, expected_inner) = match (actual, expected) {
             (Type::BoxType(a), Type::BoxType(e)) => (true, false, a.as_ref(), e.as_ref()),
             (Type::Reference(a), Type::Reference(e)) => (false, false, a.as_ref(), e.as_ref()),

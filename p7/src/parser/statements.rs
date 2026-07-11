@@ -102,7 +102,18 @@ impl Parser {
             match &token.token_type {
                 TokenType::Integer(value) => {
                     self.consume();
-                    Ok(Pattern::IntegerLiteral(*value))
+                    let value = i64::try_from(*value).map_err(|_| ParseError::Other {
+                        message: format!(
+                            "integer pattern {} exceeds the runtime integer range",
+                            value
+                        ),
+                        pos: Some(SourcePos {
+                            line: token.line,
+                            col: token.col,
+                            module: None,
+                        }),
+                    })?;
+                    Ok(Pattern::IntegerLiteral(value))
                 }
                 TokenType::Float(value) => {
                     self.consume();

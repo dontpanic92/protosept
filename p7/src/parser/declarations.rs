@@ -384,11 +384,36 @@ impl Parser {
         Ok(items)
     }
 
-    fn parse_struct_method(&mut self) -> ParseResult<StructMethod> {
-        // Parse any attributes before the method
-        let attributes = self.parse_attributes()?;
-        let is_pub = self.consume_match(TokenType::Pub).is_ok();
-        let function = self.parse_function_declaration(attributes, is_pub)?;
+    fn parse_struct_associated_value(
+        &mut self,
+        mut attributes: Vec<Attribute>,
+        is_pub: bool,
+    ) -> ParseResult<StructMethod> {
+        let name = self.parse_identifier()?;
+        self.consume_match(TokenType::Assignment)?;
+        let value = self.parse_expression()?;
+        self.consume_match(TokenType::Semicolon)?;
+
+        attributes.push(Attribute {
+            name: Identifier::synthetic("$associated_value"),
+            arguments: Vec::new(),
+        });
+
+        let self_type = Type::Identifier(Identifier {
+            name: InternedString::from("Self"),
+            line: name.line,
+            col: name.col,
+        });
+        let function = FunctionDeclaration {
+            is_pub,
+            name,
+            attributes,
+            effects: Vec::new(),
+            type_parameters: Vec::new(),
+            parameters: Vec::new(),
+            return_type: Some(self_type),
+            body: vec![Statement::Expression(value)],
+        };
 
         Ok(StructMethod { is_pub, function })
     }
@@ -407,7 +432,14 @@ impl Parser {
                 break;
             }
 
-            methods.push(self.parse_struct_method()?);
+            let attributes = self.parse_attributes()?;
+            let is_pub = self.consume_match(TokenType::Pub).is_ok();
+            if self.peek_match(TokenType::Fn) {
+                let function = self.parse_function_declaration(attributes, is_pub)?;
+                methods.push(StructMethod { is_pub, function });
+            } else {
+                methods.push(self.parse_struct_associated_value(attributes, is_pub)?);
+            }
         }
 
         Ok(methods)
@@ -517,6 +549,21 @@ impl Parser {
         is_pub: bool,
     ) -> ParseResult<Statement> {
         self.consume_match(TokenType::Proto)?;
+
+        // Parse optional inheritance list: proto[Base1, Base2] Derived
+        let bases = if self.peek_match(TokenType::OpenBracket) {
+            self.consume();
+            let mut protos = vec![self.parse_type()?];
+            while self.peek_match(TokenType::Comma) {
+                self.consume();
+                protos.push(self.parse_type()?);
+            }
+            self.consume_match(TokenType::CloseBracket)?;
+            protos
+        } else {
+            vec![]
+        };
+
         let name = self.parse_identifier()?;
         let type_parameters = self.parse_type_parameters()?;
 
@@ -531,6 +578,7 @@ impl Parser {
             is_pub,
             name,
             attributes,
+            bases,
             type_parameters,
             methods,
         })

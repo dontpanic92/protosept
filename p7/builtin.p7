@@ -20,6 +20,18 @@ proto Eq {
     fn eq(ref self, other: ref<Eq>) -> bool;
 }
 
+pub proto BitAnd {
+    fn bitand(ref self, rhs: Self) -> Self;
+}
+
+pub proto BitOr {
+    fn bitor(ref self, rhs: Self) -> Self;
+}
+
+pub proto BitXor {
+    fn bitxor(ref self, rhs: Self) -> Self;
+}
+
 // Generic iteration protos. `Iterable<Iter>` declares the method
 // `iter(ref self) -> box<Iter>`, where `Iter` is the cursor type;
 // `Iterator<T>` declares the per-step method

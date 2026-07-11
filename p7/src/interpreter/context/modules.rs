@@ -10,6 +10,7 @@ impl Context {
         // Push the main module first to ensure it's at index 0
         let module_idx_for_foreign = self.modules.len();
         self.build_vtable(module_idx_for_foreign, &module);
+        self.discover_foreign_proto_relations(&module);
         self.discover_foreign_carriers(module_idx_for_foreign, &module);
 
         // Extract imported modules and init address before pushing the main module
@@ -45,6 +46,7 @@ impl Context {
     fn load_module_internal(&mut self, mut module: Module) {
         let module_idx_for_foreign = self.modules.len();
         self.build_vtable(module_idx_for_foreign, &module);
+        self.discover_foreign_proto_relations(&module);
         self.discover_foreign_carriers(module_idx_for_foreign, &module);
 
         // Extract imported modules and init address before pushing this module
@@ -224,6 +226,31 @@ impl Context {
                     let bucket = self.foreign_carrier_methods.entry(tag).or_default();
                     bucket.extend(new_rows);
                 }
+            }
+        }
+    }
+
+    fn discover_foreign_proto_relations(&mut self, module: &Module) {
+        use crate::semantic::TypeDefinition;
+
+        for type_def in &module.types {
+            let TypeDefinition::Proto(proto) = type_def else {
+                continue;
+            };
+            let Some(derived_tag) = &proto.foreign_type_tag else {
+                continue;
+            };
+            for &base_id in &proto.bases {
+                let Some(TypeDefinition::Proto(base)) = module.types.get(base_id as usize) else {
+                    continue;
+                };
+                let Some(base_tag) = &base.foreign_type_tag else {
+                    continue;
+                };
+                self.foreign_tag_bases
+                    .entry(derived_tag.to_string())
+                    .or_default()
+                    .insert(base_tag.to_string());
             }
         }
     }

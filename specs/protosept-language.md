@@ -561,7 +561,7 @@ Types in v1:
 - Nullability: `?T`
 - Borrowed view: `ref<T>` (Input: `&T`)
 - Owned heap handle: `box<T>` (Input: `^T`)
-- Function types: `fn(T1, T2, ...) -> R`, `fn[effects](T1, T2, ...) -> R` (§3.9)
+- Function types: `fn(T1, T2, ...) -> R`, `fn[effects](T1, T2, ...) -> R` (§3.8)
 - User-defined: `struct Name(...)`, `enum Name(...)`, `proto Name { ... }`
 - Compile-time generics: `T`, `array<T>`, `box<T>`, etc. (§20)
 
@@ -819,7 +819,7 @@ Differences:
 
 ---
 
-### 3.9 Function types
+### 3.8 Function types
 
 A function type describes a callable value — a closure (§9.7) or, in the future, a function reference.
 
@@ -871,7 +871,9 @@ Function-typed values (closures) follow the standard value-flow rule (§6.1):
 ## 4. Values and literals
 
 ### 4.1 Integer literals
-Decimal digits with optional `_`: `0`, `42`, `1_000_000`
+Decimal digits with optional `_`: `0`, `42`, `1_000_000`. Integer literals
+must fit the runtime `i64` carrier; this currently also imposes the documented
+`u64` limitation from §3.1.
 
 ### 4.2 Float literals
 Decimal with `.` and optional `_`: `1.0`, `3.1415`, `1_000.5`
@@ -1646,20 +1648,53 @@ Operator precedence (highest to lowest):
 
 6) Equality: `==`, `!=`
 
-7) Logical AND: `&&`
+7) Bitwise AND: `&`
 
-8) Logical OR: `||`
+8) Bitwise XOR: `^`
 
-9) Null-coalescing: `??`
+9) Bitwise OR: `|`
 
-10) Assignment: `=` (right-associative). Assignment is a statement form; it does not yield a value.
+10) Logical AND: `&&`
+
+11) Logical OR: `||`
+
+12) Null-coalescing: `??`
+
+13) Assignment: `=` (right-associative). Assignment is a statement form; it does not yield a value.
 
 Notes:
 - `if ... else ...`, `try`, `match`, `loop`, and closure literals (`(...) => ...`) are expression forms written with blocks and bind looser than any operator above.
 - `if` without `else` is statement-only and does not participate in operator precedence.
 - Prefix `!x` (logical NOT) and postfix `x!` (force unwrap) are distinct by position.
 
-#### 9.3.1 Equality operators: `==` and `!=`
+#### 9.3.1 Bitwise operators: `&`, `^`, and `|`
+
+Bitwise operators are available for integer scalar types and through the
+builtin static operator protos:
+
+```p7
+proto BitAnd { fn bitand(ref self, rhs: Self) -> Self; }
+proto BitOr  { fn bitor(ref self, rhs: Self) -> Self; }
+proto BitXor { fn bitxor(ref self, rhs: Self) -> Self; }
+```
+
+For operands of the same user-defined type `T`:
+
+- `a & b` requires `T: BitAnd` and invokes `a.bitand(b)`.
+- `a | b` requires `T: BitOr` and invokes `a.bitor(b)`.
+- `a ^ b` requires `T: BitXor` and invokes `a.bitxor(b)`.
+- The corresponding method MUST have signature
+  `fn(ref self, rhs: Self) -> Self`.
+- Each operand is evaluated exactly once, left-to-right.
+- Different nominal types never mix implicitly.
+
+Integer scalar operations are compiler intrinsic implementations of the same
+semantics and require matching operand types.
+
+Bitwise precedence, from highest to lowest, is `&`, `^`, then `|`. All three
+bind less tightly than equality and more tightly than logical `&&`.
+
+#### 9.3.2 Equality operators: `==` and `!=`
 
 The equality operators `==` and `!=` test structural equality and inequality.
 
@@ -2137,7 +2172,7 @@ A closure literal creates an anonymous callable value. Closures are first-class 
 
 - Parameters use the same `name: Type` syntax as function declarations; all parameter types MUST be explicit in v1.
 - The body is either a single expression or a block (following the same rules as block expressions, §9.1).
-- The return type is inferred from the body expression. To constrain the return type, annotate the binding with a function type (§3.9): `let f: fn(int) -> int = (x: int) => x + 1;`.
+- The return type is inferred from the body expression. To constrain the return type, annotate the binding with a function type (§3.8): `let f: fn(int) -> int = (x: int) => x + 1;`.
 - The optional effect list uses the same `[effect1, effect2, ...]` syntax as function declarations (§11.2), placed before the parameter list. Effects are a **set**: order is not significant, duplicates are ERROR.
 
 **Effect rules:**
@@ -2784,6 +2819,92 @@ let sq = Rectangle.square(5);
 
 Non-instance methods may use `Self` as a return type and as a constructor.
 
+#### 12.5.2 Associated values
+
+A struct may declare a value-producing associated member:
+
+```p7
+struct Access(int) {
+  pub Read = Self(1);
+  pub Write = Access(2);
+}
+```
+
+An associated value declaration has the form:
+
+```text
+pub? Name = expression;
+```
+
+Rules:
+
+- `expression` is checked against expected type `Self`.
+- Associated values are supported by every struct form, including record,
+  tuple, unit, multi-field, and generic structs.
+- `Self(...)` and the explicit struct name may both be used in the initializer.
+- `Type.Name` evaluates the initializer and produces a fresh value. The
+  declaration does not allocate static storage.
+- `Type.Name()` is ERROR; associated values are accessed without parentheses.
+- Visibility follows the same rules as methods.
+- Associated values and methods share the same member namespace, so duplicate
+  names are ERROR.
+- Attributes on an associated value apply to its synthesized accessor.
+
+The declaration:
+
+```p7
+pub Read = Self(1);
+```
+
+is semantically equivalent to the synthesized method:
+
+```p7
+pub fn Read() -> Self {
+  Self(1)
+}
+```
+
+except that only the property-like `Type.Read` access syntax is exposed.
+
+Associated values and operator protos provide the standard flags pattern
+without a dedicated declaration form:
+
+```p7
+import std.ffi;
+
+@repr(transparent)
+pub struct[BitOr, BitAnd, BitXor] Access(ffi.u32) {
+  pub None = Self(0);
+  pub Read = Self(1);
+  pub Write = Self(2);
+  pub ReadWrite = Self(3);
+
+  pub fn bitor(ref self, rhs: Self) -> Self {
+    Self(self.0 | rhs.0)
+  }
+
+  pub fn bitand(ref self, rhs: Self) -> Self {
+    Self(self.0 & rhs.0)
+  }
+
+  pub fn bitxor(ref self, rhs: Self) -> Self {
+    Self(self.0 ^ rhs.0)
+  }
+
+  pub fn contains(ref self, rhs: Self) -> bool {
+    (self.0 & rhs.0) == rhs.0
+  }
+
+  pub fn bits(ref self) -> ffi.u32 {
+    self.0
+  }
+}
+```
+
+Empty values, composite values, accepted bit masks, conversion APIs, and
+validation policy belong to the struct implementation rather than the core
+language.
+
 ### 12.6 Builtin structs: `@builtin()`
 
 A struct may be declared with the `@builtin()` attribute to indicate a compiler-defined, opaque nominal type:
@@ -3126,7 +3247,8 @@ Rules:
 ### 15.1 Numeric rules
 
 #### 15.1.1 Integer overflow
-`int` arithmetic overflow TRAPs for fixed-width integer ops in v1.
+`int` arithmetic overflow TRAPs. Arithmetic on fixed-width integer types from
+`std.ffi` also TRAPs when the result is outside that type's range.
 
 Prelude functions (placeholder names):
 - `wrapping_add(a: int, b: int) -> int`
@@ -3281,7 +3403,18 @@ proto Counter {
   fn tick(ref self);
   fn value(ref self) -> int;
 }
+
+proto[Printable] RichPrintable {
+  fn describe(ref self) -> string;
+}
 ```
+
+`proto[Base1, Base2] Derived` declares direct proto bases. `Derived`
+exposes all inherited methods plus its own methods. Duplicate bases,
+inheritance cycles, and same-named inherited methods with conflicting
+signatures are compile-time errors. Proto inheritance is currently limited
+to non-generic protos; generic derived protos and generic base entries are
+rejected.
 
 **Receiver requirements:**
 
@@ -3478,7 +3611,16 @@ let w = rp.value();                 // ok
 ```
 
 ### 18.8 Downcasting / type tests
-[[TODO]] runtime type tests and downcasts for proto boxes.
+
+For related foreign protos, `handle<Derived>` widens implicitly to
+`handle<Base>` (transitively). The same static-view widening applies to
+`box` and `ref` proto handles.
+
+An explicit `base_handle as handle<Derived>` performs an eager checked
+downcast when the source and target are related foreign protos. The runtime
+compares the value's dynamic foreign `type_tag` against the target tag and
+its transitive bases; mismatch traps. Hosts can perform the same type test
+without source syntax through `Context::foreign_is_a`.
 
 ### 18.9 Nullability
 `?box<P>` is a nullable proto handle; `box<P>` is non-null.
@@ -3518,6 +3660,12 @@ on a foreign proto are dispatched by the host. Method bodies on a
 foreign proto are an ERROR. Generic methods on foreign protos are an
 ERROR (initial v1 restriction).
 
+Foreign proto inheritance requires foreign bases. The runtime records each
+derived `type_tag` → base `type_tag` relation while loading modules.
+Consequently host extraction for an expected base tag accepts a value whose
+dynamic tag is derived, transitively. Allocation, finalization, and handle
+invalidation remain keyed by the dynamic tag.
+
 #### 18.10.2 Carrier representation (informative)
 
 For every `@foreign proto F` the compiler synthesises a hidden carrier
@@ -3526,7 +3674,8 @@ struct `__ForeignCarrier_F`. The carrier:
 - has no fields,
 - conforms to `F`,
 - is not addressable from user source code,
-- exposes one host-method symbol per proto method.
+- exposes one host-method symbol per inherited or directly declared proto
+  method.
 
 A `box<F>` whose payload is a foreign cell carries the carrier's
 `concrete_type_id`, so dynamic dispatch through the existing
@@ -4115,7 +4264,7 @@ spawn_thread f(args...);
 Rules:
 - `f` is a (non-suspend) function or closure.
 - All argument types MUST satisfy `Send`.
-- If `f` is a closure, the closure itself MUST satisfy `Send` (i.e., all captured values must satisfy `Send`; §3.9).
+- If `f` is a closure, the closure itself MUST satisfy `Send` (i.e., all captured values must satisfy `Send`; §3.8).
 - `spawn_thread` is a statement returning `unit`.
 
 Semantics:
@@ -4197,16 +4346,36 @@ To support C POD structs and universal FFI marshalling without expanding the cor
 
 When §23 is enabled, the host MUST make module `std.ffi` available for import (even in `nostd` mode).
 
-`std.ffi` defines the following nominal scalar types with fixed, platform-independent widths:
+`std.ffi` defines the following compiler-provided nominal scalar types with
+fixed, platform-independent widths:
 - `i8`, `i16`, `i32`, `i64` — signed two's-complement integers of the given bit width
 - `u8`, `u16`, `u32`, `u64` — unsigned integers of the given bit width
-- `isize`, `usize` — signed/unsigned pointer-sized integers
-- `f32` — IEEE-754 binary32
-- `f64` — IEEE-754 binary64
 
 These types are FFI-safe and may appear in `@repr(C)` structs and `@ffi` signatures. The compiled artifact MUST preserve their exact size/alignment as part of signature/layout metadata (§19.6.1).
 
-Note: The core `int` and `float` types remain `i64` and `f64` respectively; `std.ffi` types exist specifically to express C ABI widths.
+They are not core primitives and are not available as bare names:
+
+```p7
+import std.ffi;
+
+let byte: ffi.u8 = 255; // OK
+// let byte: u8 = 255;  // ERROR: unresolved type
+```
+
+An unsuffixed integer literal synthesizes `int`, but is checked directly
+against a fixed-width expected type at annotated bindings, arguments, and
+return sites. Out-of-range literals are ERROR. Explicit integer casts are
+range-checked; a dynamic out-of-range cast TRAPs. Arithmetic and bitwise
+operations require matching widths and preserve the operand type.
+
+The current runtime stores all integer scalars as signed `Data::Int(i64)`.
+Consequently, `ffi.u64` is temporarily restricted to `0..=i64::MAX`; literals,
+casts, and native ABI values above `i64::MAX` are rejected. This is a runtime
+carrier limitation, not the intended final range of `ffi.u64`.
+
+The core `int` and `float` types remain `i64` and IEEE-754 binary64
+respectively. Additional ABI scalars such as `f32`, `isize`, and `usize` are
+reserved for a later `std.ffi` extension.
 
 ### 23.4 Monomorphization requirement
 
@@ -4250,7 +4419,7 @@ If marshalling cannot be performed (unsupported ABI, missing layout metadata, un
 7) Define universal marshalling surface for strings/arrays/callbacks under FFI (beyond POD + ptr) (§23)
 8) Closure parameter type inference from expected type (§9.7.2)
 9) Explicit capture list syntax for closures (§9.7.3)
-10) Function reference expressions — obtaining a value of function type from a named function declaration (§3.9)
+10) Function reference expressions — obtaining a value of function type from a named function declaration (§3.8)
 
 ---
 End.

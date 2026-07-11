@@ -41,6 +41,34 @@ impl Generator {
             return Ok(());
         }
 
+        let proto_wrapper_pair = match (block_type, return_type) {
+            (Type::BoxType(actual), Type::BoxType(expected))
+            | (Type::Reference(actual), Type::Reference(expected))
+            | (Type::RefMut(actual), Type::RefMut(expected))
+            | (Type::RefMut(actual), Type::Reference(expected))
+            | (Type::HandleType(actual), Type::HandleType(expected)) => {
+                Some((actual.as_ref(), expected.as_ref()))
+            }
+            _ => None,
+        };
+        if let Some((actual, expected)) = proto_wrapper_pair {
+            let actual_proto = match actual {
+                Type::Proto(id) => Some(*id),
+                Type::ProtoGeneric { base, .. } => Some(*base),
+                _ => None,
+            };
+            let expected_proto = match expected {
+                Type::Proto(id) => Some(*id),
+                Type::ProtoGeneric { base, .. } => Some(*base),
+                _ => None,
+            };
+            if let (Some(actual), Some(expected)) = (actual_proto, expected_proto)
+                && self.proto_is_subtype(actual, expected)
+            {
+                return Ok(());
+            }
+        }
+
         // Widen `T -> ?T` at the implicit-return tail. The block has already
         // pushed a `T`; wrap it so the runtime value is a properly-tagged
         // nullable and downstream callers see a `?T`.
@@ -191,6 +219,14 @@ impl Generator {
                 Ok(function_def.return_type.clone())
             }
             PrimitiveType::Int
+            | PrimitiveType::I8
+            | PrimitiveType::U8
+            | PrimitiveType::I16
+            | PrimitiveType::U16
+            | PrimitiveType::I32
+            | PrimitiveType::U32
+            | PrimitiveType::I64
+            | PrimitiveType::U64
             | PrimitiveType::Float
             | PrimitiveType::Bool
             | PrimitiveType::Char
@@ -211,7 +247,15 @@ impl Generator {
                 }
 
                 let intrinsic_name = match prim_ty {
-                    PrimitiveType::Int => "display.int",
+                    PrimitiveType::Int
+                    | PrimitiveType::I8
+                    | PrimitiveType::U8
+                    | PrimitiveType::I16
+                    | PrimitiveType::U16
+                    | PrimitiveType::I32
+                    | PrimitiveType::U32
+                    | PrimitiveType::I64
+                    | PrimitiveType::U64 => "display.int",
                     PrimitiveType::Float => "display.float",
                     PrimitiveType::Bool => "display.bool",
                     PrimitiveType::Char => "display.char",
@@ -633,7 +677,7 @@ impl Generator {
     pub(super) fn pattern_to_expression(&self, pattern: &Pattern) -> SaResult<Expression> {
         match pattern {
             Pattern::Identifier(id) => Ok(Expression::Identifier(id.clone())),
-            Pattern::IntegerLiteral(val) => Ok(Expression::IntegerLiteral(*val)),
+            Pattern::IntegerLiteral(val) => Ok(Expression::IntegerLiteral(i128::from(*val))),
             Pattern::FloatLiteral(val) => Ok(Expression::FloatLiteral(*val)),
             Pattern::StringLiteral(val) => Ok(Expression::StringLiteral(val.clone())),
             Pattern::BooleanLiteral(val) => Ok(Expression::BooleanLiteral(*val)),

@@ -1,0 +1,26 @@
+// Compiler-provided fixed-width integer types for FFI declarations.
+// These names are available only through `import std.ffi`.
+
+@builtin()
+pub struct i8();
+
+@builtin()
+pub struct u8();
+
+@builtin()
+pub struct i16();
+
+@builtin()
+pub struct u16();
+
+@builtin()
+pub struct i32();
+
+@builtin()
+pub struct u32();
+
+@builtin()
+pub struct i64();
+
+@builtin()
+pub struct u64();

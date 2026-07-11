@@ -74,6 +74,106 @@ impl Generator {
         Ok(())
     }
 
+    pub(in crate::bytecode::codegen) fn generate_bitwise_protocol_call(
+        &mut self,
+        operand_ty: &Type,
+        operator: &crate::lexer::TokenType,
+        line: usize,
+        col: usize,
+    ) -> SaResult<Type> {
+        let (proto_name, method_name) = match operator {
+            crate::lexer::TokenType::Ampersand => ("BitAnd", "bitand"),
+            crate::lexer::TokenType::Pipe => ("BitOr", "bitor"),
+            crate::lexer::TokenType::Caret => ("BitXor", "bitxor"),
+            _ => unreachable!(),
+        };
+        let type_id = match operand_ty {
+            Type::Struct(id) | Type::Enum(id) => *id,
+            _ => unreachable!(),
+        };
+        let qualified_proto_name = format!("builtin.{}", proto_name);
+        let proto_id = match self
+            .symbol_table
+            .find_symbol_by_qualified_name(&qualified_proto_name)
+            .map(|symbol| symbol.kind.clone())
+        {
+            Some(SymbolKind::Type(id))
+                if matches!(self.symbol_table.get_type(id), TypeDefinition::Proto(_)) =>
+            {
+                id
+            }
+            _ => {
+                return Err(SemanticError::Other(format!(
+                    "Builtin operator protocol '{}' is unavailable",
+                    proto_name
+                )));
+            }
+        };
+        let conforms = match self.symbol_table.get_type(type_id) {
+            TypeDefinition::Struct(definition) => definition.conforming_to.contains(&proto_id),
+            TypeDefinition::Enum(definition) => definition.conforming_to.contains(&proto_id),
+            TypeDefinition::Proto(_) => false,
+        };
+        if !conforms {
+            return Err(SemanticError::Other(format!(
+                "Type '{}' does not conform to '{}' for bitwise operator at line {} column {}",
+                operand_ty.to_string(),
+                proto_name,
+                line,
+                col
+            )));
+        }
+
+        let field = Identifier {
+            name: method_name.into(),
+            line,
+            col,
+        };
+        if let Some(type_symbol_id) = self.symbol_table.find_symbol_for_type(type_id)
+            && let Ok((method_symbol_id, function_def)) =
+                self.resolve_method(type_symbol_id, &field)
+        {
+            let expected_params = [
+                Type::Reference(Box::new(operand_ty.clone())),
+                operand_ty.clone(),
+            ];
+            if function_def.params != expected_params || function_def.return_type != *operand_ty {
+                return Err(SemanticError::Other(format!(
+                    "Method '{}.{}' must have signature fn(ref self, rhs: Self) -> Self",
+                    operand_ty.to_string(),
+                    method_name
+                )));
+            }
+            self.builder.call(method_symbol_id);
+            return Ok(operand_ty.clone());
+        }
+
+        let (module_path, type_name, function_def, mapped_return_type) =
+            self.resolve_external_method(type_id, &field)?;
+        let imported_module = self.imported_modules.get(&module_path).unwrap().clone();
+        let mut type_map = std::collections::HashMap::new();
+        let mapped_params = function_def
+            .params
+            .iter()
+            .map(|param| self.map_type_from_module(&imported_module, param, &mut type_map))
+            .collect::<SaResult<Vec<_>>>()?;
+        let expected_params = [
+            Type::Reference(Box::new(operand_ty.clone())),
+            operand_ty.clone(),
+        ];
+        if mapped_params != expected_params || mapped_return_type != *operand_ty {
+            return Err(SemanticError::Other(format!(
+                "Method '{}.{}' must have signature fn(ref self, rhs: Self) -> Self",
+                type_name, method_name
+            )));
+        }
+        let module_path_idx = self.add_string_constant(&module_path);
+        let qualified_method_name = format!("{}.{}", type_name, method_name);
+        let method_name_idx = self.add_string_constant(&qualified_method_name);
+        self.builder.call_external(module_path_idx, method_name_idx);
+        Ok(operand_ty.clone())
+    }
+
     /// Main entry point for generating function calls.
     /// Dispatches to specialized handlers based on the callee expression type.
     pub(crate) fn generate_function_call(&mut self, call: FunctionCall) -> SaResult<Type> {
@@ -623,6 +723,13 @@ impl Generator {
         let function_def = self.symbol_table.get_function(func_id).clone();
         let ret_type = function_def.return_type.clone();
 
+        if function_def.is_associated_value {
+            return Err(SemanticError::Other(format!(
+                "Associated value '{}.{}' is accessed without parentheses",
+                ident.name, field.name
+            )));
+        }
+
         if Self::method_has_self_receiver(&function_def) {
             return Err(SemanticError::Other(format!(
                 "Instance method '{}.{}' cannot be called as a static method",
@@ -643,6 +750,52 @@ impl Generator {
         self.builder.call(method_symbol_id);
 
         Ok(ret_type)
+    }
+
+    pub(in crate::bytecode::codegen) fn generate_associated_value_access(
+        &mut self,
+        type_id: TypeId,
+        field: &Identifier,
+    ) -> SaResult<Type> {
+        if let Some(type_symbol_id) = self.symbol_table.find_symbol_for_type(type_id)
+            && let Ok((method_symbol_id, function_def)) = self.resolve_method(type_symbol_id, field)
+        {
+            if !function_def.is_associated_value {
+                return Err(SemanticError::Other(format!(
+                    "Static method '{}' must be called with parentheses",
+                    field.name
+                )));
+            }
+            if !function_def.params.is_empty() {
+                return Err(SemanticError::Other(format!(
+                    "Associated value '{}' must not have parameters",
+                    field.name
+                )));
+            }
+            self.builder.call(method_symbol_id);
+            return Ok(function_def.return_type);
+        }
+
+        let (module_path, type_name, function_def, mapped_return_type) =
+            self.resolve_external_method(type_id, field)?;
+        if !function_def.is_associated_value {
+            return Err(SemanticError::Other(format!(
+                "Static method '{}.{}' must be called with parentheses",
+                type_name, field.name
+            )));
+        }
+        if !function_def.params.is_empty() {
+            return Err(SemanticError::Other(format!(
+                "Associated value '{}.{}' must not have parameters",
+                type_name, field.name
+            )));
+        }
+
+        let module_path_idx = self.add_string_constant(&module_path);
+        let qualified_method_name = format!("{}.{}", type_name, field.name);
+        let method_name_idx = self.add_string_constant(&qualified_method_name);
+        self.builder.call_external(module_path_idx, method_name_idx);
+        Ok(mapped_return_type)
     }
 
     /// Generates an instance method call like `obj.method(...)`
@@ -718,10 +871,17 @@ impl Generator {
         arguments: CallArgs,
     ) -> SaResult<Option<Type>> {
         // Extract (base proto id, optional type args) from the receiver type.
-        // Accepts ref<P> / box<P> for plain protos, ref<P<...>> / box<P<...>>
-        // for generic protos.
+        // Accepts ref<P> / box<P> / handle<P> for plain protos, ref<P<...>> /
+        // box<P<...>> / handle<P<...>> for generic protos. `handle<P>` reuses
+        // the box/ref proto-dispatch pathway: at runtime a persistent foreign
+        // handle is the same `Data::ProtoBoxRef` representation as `box<F>`
+        // (see `Context::alloc_foreign_handle`), so `CallProtoMethod` dispatch
+        // works unchanged.
         let (proto_id, proto_args): (Option<u32>, Vec<Type>) = match object_ty {
-            Type::BoxType(inner) | Type::Reference(inner) | Type::RefMut(inner) => match inner.as_ref() {
+            Type::BoxType(inner)
+            | Type::Reference(inner)
+            | Type::RefMut(inner)
+            | Type::HandleType(inner) => match inner.as_ref() {
                 Type::Proto(id) => (Some(*id), Vec::new()),
                 Type::ProtoGeneric { base, args } => (Some(*base), args.clone()),
                 _ => (None, Vec::new()),
@@ -830,27 +990,31 @@ impl Generator {
         // Receiver-kind compatibility check. The proto method's first param
         // wraps `Type::Proto(proto_id)` (or a substituted form that still
         // references the base proto via Self). Compare base proto ids.
-        let object_inner_is_self = |inner: &Type| -> bool {
-            matches!(inner, Type::Proto(pid) if *pid == proto_id)
-                || matches!(inner, Type::ProtoGeneric { base, .. } if *base == proto_id)
+        let receiver_inner_accepts_object = |inner: &Type| -> bool {
+            match inner {
+                Type::Proto(receiver_proto) => self.proto_is_subtype(proto_id, *receiver_proto),
+                Type::ProtoGeneric { base, .. } => self.proto_is_subtype(proto_id, *base),
+                _ => false,
+            }
         };
         if let Some(receiver_ty) = method_params.first() {
-            let object_is_box =
-                matches!(object_ty, Type::BoxType(inner) if object_inner_is_self(inner));
-            let object_is_ref =
-                matches!(object_ty, Type::Reference(inner) if object_inner_is_self(inner));
-            let object_is_refmut =
-                matches!(object_ty, Type::RefMut(inner) if object_inner_is_self(inner));
+            let object_is_box = matches!(object_ty, Type::BoxType(_));
+            let object_is_ref = matches!(object_ty, Type::Reference(_));
+            let object_is_refmut = matches!(object_ty, Type::RefMut(_));
+            // `handle<F>` is a persistent, non-owning, read-only identity
+            // (never mutable, never `box`-owning), so it auto-borrows into
+            // `ref self` methods only — the same as a plain `ref<F>` caller.
+            let object_is_handle = matches!(object_ty, Type::HandleType(_));
             let allowed = match receiver_ty {
-                // `ref self` (read): box / ref / refmut callers all auto-borrow.
-                Type::Reference(inner) if object_inner_is_self(inner) => {
-                    object_is_box || object_is_ref || object_is_refmut
+                // `ref self` (read): box / ref / refmut / handle callers all auto-borrow.
+                Type::Reference(inner) if receiver_inner_accepts_object(inner) => {
+                    object_is_box || object_is_ref || object_is_refmut || object_is_handle
                 }
                 // `refmut self` (write): box / refmut callers only — not a read-only `ref`.
-                Type::RefMut(inner) if object_inner_is_self(inner) => {
+                Type::RefMut(inner) if receiver_inner_accepts_object(inner) => {
                     object_is_box || object_is_refmut
                 }
-                Type::BoxType(inner) if object_inner_is_self(inner) => object_is_box,
+                Type::BoxType(inner) if receiver_inner_accepts_object(inner) => object_is_box,
                 _ => true,
             };
             if !allowed {
@@ -1073,10 +1237,12 @@ impl Generator {
     ) -> SaResult<Type> {
         // Extract the type_id for source_module lookup (works for both struct and enum)
         let type_id_opt = match object_ty {
-            Type::Reference(inner) | Type::RefMut(inner) | Type::BoxType(inner) => match inner.as_ref() {
-                Type::Struct(id) | Type::Enum(id) => Some(*id),
-                _ => None,
-            },
+            Type::Reference(inner) | Type::RefMut(inner) | Type::BoxType(inner) => {
+                match inner.as_ref() {
+                    Type::Struct(id) | Type::Enum(id) => Some(*id),
+                    _ => None,
+                }
+            }
             Type::Struct(id) | Type::Enum(id) => Some(*id),
             _ => None,
         };
@@ -1282,9 +1448,13 @@ impl Generator {
                 self.builder.call_closure(params.len() as u32);
                 Ok(Some(return_type))
             }
-            // Single-method proto field (e.g. `box<IAction>`): load it and
-            // dispatch the proto's sole method.
-            Type::BoxType(inner) | Type::Reference(inner) | Type::RefMut(inner) => {
+            // Single-method proto field (e.g. `box<IAction>` or a persistent
+            // `handle<IAction>`): load it and dispatch the proto's sole
+            // method.
+            Type::BoxType(inner)
+            | Type::Reference(inner)
+            | Type::RefMut(inner)
+            | Type::HandleType(inner) => {
                 let Type::Proto(proto_id) = inner.as_ref() else {
                     return Ok(None);
                 };
@@ -1760,6 +1930,13 @@ impl Generator {
     ) -> SaResult<Type> {
         let (source_module_path, type_name, function_def, mapped_return_type) =
             self.resolve_external_method(type_id, field)?;
+
+        if function_def.is_associated_value {
+            return Err(SemanticError::Other(format!(
+                "Associated value '{}.{}' is accessed without parentheses",
+                type_name, field.name
+            )));
+        }
 
         if Self::method_has_self_receiver(&function_def) {
             return Err(SemanticError::Other(format!(

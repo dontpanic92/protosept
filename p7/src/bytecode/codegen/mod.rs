@@ -77,6 +77,7 @@ enum PendingType {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
+        bases: Vec<crate::ast::Type>,
         type_parameters: Vec<TypeParameter>,
         methods: Vec<ProtoMethod>,
     },
@@ -346,6 +347,7 @@ impl Generator {
                     is_pub,
                     name,
                     attributes,
+                    bases,
                     type_parameters,
                     methods,
                 } => {
@@ -360,6 +362,7 @@ impl Generator {
                         is_pub,
                         name,
                         attributes,
+                        bases,
                         type_parameters,
                         methods,
                     });
@@ -465,6 +468,7 @@ impl Generator {
                 is_pub,
                 name,
                 attributes,
+                bases,
                 type_parameters,
                 methods,
             } = pending
@@ -474,11 +478,21 @@ impl Generator {
                     *is_pub,
                     name.clone(),
                     std::mem::take(attributes),
+                    std::mem::take(bases),
                     std::mem::take(type_parameters),
                     std::mem::take(methods),
                 )?;
             }
         }
+
+        let local_protos = pending_type_decls
+            .iter()
+            .filter_map(|pending| match pending {
+                PendingType::Proto { type_id, name, .. } => Some((*type_id, name.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        self.finalize_proto_declarations(&local_protos)?;
 
         // Pass 1b-method-sigs: every type's shape is now visible, so method
         // signatures can refer to any same-module type, and qualified
@@ -826,6 +840,7 @@ impl Generator {
             Type::Reference(_) | Type::RefMut(_) => true,
             Type::Array(inner) => self.type_contains_ref(inner),
             Type::BoxType(inner) => self.type_contains_ref(inner),
+            Type::HandleType(inner) => self.type_contains_ref(inner),
             Type::Nullable(inner) => self.type_contains_ref(inner),
             Type::Tuple(elements) => elements.iter().any(|t| self.type_contains_ref(t)),
             Type::Function {
@@ -1163,6 +1178,15 @@ impl Generator {
         statements: Vec<Statement>,
         variables: Vec<Variable>,
     ) -> SaResult<Type> {
+        self.generate_block_with_expected(statements, variables, None)
+    }
+
+    fn generate_block_with_expected(
+        &mut self,
+        statements: Vec<Statement>,
+        variables: Vec<Variable>,
+        expected_tail: Option<&Type>,
+    ) -> SaResult<Type> {
         self.local_scope.as_mut().unwrap().push_scope();
         for var in variables {
             self.local_scope
@@ -1175,8 +1199,18 @@ impl Generator {
         let mut ty = Type::Primitive(PrimitiveType::Unit);
 
         // Normal block handling
-        for statement in statements {
-            ty = self.generate_statement(statement)?;
+        let statement_count = statements.len();
+        for (index, statement) in statements.into_iter().enumerate() {
+            ty = if index + 1 == statement_count {
+                match statement {
+                    Statement::Expression(expression) => {
+                        self.generate_expression_with_expected_type(expression, expected_tail)?
+                    }
+                    other => self.generate_statement(other)?,
+                }
+            } else {
+                self.generate_statement(statement)?
+            };
         }
 
         self.local_scope.as_mut().unwrap().pop_scope();
@@ -1281,10 +1315,15 @@ impl Generator {
         };
 
         let intrinsic_name = Self::validate_intrinsic_name(&declaration.attributes)?;
+        let is_associated_value = declaration
+            .attributes
+            .iter()
+            .any(|attribute| attribute.name.name == "$associated_value");
 
         let ty = Function {
             qualified_name: qualified_name.clone(),
             is_pub: declaration.is_pub,
+            is_associated_value,
             params: params.iter().map(|var| var.ty.clone()).collect(),
             param_names: params.iter().map(|var| var.name.clone()).collect(),
             param_defaults: param_defaults.clone(),
@@ -1413,7 +1452,8 @@ impl Generator {
             Ok(return_type.clone())
         } else {
             self.enclosing_return_types.push(return_type.clone());
-            let result = self.generate_block(declaration.body, vec![]);
+            let result =
+                self.generate_block_with_expected(declaration.body, vec![], Some(&return_type));
             self.enclosing_return_types.pop();
             result
         };
@@ -1545,10 +1585,15 @@ impl Generator {
         };
 
         let intrinsic_name = Self::validate_intrinsic_name(&declaration.attributes)?;
+        let is_associated_value = declaration
+            .attributes
+            .iter()
+            .any(|attribute| attribute.name.name == "$associated_value");
 
         let ty = Function {
             qualified_name: qualified_name.clone(),
             is_pub: declaration.is_pub,
+            is_associated_value,
             params: params.iter().map(|var| var.ty.clone()).collect(),
             param_names: params.iter().map(|var| var.name.clone()).collect(),
             param_defaults: param_defaults.clone(),
@@ -1620,7 +1665,8 @@ impl Generator {
                 Ok(return_type.clone())
             } else {
                 self.enclosing_return_types.push(return_type.clone());
-                let result = self.generate_block(declaration.body, vec![]);
+                let result =
+                    self.generate_block_with_expected(declaration.body, vec![], Some(&return_type));
                 self.enclosing_return_types.pop();
                 result
             };

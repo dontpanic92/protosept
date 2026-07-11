@@ -74,9 +74,12 @@ impl Generator {
                 is_pub,
                 name,
                 attributes,
+                bases,
                 type_parameters,
                 methods,
-            } => self.generate_proto_decl(is_pub, name, attributes, type_parameters, methods),
+            } => {
+                self.generate_proto_decl(is_pub, name, attributes, bases, type_parameters, methods)
+            }
             Statement::Return { expression, pos } => {
                 self.generate_return(expression.map(|expr| *expr), pos)
             }
@@ -721,7 +724,16 @@ impl Generator {
         methods: &[StructMethod],
     ) -> SaResult<()> {
         self.with_type_method_scope(type_id, type_parameters, |this| {
+            let mut names = std::collections::HashSet::new();
             for method in methods {
+                if !names.insert(method.function.name.name.clone()) {
+                    return Err(SemanticError::Other(format!(
+                        "Duplicate enum member '{}' at line {} column {}",
+                        method.function.name.name,
+                        method.function.name.line,
+                        method.function.name.col
+                    )));
+                }
                 this.register_function_signature(&method.function)?;
             }
             Ok(())
@@ -1024,7 +1036,16 @@ impl Generator {
         methods: &[StructMethod],
     ) -> SaResult<()> {
         self.with_type_method_scope(type_id, type_parameters, |this| {
+            let mut names = std::collections::HashSet::new();
             for method in methods {
+                if !names.insert(method.function.name.name.clone()) {
+                    return Err(SemanticError::Other(format!(
+                        "Duplicate struct member '{}' at line {} column {}",
+                        method.function.name.name,
+                        method.function.name.line,
+                        method.function.name.col
+                    )));
+                }
                 this.register_function_signature(&method.function)?;
             }
             Ok(())
@@ -1115,6 +1136,7 @@ impl Generator {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
+        bases: Vec<crate::ast::Type>,
         type_parameters: Vec<TypeParameter>,
         methods: Vec<ProtoMethod>,
     ) -> SaResult<Type> {
@@ -1124,7 +1146,16 @@ impl Generator {
             attributes.clone(),
             type_parameters.clone(),
         )?;
-        self.resolve_proto_decl(type_id, is_pub, name, attributes, type_parameters, methods)?;
+        self.resolve_proto_decl(
+            type_id,
+            is_pub,
+            name.clone(),
+            attributes,
+            bases,
+            type_parameters,
+            methods,
+        )?;
+        self.finalize_proto_declarations(&[(type_id, name)])?;
         Ok(Type::Primitive(PrimitiveType::Unit))
     }
 
@@ -1147,6 +1178,7 @@ impl Generator {
         let ty = Proto {
             qualified_name: qualified_name.clone(),
             is_pub,
+            bases: vec![],
             methods: vec![],
             type_parameters: type_param_names,
             type_param_bounds,
@@ -1176,6 +1208,7 @@ impl Generator {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
+        bases: Vec<crate::ast::Type>,
         type_parameters: Vec<TypeParameter>,
         methods: Vec<ProtoMethod>,
     ) -> SaResult<Type> {
@@ -1248,9 +1281,11 @@ impl Generator {
         }
 
         let foreign_attrs = Self::extract_foreign_attrs(&attributes)?;
+        let base_ids = self.resolve_proto_bases(&name, &type_parameters, &bases)?;
         let ty = Proto {
             qualified_name: qualified_name.clone(),
             is_pub,
+            bases: base_ids,
             methods: methods_with_types.clone(),
             type_parameters: type_param_names,
             type_param_bounds,
@@ -1265,25 +1300,221 @@ impl Generator {
 
         self.symbol_table.pop_symbol();
 
-        if let Some(foreign) = foreign_attrs {
-            if !type_parameters.is_empty() {
-                return Err(SemanticError::Other(format!(
-                    "@foreign proto '{}' may not have type parameters",
-                    qualified_name
-                )));
-            }
-            self.synthesize_foreign_carrier(
-                &name,
-                &qualified_name,
-                type_id,
-                foreign,
-                &methods_with_types,
-            )?;
+        if foreign_attrs.is_some() && !type_parameters.is_empty() {
+            return Err(SemanticError::Other(format!(
+                "@foreign proto '{}' may not have type parameters",
+                qualified_name
+            )));
         }
 
         let _ = is_pub;
 
         Ok(Type::Primitive(PrimitiveType::Unit))
+    }
+
+    fn resolve_proto_bases(
+        &mut self,
+        proto_name: &Identifier,
+        type_parameters: &[TypeParameter],
+        bases: &[crate::ast::Type],
+    ) -> SaResult<Vec<TypeId>> {
+        if !bases.is_empty() && !type_parameters.is_empty() {
+            return Err(SemanticError::Other(format!(
+                "proto inheritance is currently supported only for non-generic protos; '{}' declares type parameters",
+                proto_name.name
+            )));
+        }
+
+        let mut resolved = Vec::with_capacity(bases.len());
+        for base in bases {
+            let identifier = match base {
+                crate::ast::Type::Identifier(identifier) => identifier,
+                crate::ast::Type::Generic { base, .. } => {
+                    return Err(SemanticError::Other(format!(
+                        "generic proto bases are not supported; '{}' inherits from '{}' at line {} column {}",
+                        proto_name.name, base.name, base.line, base.col
+                    )));
+                }
+                other => {
+                    return Err(SemanticError::Other(format!(
+                        "proto base must be a proto name, found '{}' in declaration of '{}'",
+                        other.get_name(),
+                        proto_name.name
+                    )));
+                }
+            };
+            let base_id = self.resolve_proto_identifier(identifier)?;
+            if resolved.contains(&base_id) {
+                return Err(SemanticError::Other(format!(
+                    "proto '{}' lists duplicate base '{}'",
+                    proto_name.name, identifier.name
+                )));
+            }
+            resolved.push(base_id);
+        }
+        Ok(resolved)
+    }
+
+    pub(super) fn finalize_proto_declarations(
+        &mut self,
+        protos: &[(TypeId, Identifier)],
+    ) -> SaResult<()> {
+        let mut visiting = std::collections::HashSet::new();
+        let mut done = std::collections::HashSet::new();
+        let mut stack = Vec::new();
+        for &(type_id, _) in protos {
+            self.finalize_proto_inheritance(type_id, &mut visiting, &mut done, &mut stack)?;
+        }
+
+        for (type_id, name) in protos {
+            let proto = match self.symbol_table.get_type(*type_id) {
+                TypeDefinition::Proto(proto) => proto.clone(),
+                _ => continue,
+            };
+            let Some(foreign) = Self::extract_foreign_attrs(&proto.attributes)? else {
+                continue;
+            };
+            self.synthesize_foreign_carrier(
+                name,
+                &proto.qualified_name,
+                *type_id,
+                foreign,
+                &proto.methods,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn finalize_proto_inheritance(
+        &mut self,
+        type_id: TypeId,
+        visiting: &mut std::collections::HashSet<TypeId>,
+        done: &mut std::collections::HashSet<TypeId>,
+        stack: &mut Vec<TypeId>,
+    ) -> SaResult<()> {
+        if done.contains(&type_id) {
+            return Ok(());
+        }
+        if !visiting.insert(type_id) {
+            let start = stack.iter().position(|id| *id == type_id).unwrap_or(0);
+            let mut names = stack[start..]
+                .iter()
+                .map(|id| self.proto_name(*id))
+                .collect::<Vec<_>>();
+            names.push(self.proto_name(type_id));
+            return Err(SemanticError::Other(format!(
+                "proto inheritance cycle detected: {}",
+                names.join(" -> ")
+            )));
+        }
+        stack.push(type_id);
+
+        let proto = match self.symbol_table.get_type(type_id) {
+            TypeDefinition::Proto(proto) => proto.clone(),
+            _ => {
+                return Err(SemanticError::Other(format!(
+                    "type {} in proto inheritance graph is not a proto",
+                    type_id
+                )));
+            }
+        };
+
+        if !proto.bases.is_empty() && !proto.type_parameters.is_empty() {
+            return Err(SemanticError::Other(format!(
+                "proto inheritance is currently supported only for non-generic protos; '{}' is generic",
+                proto.qualified_name
+            )));
+        }
+
+        let derived_is_foreign = proto.foreign_type_tag.is_some();
+        let mut flattened = Vec::new();
+        let mut origins = std::collections::HashMap::<InternedString, String>::new();
+
+        for base_id in &proto.bases {
+            self.finalize_proto_inheritance(*base_id, visiting, done, stack)?;
+            let base = match self.symbol_table.get_type(*base_id) {
+                TypeDefinition::Proto(base) => base.clone(),
+                _ => {
+                    return Err(SemanticError::Other(format!(
+                        "base of proto '{}' is not a proto",
+                        proto.qualified_name
+                    )));
+                }
+            };
+            if !base.type_parameters.is_empty() {
+                return Err(SemanticError::Other(format!(
+                    "proto '{}' cannot inherit from generic proto '{}'",
+                    proto.qualified_name, base.qualified_name
+                )));
+            }
+            if derived_is_foreign != base.foreign_type_tag.is_some() {
+                return Err(SemanticError::Other(format!(
+                    "foreign and non-foreign protos cannot be mixed in inheritance: '{}' -> '{}'",
+                    proto.qualified_name, base.qualified_name
+                )));
+            }
+            for method in &base.methods {
+                Self::merge_inherited_proto_method(
+                    &proto.qualified_name,
+                    &base.qualified_name,
+                    method,
+                    &mut flattened,
+                    &mut origins,
+                )?;
+            }
+        }
+
+        for method in &proto.methods {
+            Self::merge_inherited_proto_method(
+                &proto.qualified_name,
+                &proto.qualified_name,
+                method,
+                &mut flattened,
+                &mut origins,
+            )?;
+        }
+
+        let mut finalized = proto;
+        finalized.methods = flattened;
+        self.symbol_table
+            .update_type(type_id, TypeDefinition::Proto(finalized));
+
+        stack.pop();
+        visiting.remove(&type_id);
+        done.insert(type_id);
+        Ok(())
+    }
+
+    fn merge_inherited_proto_method(
+        derived_name: &str,
+        origin_name: &str,
+        method: &(InternedString, Vec<Type>, Option<Type>),
+        methods: &mut Vec<(InternedString, Vec<Type>, Option<Type>)>,
+        origins: &mut std::collections::HashMap<InternedString, String>,
+    ) -> SaResult<()> {
+        if let Some(existing) = methods.iter().find(|existing| existing.0 == method.0) {
+            if existing.1 == method.1 && existing.2 == method.2 {
+                return Ok(());
+            }
+            let previous = origins
+                .get(&method.0)
+                .map(String::as_str)
+                .unwrap_or("<unknown>");
+            return Err(SemanticError::Other(format!(
+                "proto '{}' inherits conflicting signatures for method '{}' from '{}' and '{}'",
+                derived_name, method.0, previous, origin_name
+            )));
+        }
+        origins.insert(method.0.clone(), origin_name.to_string());
+        methods.push(method.clone());
+        Ok(())
+    }
+
+    fn proto_name(&self, type_id: TypeId) -> String {
+        match self.symbol_table.types.get(type_id as usize) {
+            Some(TypeDefinition::Proto(proto)) => proto.qualified_name.to_string(),
+            _ => format!("type({type_id})"),
+        }
     }
 
     /// Synthesise the hidden `__ForeignCarrier_<F>` struct for an `@foreign`
@@ -1814,6 +2045,7 @@ impl Generator {
             TypeDefinition::Proto(p) => TypeDefinition::Proto(Proto {
                 qualified_name: p.qualified_name.clone(),
                 is_pub: p.is_pub,
+                bases: Vec::new(),
                 methods: Vec::new(),
                 type_parameters: p.type_parameters.clone(),
                 type_param_bounds: p.type_param_bounds.clone(),
@@ -1912,6 +2144,11 @@ impl Generator {
                 })
             }
             TypeDefinition::Proto(p) => {
+                let bases = p
+                    .bases
+                    .iter()
+                    .map(|base_id| self.import_type_from_module(module, *base_id, type_map))
+                    .collect::<SaResult<Vec<_>>>()?;
                 let methods = p
                     .methods
                     .iter()
@@ -1931,6 +2168,7 @@ impl Generator {
                 TypeDefinition::Proto(Proto {
                     qualified_name: p.qualified_name.clone(),
                     is_pub: p.is_pub,
+                    bases,
                     methods,
                     type_parameters: p.type_parameters.clone(),
                     type_param_bounds: p.type_param_bounds.clone(),
@@ -2106,6 +2344,9 @@ impl Generator {
             Type::BoxType(inner) => Type::BoxType(Box::new(
                 self.map_type_from_module(module, inner, type_map)?,
             )),
+            Type::HandleType(inner) => Type::HandleType(Box::new(
+                self.map_type_from_module(module, inner, type_map)?,
+            )),
             Type::Nullable(inner) => Type::Nullable(Box::new(
                 self.map_type_from_module(module, inner, type_map)?,
             )),
@@ -2167,16 +2408,28 @@ fn map_host_return_ty(
     fn map_ty(ty: &Type, symbol_table: &crate::semantic::SymbolTable) -> H {
         match ty {
             Type::Primitive(PrimitiveType::Unit) => H::Void,
-            Type::Primitive(PrimitiveType::Int) => H::Int,
+            Type::Primitive(
+                PrimitiveType::Int
+                | PrimitiveType::I8
+                | PrimitiveType::U8
+                | PrimitiveType::I16
+                | PrimitiveType::U16
+                | PrimitiveType::I32
+                | PrimitiveType::U32
+                | PrimitiveType::I64
+                | PrimitiveType::U64,
+            ) => H::Int,
             Type::Primitive(PrimitiveType::Float) => H::Float,
             Type::Primitive(PrimitiveType::Bool) => H::Bool,
             Type::Primitive(PrimitiveType::String) => H::String,
             Type::Nullable(inner) => H::Optional(Box::new(map_ty(inner, symbol_table))),
             Type::Array(inner) => H::Array(Box::new(map_ty(inner, symbol_table))),
-            // `box<T>` and `ref<T>` are handle-copy wrappers (see
-            // `Type::is_copy_treated`); on the host ABI they are
+            // `box<T>`, `ref<T>` and `handle<T>` are handle-copy wrappers
+            // (see `Type::is_copy_treated`); on the host ABI they are
             // indistinguishable from `T` itself, so unwrap and recurse.
-            Type::BoxType(inner) | Type::Reference(inner) => map_ty(inner, symbol_table),
+            Type::BoxType(inner) | Type::Reference(inner) | Type::HandleType(inner) => {
+                map_ty(inner, symbol_table)
+            }
             Type::Proto(type_id) => {
                 if let Some(TypeDefinition::Proto(proto)) =
                     symbol_table.types.get(*type_id as usize)

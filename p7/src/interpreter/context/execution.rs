@@ -631,6 +631,62 @@ impl Context {
                         }
                     }
                 }
+                Instruction::CheckIntRange(min, max) => {
+                    let value = self
+                        .stack_frame()?
+                        .stack
+                        .last()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    match value {
+                        Data::Int(value) if (min..=max).contains(value) => {}
+                        Data::Int(value) => {
+                            return Err(RuntimeError::Other(format!(
+                                "integer value {} is outside range {}..={}",
+                                value, min, max
+                            )));
+                        }
+                        other => {
+                            return Err(RuntimeError::Other(format!(
+                                "integer range check expected Int, got {:?}",
+                                other
+                            )));
+                        }
+                    }
+                }
+                Instruction::ForeignDowncast(type_tag_id) => {
+                    let module_idx = self.stack_frame()?.module_idx;
+                    let expected_tag = self.modules[module_idx]
+                        .string_constants
+                        .get(type_tag_id as usize)
+                        .cloned()
+                        .ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "Invalid foreign downcast type_tag constant {}",
+                                type_tag_id
+                            ))
+                        })?;
+                    let value = self
+                        .stack_frame()?
+                        .stack
+                        .last()
+                        .cloned()
+                        .ok_or(RuntimeError::StackUnderflow)?;
+                    let dynamic_tag = self
+                        .foreign_dynamic_tag(&value)
+                        .map(str::to_string)
+                        .ok_or_else(|| {
+                            RuntimeError::Other(format!(
+                                "foreign downcast to '{}' expected a foreign handle",
+                                expected_tag
+                            ))
+                        })?;
+                    if !self.foreign_tag_is_a(&dynamic_tag, &expected_tag) {
+                        return Err(RuntimeError::Other(format!(
+                            "foreign downcast failed: dynamic type_tag '{}' is not a '{}'",
+                            dynamic_tag, expected_tag
+                        )));
+                    }
+                }
                 Instruction::Neg => {
                     if let Some(data) = self.stack_frame_mut()?.stack.pop() {
                         match data {
@@ -1308,9 +1364,11 @@ impl Context {
                         captures.push(val);
                     }
                     captures.reverse();
-                    self.stack_frame_mut()?
-                        .stack
-                        .push(Data::closure(func_addr, closure_module_idx, captures));
+                    self.stack_frame_mut()?.stack.push(Data::closure(
+                        func_addr,
+                        closure_module_idx,
+                        captures,
+                    ));
                 }
 
                 Instruction::CallClosure(arg_count) => {

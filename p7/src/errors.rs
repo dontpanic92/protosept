@@ -254,6 +254,43 @@ impl fmt::Display for SemanticError {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeError {
+    pub operation: String,
+    pub class: String,
+    pub message: String,
+}
+
+impl NativeError {
+    pub fn new(
+        operation: impl Into<String>,
+        class: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            operation: operation.into(),
+            class: class.into(),
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for NativeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Native error")?;
+        if !self.operation.is_empty() {
+            write!(f, " during '{}'", self.operation)?;
+        }
+        if !self.class.is_empty() {
+            write!(f, " ({})", self.class)?;
+        }
+        if !self.message.is_empty() {
+            write!(f, ": {}", self.message)?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub enum RuntimeError {
     NoStackFrame,
@@ -275,6 +312,7 @@ pub enum RuntimeError {
         type_tag: String,
         handle: i64,
     },
+    Native(NativeError),
     Other(String),
 }
 
@@ -305,6 +343,7 @@ impl fmt::Display for RuntimeError {
                 "Stale foreign handle: '{}' object {} has been invalidated",
                 type_tag, handle
             ),
+            RuntimeError::Native(error) => write!(f, "{error}"),
             RuntimeError::Other(msg) => write!(f, "Runtime error: {}", msg),
         }
     }

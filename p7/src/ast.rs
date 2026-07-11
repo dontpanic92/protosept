@@ -177,7 +177,7 @@ pub enum InterpolatedStringPart {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
     Identifier(Identifier),
-    IntegerLiteral(i64),
+    IntegerLiteral(i128),
     FloatLiteral(f64),
     StringLiteral(InternedString),
     InterpolatedString {
@@ -412,6 +412,7 @@ pub enum Statement {
         is_pub: bool,
         name: Identifier,
         attributes: Vec<Attribute>,
+        bases: Vec<crate::ast::Type>,
         type_parameters: Vec<TypeParameter>,
         methods: Vec<ProtoMethod>,
     },

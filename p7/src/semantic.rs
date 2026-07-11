@@ -161,6 +161,8 @@ pub struct Function {
     pub qualified_name: InternedString,
     #[serde(default)]
     pub is_pub: bool,
+    #[serde(default)]
+    pub is_associated_value: bool,
     pub params: Vec<Type>,
     pub param_names: Vec<InternedString>,
     #[serde(skip)]
@@ -255,6 +257,9 @@ pub struct Proto {
     pub qualified_name: InternedString,
     #[serde(default)]
     pub is_pub: bool,
+    /// Direct base protos declared by `proto[Base1, Base2] Derived`.
+    #[serde(default)]
+    pub bases: Vec<TypeId>,
     pub methods: Vec<(InternedString, Vec<Type>, Option<Type>)>, // (name, params, return_type)
     /// For generic protos: type parameter names (e.g. ["T"] for `proto Iterator<T>`).
     /// Empty for non-generic protos, preserving all existing behaviour.
@@ -294,11 +299,77 @@ pub struct Proto {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PrimitiveType {
     Int,
+    I8,
+    U8,
+    I16,
+    U16,
+    I32,
+    U32,
+    I64,
+    U64,
     Float,
     Bool,
     Char,
     String,
     Unit,
+}
+
+impl PrimitiveType {
+    pub fn is_fixed_integer(self) -> bool {
+        matches!(
+            self,
+            Self::I8
+                | Self::U8
+                | Self::I16
+                | Self::U16
+                | Self::I32
+                | Self::U32
+                | Self::I64
+                | Self::U64
+        )
+    }
+
+    pub fn is_integer(self) -> bool {
+        self == Self::Int || self.is_fixed_integer()
+    }
+
+    pub fn integer_bounds(self) -> Option<(i64, i64)> {
+        match self {
+            Self::Int | Self::I64 => Some((i64::MIN, i64::MAX)),
+            Self::I8 => Some((i8::MIN as i64, i8::MAX as i64)),
+            Self::U8 => Some((0, u8::MAX as i64)),
+            Self::I16 => Some((i16::MIN as i64, i16::MAX as i64)),
+            Self::U16 => Some((0, u16::MAX as i64)),
+            Self::I32 => Some((i32::MIN as i64, i32::MAX as i64)),
+            Self::U32 => Some((0, u32::MAX as i64)),
+            // u64 is intentionally capped at i64::MAX while Data::Int is the runtime carrier.
+            Self::U64 => Some((0, i64::MAX)),
+            _ => None,
+        }
+    }
+
+    pub fn is_unsigned_integer(self) -> bool {
+        matches!(self, Self::U8 | Self::U16 | Self::U32 | Self::U64)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Int => "int",
+            Self::I8 => "i8",
+            Self::U8 => "u8",
+            Self::I16 => "i16",
+            Self::U16 => "u16",
+            Self::I32 => "i32",
+            Self::U32 => "u32",
+            Self::I64 => "i64",
+            Self::U64 => "u64",
+            Self::Float => "float",
+            Self::Bool => "bool",
+            Self::Char => "char",
+            Self::String => "string",
+            Self::Unit => "unit",
+        }
+    }
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -308,6 +379,14 @@ pub enum Type {
     RefMut(Box<Type>),
     Array(Box<Type>),
     BoxType(Box<Type>),
+    /// Persistent, non-owning foreign handle (`handle<T>`). Distinct from
+    /// `BoxType` because it never owns the host object and must never run
+    /// a finalizer when collected — it only tracks the identity of a
+    /// host-owned value via `Data::Foreign::handle_generation`. Restricted
+    /// in practice to foreign proto types returned from/accepted by
+    /// `@intrinsic` native functions (see `p7/src/native_abi.rs`
+    /// `make_foreign_handle`/`invalidate_foreign_handle`).
+    HandleType(Box<Type>),
     Enum(TypeId),
     Struct(TypeId),
     Proto(TypeId),
@@ -359,13 +438,14 @@ impl Type {
     /// - Primitives (int, float, bool, char, string, unit) are copy-treated
     /// - ref<T> is copy-treated (view/handle copy)
     /// - box<T> is copy-treated (handle copy)
+    /// - handle<T> is copy-treated (persistent non-owning handle copy)
     /// - User-defined structs/enums are copy-treated ONLY if they conform to Copy proto
     pub fn is_copy_treated(&self, symbol_table: &SymbolTable) -> bool {
         match self {
             // All primitives are copy-treated by default
             Type::Primitive(_) => true,
-            // ref<T>, refmut<T> and box<T> are copy-treated (handle/view copy)
-            Type::Reference(_) | Type::RefMut(_) | Type::BoxType(_) => true,
+            // ref<T>, refmut<T>, box<T> and handle<T> are copy-treated (handle/view copy)
+            Type::Reference(_) | Type::RefMut(_) | Type::BoxType(_) | Type::HandleType(_) => true,
             // ?T is copy-treated iff T is copy-treated
             Type::Nullable(inner) => inner.is_copy_treated(symbol_table),
             // User-defined structs: check for Copy proto conformance
@@ -430,6 +510,7 @@ impl Clone for Type {
             Type::RefMut(r) => Type::RefMut(r.clone()),
             Type::Array(a) => Type::Array(a.clone()),
             Type::BoxType(b) => Type::BoxType(b.clone()),
+            Type::HandleType(h) => Type::HandleType(h.clone()),
             Type::Enum(e) => Type::Enum(*e),
             Type::Struct(s) => Type::Struct(*s),
             Type::Proto(p) => Type::Proto(*p),
@@ -459,6 +540,7 @@ impl PartialEq for Type {
             (Type::RefMut(a), Type::RefMut(b)) => *a == *b,
             (Type::Array(a), Type::Array(b)) => *a == *b,
             (Type::BoxType(a), Type::BoxType(b)) => *a == *b,
+            (Type::HandleType(a), Type::HandleType(b)) => *a == *b,
             (Type::Enum(a), Type::Enum(b)) => *a == *b,
             (Type::Struct(a), Type::Struct(b)) => *a == *b,
             (Type::Proto(a), Type::Proto(b)) => *a == *b,
@@ -495,6 +577,7 @@ impl std::hash::Hash for Type {
             Type::RefMut(r) => r.hash(state),
             Type::Array(a) => a.hash(state),
             Type::BoxType(b) => b.hash(state),
+            Type::HandleType(h) => h.hash(state),
             Type::Enum(e) => e.hash(state),
             Type::Struct(s) => s.hash(state),
             Type::Proto(p) => p.hash(state),
@@ -526,6 +609,14 @@ impl ToString for Type {
         match self {
             Type::Primitive(primitive_type) => match primitive_type {
                 PrimitiveType::Int => "int".to_string(),
+                PrimitiveType::I8 => "i8".to_string(),
+                PrimitiveType::U8 => "u8".to_string(),
+                PrimitiveType::I16 => "i16".to_string(),
+                PrimitiveType::U16 => "u16".to_string(),
+                PrimitiveType::I32 => "i32".to_string(),
+                PrimitiveType::U32 => "u32".to_string(),
+                PrimitiveType::I64 => "i64".to_string(),
+                PrimitiveType::U64 => "u64".to_string(),
                 PrimitiveType::Float => "float".to_string(),
                 PrimitiveType::Bool => "bool".to_string(),
                 PrimitiveType::Char => "char".to_string(),
@@ -536,6 +627,7 @@ impl ToString for Type {
             Type::RefMut(r) => format!("refmut<{}>", r.to_string()),
             Type::Array(a) => format!("[{}]", a.to_string()),
             Type::BoxType(b) => format!("box<{}>", b.to_string()),
+            Type::HandleType(h) => format!("handle<{}>", h.to_string()),
             Type::Enum(e) => format!("enum({})", e),
             Type::Struct(s) => format!("struct({})", s),
             Type::Proto(p) => format!("proto({})", p),
@@ -715,6 +807,20 @@ impl SymbolTable {
             "bool" => Some(Type::Primitive(PrimitiveType::Bool)),
             "string" => Some(Type::Primitive(PrimitiveType::String)),
             "unit" => Some(Type::Primitive(PrimitiveType::Unit)),
+            _ => None,
+        }
+    }
+
+    pub fn to_ffi_primitive_type(name: &str) -> Option<Type> {
+        match name {
+            "i8" => Some(Type::Primitive(PrimitiveType::I8)),
+            "u8" => Some(Type::Primitive(PrimitiveType::U8)),
+            "i16" => Some(Type::Primitive(PrimitiveType::I16)),
+            "u16" => Some(Type::Primitive(PrimitiveType::U16)),
+            "i32" => Some(Type::Primitive(PrimitiveType::I32)),
+            "u32" => Some(Type::Primitive(PrimitiveType::U32)),
+            "i64" => Some(Type::Primitive(PrimitiveType::I64)),
+            "u64" => Some(Type::Primitive(PrimitiveType::U64)),
             _ => None,
         }
     }

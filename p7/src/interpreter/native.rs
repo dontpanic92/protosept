@@ -7,6 +7,14 @@ use std::rc::Rc;
 pub enum NativeType {
     Any,
     Int,
+    I8,
+    U8,
+    I16,
+    U16,
+    I32,
+    U32,
+    I64,
+    U64,
     Float,
     Bool,
     String,
@@ -22,6 +30,20 @@ impl NativeType {
         match self {
             Self::Any => true,
             Self::Int => matches!(value, Data::Int(_)),
+            Self::I8 => {
+                matches!(value, Data::Int(v) if (i8::MIN as i64..=i8::MAX as i64).contains(v))
+            }
+            Self::U8 => matches!(value, Data::Int(v) if (0..=u8::MAX as i64).contains(v)),
+            Self::I16 => {
+                matches!(value, Data::Int(v) if (i16::MIN as i64..=i16::MAX as i64).contains(v))
+            }
+            Self::U16 => matches!(value, Data::Int(v) if (0..=u16::MAX as i64).contains(v)),
+            Self::I32 => {
+                matches!(value, Data::Int(v) if (i32::MIN as i64..=i32::MAX as i64).contains(v))
+            }
+            Self::U32 => matches!(value, Data::Int(v) if (0..=u32::MAX as i64).contains(v)),
+            Self::I64 => matches!(value, Data::Int(_)),
+            Self::U64 => matches!(value, Data::Int(v) if *v >= 0),
             Self::Float => matches!(value, Data::Float(_)),
             Self::Bool => matches!(value, Data::Int(0 | 1)),
             Self::String => matches!(value, Data::String(_)),

@@ -212,6 +212,10 @@ impl ByteCodeBuilder {
         self.add_instruction(Instruction::BoxDeref);
     }
 
+    pub fn foreign_downcast(&mut self, type_tag_string_id: u32) {
+        self.add_instruction(Instruction::ForeignDowncast(type_tag_string_id));
+    }
+
     /// Call a host function by name.
     /// The function name is a string constant at the given index.
     pub fn call_host_function(&mut self, string_index: u32) {
@@ -282,6 +286,10 @@ impl ByteCodeBuilder {
     /// Convert top-of-stack int value to float (spec §15.1.2, `as float`).
     pub fn int_to_float(&mut self) {
         self.add_instruction(Instruction::IntToFloat);
+    }
+
+    pub fn check_int_range(&mut self, min: i64, max: i64) {
+        self.add_instruction(Instruction::CheckIntRange(min, max));
     }
 
     pub fn get_bytecode(&self) -> Vec<u8> {

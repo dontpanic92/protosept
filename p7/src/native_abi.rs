@@ -1,4 +1,4 @@
-use crate::errors::RuntimeError;
+use crate::errors::{NativeError, RuntimeError};
 use crate::interpreter::context::{Context, Data};
 use crate::interpreter::native::{NativeSignature, NativeType};
 use libloading::Library;
@@ -36,6 +36,14 @@ pub enum P7NativeType {
     Map = 7,
     Closure = 8,
     Foreign = 9,
+    I8 = 10,
+    U8 = 11,
+    I16 = 12,
+    U16 = 13,
+    I32 = 14,
+    U32 = 15,
+    I64 = 16,
+    U64 = 17,
 }
 
 impl From<P7NativeType> for NativeType {
@@ -51,6 +59,14 @@ impl From<P7NativeType> for NativeType {
             P7NativeType::Map => Self::Map,
             P7NativeType::Closure => Self::Closure,
             P7NativeType::Foreign => Self::Foreign,
+            P7NativeType::I8 => Self::I8,
+            P7NativeType::U8 => Self::U8,
+            P7NativeType::I16 => Self::I16,
+            P7NativeType::U16 => Self::U16,
+            P7NativeType::I32 => Self::I32,
+            P7NativeType::U32 => Self::U32,
+            P7NativeType::I64 => Self::I64,
+            P7NativeType::U64 => Self::U64,
         }
     }
 }
@@ -69,6 +85,26 @@ pub enum P7ValueKind {
     Foreign = 8,
     Null = 9,
     Other = 10,
+}
+
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum P7CallbackValueKind {
+    Unit = 0,
+    Int = 1,
+    Float = 2,
+    Bool = 3,
+    String = 4,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct P7CallbackValue {
+    pub kind: u32,
+    pub int_value: i64,
+    pub float_value: f64,
+    pub bytes: *const u8,
+    pub length: usize,
 }
 
 #[repr(transparent)]
@@ -111,6 +147,13 @@ pub struct P7HostApi {
         unsafe extern "C" fn(*mut c_void, *const u8, usize, i64) -> P7Status,
     pub invoke_rooted_callback: unsafe extern "C" fn(*mut c_void, u64) -> P7Status,
     pub release_rooted_callback: unsafe extern "C" fn(*mut c_void, u64) -> P7Status,
+    pub invoke_rooted_callback_values: unsafe extern "C" fn(
+        *mut c_void,
+        u64,
+        *const P7CallbackValue,
+        usize,
+        *mut P7CallbackValue,
+    ) -> P7Status,
 }
 
 #[repr(C)]
@@ -149,6 +192,15 @@ pub struct P7CallApi {
         unsafe extern "C" fn(*const P7CallApi, P7Value, *const u8, usize, *mut i64) -> P7Status,
     pub retain_callback: unsafe extern "C" fn(*const P7CallApi, P7Value, *mut u64) -> P7Status,
     pub runtime: *mut c_void,
+    pub set_error_details: unsafe extern "C" fn(
+        *const P7CallApi,
+        *const u8,
+        usize,
+        *const u8,
+        usize,
+        *const u8,
+        usize,
+    ) -> P7Status,
 }
 
 pub type P7ExtensionInit = unsafe extern "C" fn(*const P7HostApi) -> P7Status;
@@ -198,6 +250,7 @@ pub fn register_initializer(
         invalidate_foreign_handle: invalidate_runtime_foreign_handle,
         invoke_rooted_callback,
         release_rooted_callback,
+        invoke_rooted_callback_values,
     };
     let status = match catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: The initializer receives a valid API table for this call.
@@ -272,8 +325,9 @@ unsafe extern "C" fn register_function(
         let signature = NativeSignature::new(params, result_type);
         // SAFETY: runtime points at the Context used to construct P7HostApi.
         let context = unsafe { &mut *runtime.cast::<Context>() };
+        let operation = name.clone();
         context.register_native_function(name, signature, move |context, args| {
-            invoke_native(callback, userdata.clone(), context, args)
+            invoke_native(&operation, callback, userdata.clone(), context, args)
         });
         Ok(())
     }));
@@ -346,9 +400,13 @@ unsafe extern "C" fn invoke_rooted_callback(runtime: *mut c_void, token: u64) ->
         }
         // SAFETY: runtime points at the live Context exposed by P7HostApi.
         let context = unsafe { &mut *runtime.cast::<Context>() };
-        context
-            .invoke_native_callback(token)
-            .map_err(|_| P7Status::Error)
+        match context.invoke_native_callback(token) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                context.record_native_error(error);
+                Err(P7Status::Error)
+            }
+        }
     }));
     match result {
         Ok(Ok(())) => P7Status::Ok,
@@ -362,6 +420,7 @@ unsafe extern "C" fn release_rooted_callback(runtime: *mut c_void, token: u64) -
         if runtime.is_null() || token == 0 {
             return Err(P7Status::InvalidArgument);
         }
+
         // SAFETY: runtime points at the live Context exposed by P7HostApi.
         let context = unsafe { &mut *runtime.cast::<Context>() };
         context
@@ -375,12 +434,95 @@ unsafe extern "C" fn release_rooted_callback(runtime: *mut c_void, token: u64) -
     }
 }
 
+unsafe extern "C" fn invoke_rooted_callback_values(
+    runtime: *mut c_void,
+    token: u64,
+    args: *const P7CallbackValue,
+    arg_count: usize,
+    output: *mut P7CallbackValue,
+) -> P7Status {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        if runtime.is_null() || token == 0 || output.is_null() || (args.is_null() && arg_count != 0)
+        {
+            return Err(P7Status::InvalidArgument);
+        }
+        let args = if arg_count == 0 {
+            &[][..]
+        } else {
+            // SAFETY: The extension promises arg_count readable values.
+            unsafe { slice::from_raw_parts(args, arg_count) }
+        };
+        let args = args
+            .iter()
+            .map(callback_value_to_data)
+            .collect::<Result<Vec<_>, _>>()?;
+        // SAFETY: runtime points at the live Context exposed by P7HostApi.
+        let context = unsafe { &mut *runtime.cast::<Context>() };
+        let value = match context.invoke_native_callback_with_args(token, args) {
+            Ok(value) => value,
+            Err(error) => {
+                context.record_native_error(error);
+                return Err(P7Status::Error);
+            }
+        };
+        let value = data_to_callback_value(value)?;
+        // SAFETY: output was checked for null.
+        unsafe { *output = value };
+        Ok(())
+    }));
+    match result {
+        Ok(Ok(())) => P7Status::Ok,
+        Ok(Err(status)) => status,
+        Err(_) => P7Status::Panic,
+    }
+}
+
+fn callback_value_to_data(value: &P7CallbackValue) -> Result<Data, P7Status> {
+    match value.kind {
+        kind if kind == P7CallbackValueKind::Int as u32 => Ok(Data::Int(value.int_value)),
+        kind if kind == P7CallbackValueKind::Float as u32 => Ok(Data::Float(value.float_value)),
+        kind if kind == P7CallbackValueKind::Bool as u32 => {
+            Ok(Data::Int(i64::from(value.int_value != 0)))
+        }
+        kind if kind == P7CallbackValueKind::String as u32 => {
+            bytes_string(value.bytes, value.length)
+                .map(|value| Data::String(value.into()))
+                .ok_or(P7Status::InvalidArgument)
+        }
+        _ => Err(P7Status::TypeMismatch),
+    }
+}
+
+fn data_to_callback_value(value: Data) -> Result<P7CallbackValue, P7Status> {
+    let mut output = P7CallbackValue {
+        kind: P7CallbackValueKind::Unit as u32,
+        int_value: 0,
+        float_value: 0.0,
+        bytes: ptr::null(),
+        length: 0,
+    };
+    match value {
+        Data::Int(value) => {
+            output.kind = P7CallbackValueKind::Int as u32;
+            output.int_value = value;
+        }
+        Data::Float(value) => {
+            output.kind = P7CallbackValueKind::Float as u32;
+            output.float_value = value;
+        }
+        _ => return Err(P7Status::TypeMismatch),
+    }
+    Ok(output)
+}
+
 fn invoke_native(
+    operation: &str,
     callback: P7NativeCallback,
     userdata: Rc<Userdata>,
     context: &mut Context,
     args: &[Data],
 ) -> Result<Option<Data>, RuntimeError> {
+    context.begin_native_invocation();
     let mut bridge = CallBridge::new(context, args);
     let api = bridge.api();
     let handles = (0..args.len())
@@ -398,16 +540,28 @@ fn invoke_native(
                 &mut output,
             )
         }
-    }))
-    .map_err(|_| RuntimeError::Other("Native extension callback panicked".to_string()))?;
+    }));
+    let recorded_error = bridge.context().end_native_invocation();
+    let status = match status {
+        Ok(status) => status,
+        Err(_) => {
+            return Err(recorded_error.unwrap_or_else(|| {
+                RuntimeError::Native(NativeError::new(
+                    operation,
+                    "panic",
+                    "native extension callback panicked",
+                ))
+            }));
+        }
+    };
     if status != P7Status::Ok {
-        let detail = bridge
-            .error
-            .take()
-            .unwrap_or_else(|| format!("status {status:?}"));
-        return Err(RuntimeError::Other(format!(
-            "Native extension callback failed: {detail}"
-        )));
+        return Err(recorded_error.unwrap_or_else(|| {
+            RuntimeError::Native(NativeError::new(
+                operation,
+                "",
+                format!("status {status:?}"),
+            ))
+        }));
     }
     if output.0 == 0 {
         Ok(None)
@@ -422,7 +576,6 @@ struct CallBridge {
     context: *mut Context,
     values: Vec<Data>,
     roots: Vec<usize>,
-    error: Option<String>,
 }
 
 impl CallBridge {
@@ -436,7 +589,6 @@ impl CallBridge {
             context,
             values: args.to_vec(),
             roots,
-            error: None,
         }
     }
 
@@ -463,6 +615,7 @@ impl CallBridge {
             get_foreign,
             retain_callback,
             runtime: self.context.cast(),
+            set_error_details,
         }
     }
 
@@ -732,7 +885,7 @@ unsafe fn make_foreign(
         }
         Err(RuntimeError::StaleForeignHandle { .. }) => P7Status::StaleHandle,
         Err(error) => {
-            bridge.error = Some(error.to_string());
+            bridge.context().record_native_error_if_empty(error);
             P7Status::Error
         }
     }
@@ -779,7 +932,7 @@ unsafe extern "C" fn invalidate_foreign_handle(
             Ok(()) => P7Status::Ok,
             Err(RuntimeError::StaleForeignHandle { .. }) => P7Status::StaleHandle,
             Err(error) => {
-                bridge.error = Some(error.to_string());
+                bridge.context().record_native_error_if_empty(error);
                 P7Status::Error
             }
         }
@@ -827,7 +980,7 @@ unsafe extern "C" fn invoke_callback(
                 P7Status::Ok
             }
             Err(error) => {
-                bridge.error = Some(error.to_string());
+                bridge.context().record_native_error(error);
                 P7Status::Error
             }
         }
@@ -846,7 +999,40 @@ unsafe extern "C" fn set_error(
         let Some(message) = bytes_string(message, length) else {
             return P7Status::InvalidArgument;
         };
-        bridge.error = Some(message.to_string());
+        bridge
+            .context()
+            .record_native_error(RuntimeError::Native(NativeError::new("", "", message)));
+        P7Status::Ok
+    })
+}
+
+unsafe extern "C" fn set_error_details(
+    api: *const P7CallApi,
+    operation: *const u8,
+    operation_len: usize,
+    class: *const u8,
+    class_len: usize,
+    message: *const u8,
+    message_len: usize,
+) -> P7Status {
+    catch_status(|| {
+        let Some(bridge) = (unsafe { bridge(api) }) else {
+            return P7Status::InvalidArgument;
+        };
+        let Some(operation) = bytes_string(operation, operation_len) else {
+            return P7Status::InvalidArgument;
+        };
+        let Some(class) = bytes_string(class, class_len) else {
+            return P7Status::InvalidArgument;
+        };
+        let Some(message) = bytes_string(message, message_len) else {
+            return P7Status::InvalidArgument;
+        };
+        bridge
+            .context()
+            .record_native_error(RuntimeError::Native(NativeError::new(
+                operation, class, message,
+            )));
         P7Status::Ok
     })
 }
@@ -880,7 +1066,7 @@ unsafe extern "C" fn get_foreign(
             }
             Err(RuntimeError::StaleForeignHandle { .. }) => P7Status::StaleHandle,
             Err(error) => {
-                bridge.error = Some(error.to_string());
+                bridge.context().record_native_error_if_empty(error);
                 P7Status::TypeMismatch
             }
         }
@@ -909,7 +1095,7 @@ unsafe extern "C" fn retain_callback(
                 P7Status::Ok
             }
             Err(error) => {
-                bridge.error = Some(error.to_string());
+                bridge.context().record_native_error_if_empty(error);
                 P7Status::TypeMismatch
             }
         }
