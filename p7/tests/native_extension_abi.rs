@@ -6,8 +6,35 @@ use p7::native_abi::{
     P7NativeFunctionDescriptor, P7NativeType, P7Status, P7Value,
 };
 use std::ffi::{CString, c_void};
+use std::mem::{offset_of, size_of};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[test]
+fn abi_layout_matches_c_contract() {
+    if size_of::<usize>() != 8 {
+        return;
+    }
+
+    assert_eq!(size_of::<P7CallbackValue>(), 40);
+    assert_eq!(offset_of!(P7CallbackValue, int_value), 8);
+    assert_eq!(offset_of!(P7CallbackValue, float_value), 16);
+    assert_eq!(offset_of!(P7CallbackValue, bytes), 24);
+    assert_eq!(offset_of!(P7CallbackValue, length), 32);
+    assert_eq!(size_of::<P7Value>(), 8);
+
+    assert_eq!(size_of::<P7NativeFunctionDescriptor>(), 64);
+    assert_eq!(offset_of!(P7NativeFunctionDescriptor, callback), 40);
+    assert_eq!(offset_of!(P7NativeFunctionDescriptor, drop_userdata), 56);
+
+    assert_eq!(size_of::<P7HostApi>(), 72);
+    assert_eq!(offset_of!(P7HostApi, struct_size), 8);
+    assert_eq!(offset_of!(P7HostApi, invoke_rooted_callback_values), 64);
+
+    assert_eq!(size_of::<P7CallApi>(), 176);
+    assert_eq!(offset_of!(P7CallApi, struct_size), 8);
+    assert_eq!(offset_of!(P7CallApi, set_error_details), 168);
+}
 
 unsafe extern "C" fn add_callback(
     _userdata: *mut c_void,
@@ -180,6 +207,64 @@ unsafe fn register(
     };
     // SAFETY: api and descriptor are valid for synchronous registration.
     unsafe { ((*api).register_function)((*api).runtime, &descriptor) }
+}
+
+unsafe extern "C" fn truncated_descriptor_init(api: *const P7HostApi) -> P7Status {
+    let name = c"abi.truncated_descriptor";
+    let descriptor = P7NativeFunctionDescriptor {
+        struct_size: size_of::<P7NativeFunctionDescriptor>() - 1,
+        name: name.as_ptr(),
+        params: std::ptr::null(),
+        param_count: 0,
+        result: P7NativeType::Any,
+        has_result: 0,
+        callback: Some(add_callback),
+        userdata: std::ptr::null_mut(),
+        drop_userdata: None,
+    };
+    unsafe { ((*api).register_function)((*api).runtime, &descriptor) }
+}
+
+unsafe extern "C" fn extended_descriptor_init(api: *const P7HostApi) -> P7Status {
+    #[repr(C)]
+    struct ExtendedDescriptor {
+        descriptor: P7NativeFunctionDescriptor,
+        future_fields: [usize; 2],
+    }
+
+    let name = c"abi.extended_descriptor";
+    let descriptor = ExtendedDescriptor {
+        descriptor: P7NativeFunctionDescriptor {
+            struct_size: size_of::<ExtendedDescriptor>(),
+            name: name.as_ptr(),
+            params: std::ptr::null(),
+            param_count: 0,
+            result: P7NativeType::Any,
+            has_result: 0,
+            callback: Some(add_callback),
+            userdata: std::ptr::null_mut(),
+            drop_userdata: None,
+        },
+        future_fields: [0; 2],
+    };
+    unsafe { ((*api).register_function)((*api).runtime, &descriptor.descriptor) }
+}
+
+#[test]
+fn native_function_descriptor_struct_size_rejects_truncated_extensions() {
+    let mut runtime = Runtime::new();
+    let error = runtime
+        .register_native_extension(truncated_descriptor_init)
+        .expect_err("truncated descriptor should fail");
+    assert!(error.to_string().contains("status InvalidArgument"));
+}
+
+#[test]
+fn native_function_descriptor_struct_size_accepts_newer_extensions() {
+    let mut runtime = Runtime::new();
+    runtime
+        .register_native_extension(extended_descriptor_init)
+        .expect("extended descriptor should register");
 }
 
 unsafe extern "C" fn extension_init(api: *const P7HostApi) -> P7Status {
@@ -1047,6 +1132,67 @@ fn install() {
         unsafe { invoke(runtime_ptr, token, &invalid, 1, &mut output) },
         P7Status::TypeMismatch
     );
+}
+
+#[test]
+fn extension_can_invoke_rooted_callback_with_foreign_sender() {
+    let _guard = ROOTED_CALLBACK_TEST_LOCK
+        .lock()
+        .expect("callback test lock");
+    *ROOTED_CALLBACK_TOKEN.lock().expect("callback token lock") = 0;
+    let module = compile(
+        r#"
+@foreign(type_tag="abi.Control", dispatcher="abi.unused")
+proto Control {}
+
+@foreign(type_tag="abi.Button", dispatcher="abi.unused")
+proto[Control] Button {}
+
+@intrinsic(name="abi.retain_callback")
+fn retain_callback(callback: fn(handle<Control>));
+
+fn install() {
+    retain_callback((sender: handle<Control>) => {
+        let button = sender as handle<Button>;
+    })
+}
+"#,
+    );
+    let mut runtime = Runtime::new();
+    runtime
+        .register_native_extension(rooted_callback_init)
+        .expect("register extension");
+    runtime.load_module(module);
+    runtime.call("install", Vec::new()).expect("install");
+
+    let token = *ROOTED_CALLBACK_TOKEN.lock().expect("callback token lock");
+    let runtime_ptr = *ROOTED_CALLBACK_RUNTIME
+        .lock()
+        .expect("callback runtime lock") as *mut c_void;
+    let invoke = ROOTED_CALLBACK_INVOKE_VALUES
+        .lock()
+        .expect("callback values lock")
+        .expect("typed invoke callback function");
+    let type_tag = b"abi.Button";
+    let input = P7CallbackValue {
+        kind: P7CallbackValueKind::Foreign as u32,
+        int_value: 84,
+        float_value: 0.0,
+        bytes: type_tag.as_ptr(),
+        length: type_tag.len(),
+    };
+    let mut output = P7CallbackValue {
+        kind: P7CallbackValueKind::Unit as u32,
+        int_value: 0,
+        float_value: 0.0,
+        bytes: std::ptr::null(),
+        length: 0,
+    };
+    assert_eq!(
+        unsafe { invoke(runtime_ptr, token, &input, 1, &mut output) },
+        P7Status::Ok
+    );
+    assert_eq!(output.kind, P7CallbackValueKind::Unit as u32);
 }
 
 #[test]

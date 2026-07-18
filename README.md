@@ -162,9 +162,11 @@ cargo run -p p7-cli -- run
 cargo run -p p7-cli -- test
 ```
 
-The initial package implementation supports path dependencies, canonical
-package-qualified imports, relative imports, package-root imports, and
-`p7.lock`. See `specs/package-project.md`.
+The package implementation supports path dependencies and exact artifact-index
+URLs, canonical package-qualified imports, relative imports, package-root
+imports, and a portable `p7.lock`. Artifact indexes select checksummed native
+packages by host target, so consumers can use pre-built extensions without the
+extension's compiler toolchain. See `specs/package-project.md`.
 
 - `repl`: starts a minimal REPL shell (evaluation is not implemented yet)
 

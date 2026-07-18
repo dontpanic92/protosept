@@ -1,3 +1,4 @@
+mod artifact;
 mod dispatch;
 mod module_provider;
 mod project;

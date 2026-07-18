@@ -60,7 +60,8 @@ typedef enum P7CallbackValueKind {
     P7_CALLBACK_INT = 1,
     P7_CALLBACK_FLOAT = 2,
     P7_CALLBACK_BOOL = 3,
-    P7_CALLBACK_STRING = 4
+    P7_CALLBACK_STRING = 4,
+    P7_CALLBACK_FOREIGN = 5
 } P7CallbackValueKind;
 
 typedef struct P7CallbackValue {

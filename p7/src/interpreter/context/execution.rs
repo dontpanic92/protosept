@@ -268,6 +268,17 @@ impl Context {
     /// Invoke a closure value synchronously and return its result.
     /// Used by higher-order host functions (map, filter, etc.) to call p7 closures.
     pub fn call_closure(&mut self, closure: &Data, args: Vec<Data>) -> ContextResult<Data> {
+        self.call_closure_optional(closure, args)?
+            .ok_or(RuntimeError::Other(
+                "call_closure: closure returned no value".to_string(),
+            ))
+    }
+
+    pub(crate) fn call_closure_optional(
+        &mut self,
+        closure: &Data,
+        args: Vec<Data>,
+    ) -> ContextResult<Option<Data>> {
         let (func_addr, closure_module_idx, captures) = match closure {
             Data::Closure {
                 func_addr,
@@ -282,6 +293,7 @@ impl Context {
         };
 
         let base_depth = self.stack.len();
+        let caller_stack_len = self.stack.last().map_or(0, |frame| frame.stack.len());
 
         let mut params = captures.as_ref().clone();
         params.extend(args);
@@ -307,12 +319,10 @@ impl Context {
             return Err(error);
         }
 
-        self.stack_frame_mut()?
-            .stack
-            .pop()
-            .ok_or(RuntimeError::Other(
-                "call_closure: closure returned no value".to_string(),
-            ))
+        match self.stack_frame_mut() {
+            Ok(frame) if frame.stack.len() > caller_stack_len => Ok(frame.stack.pop()),
+            Ok(_) | Err(_) => Ok(None),
+        }
     }
 
     /// Invoke a closure that returns no value (unit).

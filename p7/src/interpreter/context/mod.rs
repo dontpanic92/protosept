@@ -242,9 +242,9 @@ impl Context {
         &mut self,
         token: u64,
         args: Vec<Data>,
-    ) -> Result<Data, RuntimeError> {
+    ) -> Result<Option<Data>, RuntimeError> {
         let callback = self.native_callback(token)?;
-        self.call_closure(&callback, args)
+        self.call_closure_optional(&callback, args)
     }
 
     pub(crate) fn begin_native_invocation(&mut self) {

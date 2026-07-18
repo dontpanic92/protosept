@@ -1,3 +1,4 @@
+use crate::artifact::{ArtifactResolver, LockedPackage, LockedSource, Lockfile};
 use p7::ModuleProvider;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -8,7 +9,7 @@ use std::rc::Rc;
 
 const MANIFEST_NAME: &str = "p7.toml";
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Manifest {
     pub package: PackageManifest,
     #[serde(default)]
@@ -17,7 +18,7 @@ pub struct Manifest {
     pub native: NativeManifest,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PackageManifest {
     pub name: String,
     pub version: String,
@@ -28,7 +29,7 @@ pub struct PackageManifest {
     pub entry: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum PackageKind {
     Library,
@@ -36,12 +37,26 @@ pub enum PackageKind {
     Executable,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct DependencyManifest {
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum DependencyManifest {
+    Path(PathDependency),
+    Artifact(ArtifactDependency),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PathDependency {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactDependency {
+    pub index: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct NativeManifest {
     #[serde(default)]
     pub extensions: Vec<PathBuf>,
@@ -67,6 +82,7 @@ pub struct Package {
     pub source_dir: PathBuf,
     pub entry_path: PathBuf,
     pub entry_module: String,
+    source: LockedSource,
 }
 
 #[derive(Debug, Clone)]
@@ -78,14 +94,44 @@ pub struct Project {
 impl Project {
     pub fn load(path: &Path) -> Result<Self, String> {
         let manifest_path = manifest_path(path)?;
+        let project_root = manifest_path
+            .parent()
+            .expect("manifest path must have parent");
+        let mut resolver = ArtifactResolver::for_project(project_root)?;
+        Self::load_with_resolver(&manifest_path, &mut resolver)
+    }
+
+    fn load_with_resolver(
+        manifest_path: &Path,
+        resolver: &mut ArtifactResolver,
+    ) -> Result<Self, String> {
         let mut packages = HashMap::new();
         let mut loading = HashSet::new();
-        let root_package =
-            load_package_recursive(&manifest_path, &mut packages, &mut loading, None)?;
+        let root_package = load_package_recursive(
+            manifest_path,
+            &mut packages,
+            &mut loading,
+            None,
+            LockedSource::Path {
+                path: ".".to_string(),
+            },
+            false,
+            resolver,
+        )?;
         Ok(Self {
             root_package,
             packages,
         })
+    }
+
+    #[cfg(test)]
+    fn load_for_test(path: &Path, cache_dir: PathBuf, target: &str) -> Result<Self, String> {
+        let manifest_path = manifest_path(path)?;
+        let project_root = manifest_path
+            .parent()
+            .expect("manifest path must have parent");
+        let mut resolver = ArtifactResolver::for_test(project_root, cache_dir, target)?;
+        Self::load_with_resolver(&manifest_path, &mut resolver)
     }
 
     pub fn root_package(&self) -> &Package {
@@ -187,35 +233,53 @@ impl Project {
             .packages
             .values()
             .map(|package| {
-                let mut dependencies = package
-                    .manifest
-                    .dependencies
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>();
-                dependencies.sort();
                 Ok(LockedPackage {
                     name: package.manifest.package.name.clone(),
                     version: package.manifest.package.version.clone(),
-                    source: format!(
-                        "path+{}",
-                        relative_path(project_root, &package.root).to_string_lossy()
-                    ),
-                    checksum: package_checksum(package)?,
-                    dependencies,
+                    source: match &package.source {
+                        LockedSource::Path { .. } => LockedSource::Path {
+                            path: portable_relative_path(&relative_path(
+                                project_root,
+                                &package.root,
+                            ))?,
+                        },
+                        source @ LockedSource::Artifact { .. } => source.clone(),
+                    },
+                    checksum: matches!(package.source, LockedSource::Path { .. })
+                        .then(|| package_checksum(package))
+                        .transpose()?,
+                    dependencies: package.manifest.dependencies.clone(),
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
         packages.sort_by(|lhs, rhs| lhs.name.cmp(&rhs.name));
-        let lockfile = Lockfile {
-            version: 1,
-            packages,
-        };
+        let lockfile = Lockfile::new(packages);
         let encoded = toml::to_string_pretty(&lockfile)
             .map_err(|error| format!("Cannot encode lockfile: {error}"))?;
         let path = self.root_package().root.join("p7.lock");
-        fs::write(&path, encoded)
-            .map_err(|error| format!("Cannot write '{}': {error}", path.display()))?;
+        if fs::read_to_string(&path).is_ok_and(|existing| existing == encoded) {
+            return Ok(path);
+        }
+        let temporary = self
+            .root_package()
+            .root
+            .join(format!(".p7.lock-{}.partial", std::process::id()));
+        fs::write(&temporary, encoded)
+            .map_err(|error| format!("Cannot write '{}': {error}", temporary.display()))?;
+        if let Err(first_error) = fs::rename(&temporary, &path) {
+            let retry = if path.exists() {
+                fs::remove_file(&path).and_then(|()| fs::rename(&temporary, &path))
+            } else {
+                Err(first_error.kind().into())
+            };
+            if let Err(retry_error) = retry {
+                fs::remove_file(&temporary).ok();
+                return Err(format!(
+                    "Cannot publish '{}': {first_error}; replacement failed: {retry_error}",
+                    path.display()
+                ));
+            }
+        }
         Ok(path)
     }
 
@@ -251,21 +315,6 @@ impl Project {
             .collect::<Vec<_>>()
             .join("."))
     }
-}
-
-#[derive(Debug, Serialize)]
-struct Lockfile {
-    version: u32,
-    packages: Vec<LockedPackage>,
-}
-
-#[derive(Debug, Serialize)]
-struct LockedPackage {
-    name: String,
-    version: String,
-    source: String,
-    checksum: String,
-    dependencies: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -375,6 +424,9 @@ fn load_package_recursive(
     packages: &mut HashMap<String, Package>,
     loading: &mut HashSet<PathBuf>,
     expected_name: Option<&str>,
+    package_source: LockedSource,
+    downloaded: bool,
+    resolver: &mut ArtifactResolver,
 ) -> Result<String, String> {
     let manifest_path = manifest_path
         .canonicalize()
@@ -406,7 +458,6 @@ fn load_package_recursive(
                 expected, manifest.package.name
             ));
         }
-
         let root = manifest_path
             .parent()
             .expect("manifest path must have parent")
@@ -444,18 +495,83 @@ fn load_package_recursive(
                     root.display()
                 ));
             }
+            match (&existing.source, &package_source) {
+                (
+                    LockedSource::Artifact {
+                        index: existing, ..
+                    },
+                    LockedSource::Artifact { index: current, .. },
+                ) if existing != current => {
+                    return Err(format!(
+                        "Package '{}' resolves through conflicting artifact indexes '{}' and '{}'",
+                        manifest.package.name, existing, current
+                    ));
+                }
+                (LockedSource::Path { .. }, LockedSource::Artifact { .. })
+                | (LockedSource::Artifact { .. }, LockedSource::Path { .. }) => {
+                    return Err(format!(
+                        "Package '{}' resolves as both a path and artifact package",
+                        manifest.package.name
+                    ));
+                }
+                _ => {}
+            }
             return Ok(manifest.package.name);
         }
 
         for (dependency_name, dependency) in &manifest.dependencies {
             validate_package_name(dependency_name)?;
-            let dependency_manifest = root.join(&dependency.path).join(MANIFEST_NAME);
-            load_package_recursive(
-                &dependency_manifest,
-                packages,
-                loading,
-                Some(dependency_name),
-            )?;
+            match dependency {
+                DependencyManifest::Path(dependency) => {
+                    if downloaded {
+                        return Err(format!(
+                            "Downloaded artifact package '{}' cannot use path dependency '{}'",
+                            manifest.package.name, dependency_name
+                        ));
+                    }
+                    let dependency_manifest = root.join(&dependency.path).join(MANIFEST_NAME);
+                    load_package_recursive(
+                        &dependency_manifest,
+                        packages,
+                        loading,
+                        Some(dependency_name),
+                        LockedSource::Path {
+                            path: dependency.path.to_string_lossy().into_owned(),
+                        },
+                        false,
+                        resolver,
+                    )?;
+                }
+                DependencyManifest::Artifact(dependency) => {
+                    let resolved = resolver.resolve(dependency_name, &dependency.index)?;
+                    let dependency_manifest = resolved.root.join(MANIFEST_NAME);
+                    let dependency_source = resolved.source.clone();
+                    let loaded_name = load_package_recursive(
+                        &dependency_manifest,
+                        packages,
+                        loading,
+                        Some(dependency_name),
+                        dependency_source,
+                        true,
+                        resolver,
+                    )?;
+                    let loaded = packages
+                        .get(&loaded_name)
+                        .expect("recursive load must insert package");
+                    if loaded.manifest.package.version != resolved.version {
+                        return Err(format!(
+                            "Artifact package '{}' metadata mismatch: index or lockfile version is '{}', archive p7.toml version is '{}'",
+                            dependency_name, resolved.version, loaded.manifest.package.version
+                        ));
+                    }
+                    if loaded.manifest.dependencies != resolved.dependencies {
+                        return Err(format!(
+                            "Artifact package '{}' metadata mismatch: archive dependency sources do not match the artifact index or lockfile",
+                            dependency_name
+                        ));
+                    }
+                }
+            }
         }
 
         let name = manifest.package.name.clone();
@@ -467,6 +583,7 @@ fn load_package_recursive(
                 source_dir,
                 entry_path,
                 entry_module,
+                source: package_source,
             },
         );
         Ok(name)
@@ -564,17 +681,50 @@ fn relative_path(base: &Path, target: &Path) -> PathBuf {
     }
 }
 
+fn portable_relative_path(path: &Path) -> Result<String, String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => parts.push(".".to_string()),
+            Component::ParentDir => parts.push("..".to_string()),
+            Component::Normal(value) => parts.push(
+                value
+                    .to_str()
+                    .ok_or_else(|| format!("Package path '{}' is not valid UTF-8", path.display()))?
+                    .to_string(),
+            ),
+            Component::Prefix(_) | Component::RootDir => {
+                return Err(format!(
+                    "Package path '{}' must be relative",
+                    path.display()
+                ));
+            }
+        }
+    }
+    if parts.is_empty() {
+        Ok(".".to_string())
+    } else {
+        Ok(parts.join("/"))
+    }
+}
+
 fn package_checksum(package: &Package) -> Result<String, String> {
     let mut files = vec![package.root.join(MANIFEST_NAME)];
     collect_source_files(&package.source_dir, &mut files)?;
-    files.sort();
+    let mut files = files
+        .into_iter()
+        .map(|file| {
+            let relative = file.strip_prefix(&package.root).map_err(|_| {
+                format!("Cannot checksum '{}' outside package root", file.display())
+            })?;
+            Ok((portable_relative_path(relative)?, file))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    files.sort_by(|left, right| left.0.cmp(&right.0));
 
     let mut hasher = Sha256::new();
-    for file in files {
-        let relative = file
-            .strip_prefix(&package.root)
-            .map_err(|_| format!("Cannot checksum '{}' outside package root", file.display()))?;
-        hasher.update(relative.to_string_lossy().as_bytes());
+    for (relative, file) in files {
+        hasher.update(relative.as_bytes());
         hasher.update([0]);
         let contents = fs::read(&file)
             .map_err(|error| format!("Cannot checksum '{}': {error}", file.display()))?;
@@ -610,8 +760,23 @@ fn collect_source_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
     use p7::interpreter::context::{Context, Data};
+    use std::io::Cursor;
+    use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tar::{Builder, EntryType, Header};
+    use url::Url;
+
+    #[test]
+    fn lockfile_paths_use_portable_separators() {
+        assert_eq!(
+            portable_relative_path(Path::new("../library/src/mod.p7")),
+            Ok("../library/src/mod.p7".to_string())
+        );
+        assert_eq!(portable_relative_path(Path::new(".")), Ok(".".to_string()));
+    }
 
     #[test]
     fn loads_path_dependency_and_package_relative_imports() {
@@ -672,8 +837,10 @@ version = "1.0.0"
         assert!(lock_contents.contains("name = \"app\""));
         assert!(lock_contents.contains("name = \"math\""));
         assert!(lock_contents.contains("checksum = \""));
-        assert!(lock_contents.contains("source = \"path+.\""));
-        assert!(lock_contents.contains("source = \"path+../math\""));
+        assert!(lock_contents.contains("version = 2"));
+        assert!(lock_contents.contains("kind = \"path\""));
+        assert!(lock_contents.contains("path = \".\""));
+        assert!(lock_contents.contains("path = \"../math\""));
         assert!(!lock_contents.contains(&root.to_string_lossy().to_string()));
 
         fs::remove_dir_all(root).ok();
@@ -949,12 +1116,462 @@ entry = "src/net/mod.p7"
         fs::remove_dir_all(root).ok();
     }
 
+    #[test]
+    fn artifact_resolution_writes_portable_lock_and_uses_locked_cache() {
+        let root = temp_dir("artifact-lock");
+        let release = root.join("release");
+        let app = root.join("app");
+        let cache = root.join("cache");
+        let archive = release.join("utility.tar.gz");
+        let checksum = write_archive(
+            &archive,
+            &[
+                (
+                    "p7.toml",
+                    b"[package]\nname = \"utility\"\nversion = \"1.2.3\"\nkind = \"library\"\n",
+                ),
+                ("src/mod.p7", b"pub fn answer() -> int { 42 }"),
+            ],
+        );
+        let index = release.join("utility.index.toml");
+        write_index(&index, "utility", "1.2.3", "", "utility.tar.gz", &checksum);
+        write_artifact_app(&app, "utility", &file_url(&index));
+
+        let project = Project::load_for_test(&app, cache.clone(), "aarch64-apple-darwin")
+            .expect("resolve artifact");
+        project.compile().expect("compile artifact project");
+        let lock = project.write_lockfile().expect("write v2 lock");
+        let contents = fs::read_to_string(lock).expect("read lock");
+        assert!(contents.contains("version = 2"));
+        assert!(contents.contains("kind = \"artifact\""));
+        assert!(contents.contains("index_sha256 = \""));
+        for target in [
+            "aarch64-apple-darwin",
+            "x86_64-apple-darwin",
+            "x86_64-unknown-linux-gnu",
+            "x86_64-pc-windows-msvc",
+        ] {
+            assert!(contents.contains(target), "missing target {target}");
+        }
+        assert!(contents.contains(&file_url(&archive)));
+
+        write_index(
+            &index,
+            "utility",
+            "9.9.9",
+            "",
+            "changed.tar.gz",
+            &"0".repeat(64),
+        );
+        fs::remove_file(&archive).expect("remove remote archive");
+        let locked = Project::load_for_test(&app, cache.clone(), "x86_64-pc-windows-msvc")
+            .expect("locked resolution must not refetch changed index");
+        assert_eq!(
+            locked
+                .packages
+                .get("utility")
+                .unwrap()
+                .manifest
+                .package
+                .version,
+            "1.2.3"
+        );
+        write(
+            &cache.join("packages").join(&checksum).join("src/mod.p7"),
+            "pub fn answer() -> int { 0 }",
+        );
+        let error = Project::load_for_test(&app, cache.clone(), "aarch64-apple-darwin")
+            .expect_err("corrupted extracted cache must fail");
+        assert!(
+            error.contains("Corrupted extracted package cache"),
+            "{error}"
+        );
+        write(
+            &cache.join("packages").join(&checksum).join("src/mod.p7"),
+            "pub fn answer() -> int { 42 }",
+        );
+        write(
+            &cache.join("archives").join(format!("{checksum}.tar.gz")),
+            "bad",
+        );
+        let error = Project::load_for_test(&app, cache, "aarch64-apple-darwin")
+            .expect_err("corrupted archive cache must fail");
+        assert!(
+            error.contains("Corrupted artifact archive cache"),
+            "{error}"
+        );
+        write_artifact_app(
+            &app,
+            "utility",
+            &file_url(&release.join("replacement.index.toml")),
+        );
+        let error = Project::load_for_test(&app, root.join("other-cache"), "aarch64-apple-darwin")
+            .expect_err("changed dependency URL must conflict with lock");
+        assert!(error.contains("but p7.toml specifies"), "{error}");
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn artifact_checksum_and_metadata_mismatches_are_clear() {
+        let root = temp_dir("artifact-mismatch");
+        let release = root.join("release");
+        let app = root.join("app");
+        let archive = release.join("utility.tar.gz");
+        let checksum = write_archive(
+            &archive,
+            &[
+                (
+                    "p7.toml",
+                    b"[package]\nname = \"utility\"\nversion = \"1.0.0\"\nkind = \"library\"\n",
+                ),
+                ("src/mod.p7", b"pub fn answer() -> int { 42 }"),
+            ],
+        );
+        let index = release.join("utility.index.toml");
+        write_index(
+            &index,
+            "utility",
+            "1.0.0",
+            "",
+            "utility.tar.gz",
+            &"f".repeat(64),
+        );
+        write_artifact_app(&app, "utility", &file_url(&index));
+        let error = Project::load_for_test(
+            &app,
+            root.join("bad-checksum-cache"),
+            "x86_64-unknown-linux-gnu",
+        )
+        .expect_err("checksum must fail");
+        assert!(error.contains("Checksum mismatch"), "{error}");
+
+        write_index(&index, "utility", "2.0.0", "", "utility.tar.gz", &checksum);
+        let error = Project::load_for_test(
+            &app,
+            root.join("bad-metadata-cache"),
+            "x86_64-unknown-linux-gnu",
+        )
+        .expect_err("metadata must fail");
+        assert!(error.contains("metadata mismatch"), "{error}");
+
+        write_index(
+            &index,
+            "utility",
+            "1.0.0",
+            "[dependencies]\nother = { index = \"https://example.invalid/other.index.toml\" }\n",
+            "utility.tar.gz",
+            &checksum,
+        );
+        let error = Project::load_for_test(
+            &app,
+            root.join("bad-dependency-cache"),
+            "x86_64-unknown-linux-gnu",
+        )
+        .expect_err("dependency metadata must fail");
+        assert!(error.contains("dependency sources"), "{error}");
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn artifact_archives_reject_traversal_and_links() {
+        let root = temp_dir("unsafe-archives");
+        for (label, archive_writer, expected) in [
+            (
+                "traversal",
+                write_traversal_archive as fn(&Path) -> String,
+                "Unsafe artifact archive path",
+            ),
+            (
+                "link",
+                write_link_archive,
+                "links and special files are forbidden",
+            ),
+            ("duplicate", write_duplicate_archive, "duplicate path"),
+        ] {
+            let release = root.join(label);
+            let app = release.join("app");
+            let archive = release.join("bad.tar.gz");
+            let checksum = archive_writer(&archive);
+            let index = release.join("bad.index.toml");
+            write_index(&index, "bad", "1.0.0", "", "bad.tar.gz", &checksum);
+            write_artifact_app(&app, "bad", &file_url(&index));
+            let error =
+                Project::load_for_test(&app, release.join("cache"), "x86_64-pc-windows-msvc")
+                    .expect_err("unsafe archive must fail");
+            assert!(error.contains(expected), "{error}");
+        }
+        assert!(!root.join("escape").exists());
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn artifact_graph_supports_mixed_and_recursive_sources() {
+        let root = temp_dir("artifact-graph");
+        let release = root.join("release");
+        let app = root.join("app");
+        let path_dep = root.join("local");
+        let leaf_archive = release.join("leaf.tar.gz");
+        let leaf_checksum = write_archive(
+            &leaf_archive,
+            &[
+                (
+                    "p7.toml",
+                    b"[package]\nname = \"leaf\"\nversion = \"1.0.0\"\nkind = \"library\"\n",
+                ),
+                ("src/mod.p7", b"pub fn value() -> int { 40 }"),
+            ],
+        );
+        let leaf_index = release.join("leaf.index.toml");
+        write_index(
+            &leaf_index,
+            "leaf",
+            "1.0.0",
+            "",
+            "leaf.tar.gz",
+            &leaf_checksum,
+        );
+        let middle_manifest = format!(
+            "[package]\nname = \"middle\"\nversion = \"1.0.0\"\nkind = \"library\"\n\n[dependencies]\nleaf = {{ index = {:?} }}\n",
+            file_url(&leaf_index)
+        );
+        let middle_archive = release.join("middle.tar.gz");
+        let middle_checksum = write_archive(
+            &middle_archive,
+            &[
+                ("p7.toml", middle_manifest.as_bytes()),
+                (
+                    "src/mod.p7",
+                    b"import leaf; pub fn value() -> int { leaf.value() + 1 }",
+                ),
+            ],
+        );
+        let middle_index = release.join("middle.index.toml");
+        let index_dependencies = format!(
+            "[dependencies]\nleaf = {{ index = {:?} }}\n",
+            file_url(&leaf_index)
+        );
+        write_index(
+            &middle_index,
+            "middle",
+            "1.0.0",
+            &index_dependencies,
+            "middle.tar.gz",
+            &middle_checksum,
+        );
+        write(
+            &path_dep.join("p7.toml"),
+            "[package]\nname = \"local\"\nversion = \"1.0.0\"\nkind = \"library\"\n",
+        );
+        write(&path_dep.join("src/mod.p7"), "pub fn value() -> int { 1 }");
+        write(
+            &app.join("p7.toml"),
+            &format!(
+                "[package]\nname = \"app\"\nversion = \"1.0.0\"\n\n[dependencies]\nmiddle = {{ index = {:?} }}\nlocal = {{ path = \"../local\" }}\n",
+                file_url(&middle_index)
+            ),
+        );
+        write(
+            &app.join("src/main.p7"),
+            "import middle; import local; fn main() -> int { middle.value() + local.value() }",
+        );
+
+        let project = Project::load_for_test(&app, root.join("cache"), "x86_64-apple-darwin")
+            .expect("load mixed recursive graph");
+        assert_eq!(project.package_names().count(), 4);
+        project.compile().expect("compile mixed recursive graph");
+        let lock = project.write_lockfile().expect("write mixed lock");
+        let contents = fs::read_to_string(lock).unwrap();
+        assert!(contents.contains("kind = \"path\""));
+        assert!(contents.contains("kind = \"artifact\""));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn downloaded_packages_reject_path_dependencies() {
+        let root = temp_dir("artifact-path-dependency");
+        let release = root.join("release");
+        let app = root.join("app");
+        let archive = release.join("bad.tar.gz");
+        let checksum = write_archive(
+            &archive,
+            &[
+                (
+                    "p7.toml",
+                    b"[package]\nname = \"bad\"\nversion = \"1.0.0\"\nkind = \"library\"\n\n[dependencies]\nescape = { path = \"..\" }\n",
+                ),
+                ("src/mod.p7", b"pub fn value() -> int { 1 }"),
+            ],
+        );
+        let index = release.join("bad.index.toml");
+        write_index(
+            &index,
+            "bad",
+            "1.0.0",
+            "[dependencies]\nescape = { path = \"..\" }\n",
+            "bad.tar.gz",
+            &checksum,
+        );
+        write_artifact_app(&app, "bad", &file_url(&index));
+        let error = Project::load_for_test(&app, root.join("cache"), "aarch64-apple-darwin")
+            .expect_err("artifact path dependency must fail");
+        assert!(error.contains("cannot use path dependency"), "{error}");
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn unsupported_targets_and_url_schemes_are_reported() {
+        let root = temp_dir("artifact-target");
+        let release = root.join("release");
+        let app = root.join("app");
+        let archive = release.join("utility.tar.gz");
+        let checksum = write_archive(
+            &archive,
+            &[
+                (
+                    "p7.toml",
+                    b"[package]\nname = \"utility\"\nversion = \"1.0.0\"\nkind = \"library\"\n",
+                ),
+                ("src/mod.p7", b"pub fn value() -> int { 1 }"),
+            ],
+        );
+        let index = release.join("utility.index.toml");
+        write(
+            &index,
+            &format!(
+                "version = 1\n[package]\nname = \"utility\"\nversion = \"1.0.0\"\n[targets.aarch64-apple-darwin]\nurl = \"utility.tar.gz\"\nsha256 = \"{checksum}\"\nformat = \"tar.gz\"\n"
+            ),
+        );
+        write_artifact_app(&app, "utility", &file_url(&index));
+        let error = Project::load_for_test(&app, root.join("cache"), "x86_64-unknown-linux-gnu")
+            .expect_err("missing target must fail");
+        assert!(error.contains("no archive for target"), "{error}");
+
+        write_artifact_app(&app, "utility", "http://example.invalid/index.toml");
+        let error = Project::load_for_test(&app, root.join("cache-http"), "aarch64-apple-darwin")
+            .expect_err("http must fail");
+        assert!(error.contains("expected https or file"), "{error}");
+
+        write_artifact_app(
+            &app,
+            "utility",
+            &file_url(&release.join("missing.index.toml")),
+        );
+        let error =
+            Project::load_for_test(&app, root.join("cache-missing"), "aarch64-apple-darwin")
+                .expect_err("missing index must fail");
+        assert!(error.contains("Cannot open artifact index"), "{error}");
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn version_one_path_lockfiles_upgrade_cleanly() {
+        let root = temp_dir("v1-lock");
+        write(
+            &root.join("p7.toml"),
+            "[package]\nname = \"app\"\nversion = \"1.0.0\"\n",
+        );
+        write(&root.join("src/main.p7"), "fn main() {}");
+        write(
+            &root.join("p7.lock"),
+            "version = 1\n\n[[packages]]\nname = \"app\"\nversion = \"1.0.0\"\nsource = \"path+.\"\nchecksum = \"old\"\ndependencies = []\n",
+        );
+
+        let project = Project::load_for_test(&root, root.join("cache"), "aarch64-apple-darwin")
+            .expect("v1 path lock remains readable");
+        let lock = project.write_lockfile().expect("upgrade lock");
+        assert!(fs::read_to_string(lock).unwrap().contains("version = 2"));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn loads_native_extension_from_extracted_artifact() {
+        let root = temp_dir("artifact-native");
+        let release = root.join("release");
+        let app = root.join("app");
+        fs::create_dir_all(&release).expect("create release");
+        let library_name = format!(
+            "{}fixture{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        );
+        let library = release.join(&library_name);
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../p7/tests/fixtures/native_extension.rs");
+        let output = Command::new("rustc")
+            .arg("--edition=2021")
+            .arg("--crate-type=cdylib")
+            .arg(&fixture)
+            .arg("-o")
+            .arg(&library)
+            .output()
+            .expect("run rustc");
+        assert!(
+            output.status.success(),
+            "fixture compilation failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let manifest = format!(
+            "[package]\nname = \"nativepkg\"\nversion = \"1.0.0\"\nkind = \"library\"\n\n[native]\nextensions = [\"native/{library_name}\"]\n"
+        );
+        let library_bytes = fs::read(&library).expect("read native fixture");
+        let archive = release.join("nativepkg.tar.gz");
+        let checksum = write_archive(
+            &archive,
+            &[
+                ("p7.toml", manifest.as_bytes()),
+                ("src/mod.p7", b"pub fn marker() -> int { 1 }"),
+                (&format!("native/{library_name}"), &library_bytes),
+            ],
+        );
+        let index = release.join("nativepkg.index.toml");
+        write_index(
+            &index,
+            "nativepkg",
+            "1.0.0",
+            "",
+            "nativepkg.tar.gz",
+            &checksum,
+        );
+        write_artifact_app(&app, "nativepkg", &file_url(&index));
+        write(
+            &app.join("src/main.p7"),
+            "@intrinsic(name=\"dynamic.answer\") fn answer() -> int; fn main() -> int { answer() }",
+        );
+
+        let project = Project::load_for_test(&app, root.join("cache"), "x86_64-unknown-linux-gnu")
+            .expect("load native artifact");
+        project
+            .validate_supported_features()
+            .expect("validate extracted native path");
+        let module = project.compile().expect("compile app");
+        let mut runtime = p7::embedding::Runtime::new();
+        project
+            .load_native_extensions(&mut runtime)
+            .expect("load extracted native extension");
+        runtime.load_module(module);
+        assert!(matches!(
+            runtime.call("main", Vec::new()).expect("run app"),
+            p7::embedding::CallOutcome::Returned(Some(Data::Int(42)))
+        ));
+
+        fs::remove_dir_all(root).ok();
+    }
+
     fn temp_dir(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        std::env::temp_dir().join(format!("protosept-{label}-{}-{nonce}", std::process::id()))
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../target/p7-cli-tests")
+            .join(format!("{label}-{}-{nonce}", std::process::id()))
     }
 
     fn write(path: &Path, contents: &str) {
@@ -962,5 +1579,143 @@ entry = "src/net/mod.p7"
             fs::create_dir_all(parent).expect("create fixture directory");
         }
         fs::write(path, contents).expect("write fixture");
+    }
+
+    fn file_url(path: &Path) -> String {
+        Url::from_file_path(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+            .expect("file URL")
+            .to_string()
+    }
+
+    fn write_artifact_app(app: &Path, name: &str, index: &str) {
+        write(
+            &app.join("p7.toml"),
+            &format!(
+                "[package]\nname = \"app\"\nversion = \"1.0.0\"\n\n[dependencies]\n{name} = {{ index = {index:?} }}\n"
+            ),
+        );
+        write(
+            &app.join("src/main.p7"),
+            &format!("import {name}; fn main() -> int {{ {name}.answer() }}"),
+        );
+    }
+
+    fn write_index(
+        path: &Path,
+        name: &str,
+        version: &str,
+        dependencies: &str,
+        archive_url: &str,
+        checksum: &str,
+    ) {
+        let mut contents = format!(
+            "version = 1\n\n[package]\nname = {name:?}\nversion = {version:?}\n\n{dependencies}"
+        );
+        for target in [
+            "aarch64-apple-darwin",
+            "x86_64-apple-darwin",
+            "x86_64-unknown-linux-gnu",
+            "x86_64-pc-windows-msvc",
+        ] {
+            contents.push_str(&format!(
+                "\n[targets.{target}]\nurl = {archive_url:?}\nsha256 = {checksum:?}\nformat = \"tar.gz\"\n"
+            ));
+        }
+        write(path, &contents);
+    }
+
+    fn write_archive(path: &Path, files: &[(&str, &[u8])]) -> String {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create archive directory");
+        }
+        let file = fs::File::create(path).expect("create archive");
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = Builder::new(encoder);
+        for (name, contents) in files {
+            let mut header = Header::new_gnu();
+            header.set_entry_type(EntryType::Regular);
+            header.set_mode(0o644);
+            header.set_size(contents.len() as u64);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, name, Cursor::new(*contents))
+                .expect("append archive file");
+        }
+        let encoder = builder.into_inner().expect("finish tar");
+        encoder.finish().expect("finish gzip");
+        sha256_path(path)
+    }
+
+    fn write_traversal_archive(path: &Path) -> String {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create archive directory");
+        }
+        let file = fs::File::create(path).expect("create archive");
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = Builder::new(encoder);
+        let contents = b"escape";
+        let mut header = Header::new_gnu();
+        header.set_entry_type(EntryType::Regular);
+        header.set_mode(0o644);
+        header.set_size(contents.len() as u64);
+        header.as_mut_bytes()[..9].copy_from_slice(b"../escape");
+        header.set_cksum();
+        builder
+            .append(&header, Cursor::new(contents))
+            .expect("append traversal");
+        let encoder = builder.into_inner().expect("finish tar");
+        encoder.finish().expect("finish gzip");
+        sha256_path(path)
+    }
+
+    fn write_link_archive(path: &Path) -> String {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create archive directory");
+        }
+        let file = fs::File::create(path).expect("create archive");
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = Builder::new(encoder);
+        let mut header = Header::new_gnu();
+        header.set_entry_type(EntryType::Symlink);
+        header.set_mode(0o777);
+        header.set_size(0);
+        header.set_path("link").expect("set link path");
+        header.set_link_name("../escape").expect("set link target");
+        header.set_cksum();
+        builder
+            .append(&header, Cursor::new(Vec::<u8>::new()))
+            .expect("append link");
+        let encoder = builder.into_inner().expect("finish tar");
+        encoder.finish().expect("finish gzip");
+        sha256_path(path)
+    }
+
+    fn write_duplicate_archive(path: &Path) -> String {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create archive directory");
+        }
+        let file = fs::File::create(path).expect("create archive");
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut builder = Builder::new(encoder);
+        for contents in [b"first".as_slice(), b"second".as_slice()] {
+            let mut header = Header::new_gnu();
+            header.set_entry_type(EntryType::Regular);
+            header.set_mode(0o644);
+            header.set_size(contents.len() as u64);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "p7.toml", Cursor::new(contents))
+                .expect("append duplicate");
+        }
+        let encoder = builder.into_inner().expect("finish tar");
+        encoder.finish().expect("finish gzip");
+        sha256_path(path)
+    }
+
+    fn sha256_path(path: &Path) -> String {
+        format!(
+            "{:x}",
+            Sha256::digest(fs::read(path).expect("read archive"))
+        )
     }
 }

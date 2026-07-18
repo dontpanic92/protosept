@@ -95,6 +95,7 @@ pub enum P7CallbackValueKind {
     Float = 2,
     Bool = 3,
     String = 4,
+    Foreign = 5,
 }
 
 #[repr(C)]
@@ -452,12 +453,12 @@ unsafe extern "C" fn invoke_rooted_callback_values(
             // SAFETY: The extension promises arg_count readable values.
             unsafe { slice::from_raw_parts(args, arg_count) }
         };
-        let args = args
-            .iter()
-            .map(callback_value_to_data)
-            .collect::<Result<Vec<_>, _>>()?;
         // SAFETY: runtime points at the live Context exposed by P7HostApi.
         let context = unsafe { &mut *runtime.cast::<Context>() };
+        let args = args
+            .iter()
+            .map(|value| callback_value_to_data(context, value))
+            .collect::<Result<Vec<_>, _>>()?;
         let value = match context.invoke_native_callback_with_args(token, args) {
             Ok(value) => value,
             Err(error) => {
@@ -477,7 +478,10 @@ unsafe extern "C" fn invoke_rooted_callback_values(
     }
 }
 
-fn callback_value_to_data(value: &P7CallbackValue) -> Result<Data, P7Status> {
+fn callback_value_to_data(
+    context: &mut Context,
+    value: &P7CallbackValue,
+) -> Result<Data, P7Status> {
     match value.kind {
         kind if kind == P7CallbackValueKind::Int as u32 => Ok(Data::Int(value.int_value)),
         kind if kind == P7CallbackValueKind::Float as u32 => Ok(Data::Float(value.float_value)),
@@ -489,11 +493,18 @@ fn callback_value_to_data(value: &P7CallbackValue) -> Result<Data, P7Status> {
                 .map(|value| Data::String(value.into()))
                 .ok_or(P7Status::InvalidArgument)
         }
+        kind if kind == P7CallbackValueKind::Foreign as u32 => {
+            let type_tag =
+                bytes_string(value.bytes, value.length).ok_or(P7Status::InvalidArgument)?;
+            context
+                .alloc_foreign_handle(type_tag, value.int_value)
+                .map_err(|_| P7Status::TypeMismatch)
+        }
         _ => Err(P7Status::TypeMismatch),
     }
 }
 
-fn data_to_callback_value(value: Data) -> Result<P7CallbackValue, P7Status> {
+fn data_to_callback_value(value: Option<Data>) -> Result<P7CallbackValue, P7Status> {
     let mut output = P7CallbackValue {
         kind: P7CallbackValueKind::Unit as u32,
         int_value: 0,
@@ -502,11 +513,12 @@ fn data_to_callback_value(value: Data) -> Result<P7CallbackValue, P7Status> {
         length: 0,
     };
     match value {
-        Data::Int(value) => {
+        None => {}
+        Some(Data::Int(value)) => {
             output.kind = P7CallbackValueKind::Int as u32;
             output.int_value = value;
         }
-        Data::Float(value) => {
+        Some(Data::Float(value)) => {
             output.kind = P7CallbackValueKind::Float as u32;
             output.float_value = value;
         }

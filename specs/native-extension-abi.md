@@ -143,15 +143,17 @@ runtime-level host table during initialization and later uses:
 - `release_rooted_callback(runtime, token)` to unregister it and release its
   GC root.
 - `invoke_rooted_callback_values(runtime, token, args, count, output)` to pass
-  copied integer, float, boolean, or UTF-8 string arguments and receive an
-  integer or float result.
+  copied   integer, float, boolean, UTF-8 string, or persistent foreign-handle
+  arguments and receive an integer or float result.
 
 Tokens are monotonic within a runtime, so a released token cannot alias a
 later callback. Invoking or releasing a stale token returns an error status.
 The runtime pointer and callback operations are thread-affine.
 
 `P7CallbackValue.kind` is an integer wire discriminant and is always validated;
-unknown values return `P7_STATUS_TYPE_MISMATCH`. Strings are input-only because
-the ABI does not expose borrowed runtime string storage. Protosept booleans use
-integer results (`0` or `1`) on this callback-result path. Mutable native event
+unknown values return `P7_STATUS_TYPE_MISMATCH`. `FOREIGN` uses `int_value` for
+the host handle and `bytes`/`length` for the dynamic UTF-8 type tag. Strings and
+foreign values are input-only because the ABI does not expose borrowed runtime
+storage for either result representation. Protosept booleans use integer
+results (`0` or `1`) on this callback-result path. Mutable native event
 arguments are represented by returning their replacement value.
