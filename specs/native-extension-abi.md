@@ -22,8 +22,11 @@ transactional: if initialization returns a status
 other than `P7_STATUS_OK`, all registrations made by that initializer are
 removed before the library is unloaded.
 
-The runtime loads dependency extensions before root-package extensions and
-keeps every successful library loaded until its runtime is destroyed.
+The runtime loads dependency extensions before root-package extensions.
+Successful libraries remain loaded for the process lifetime because GUI
+toolkits and some language runtimes do not support safe dynamic unloading.
+Failed initializers are still unloaded after their registrations are rolled
+back.
 
 All ABI tables are append-only. Before reading an extension field, test that
 `struct_size` reaches the end of that field. The C header provides

@@ -3,6 +3,7 @@ use crate::interpreter::context::{Context, Data};
 use crate::interpreter::native::{NativeSignature, NativeType};
 use libloading::Library;
 use std::ffi::{CStr, c_char, c_void};
+use std::mem::ManuallyDrop;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::ptr;
@@ -207,7 +208,8 @@ pub struct P7CallApi {
 pub type P7ExtensionInit = unsafe extern "C" fn(*const P7HostApi) -> P7Status;
 
 pub struct NativeExtension {
-    _library: Library,
+    // GUI runtimes such as LCL Cocoa/GTK can crash during dynamic unloading.
+    _library: ManuallyDrop<Library>,
 }
 
 impl NativeExtension {
@@ -233,7 +235,9 @@ impl NativeExtension {
                 })?
         };
         register_initializer(context, initializer)?;
-        Ok(Self { _library: library })
+        Ok(Self {
+            _library: ManuallyDrop::new(library),
+        })
     }
 }
 
