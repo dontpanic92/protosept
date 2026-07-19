@@ -282,6 +282,22 @@ fn find_test_cases(module: &p7::bytecode::Module) -> Result<Vec<TestCase>, Failu
     Ok(test_cases)
 }
 
+fn finish_test_runtime<T>(
+    runtime: &mut p7::embedding::Runtime,
+    result: Result<T, Proto7Error>,
+) -> Result<Result<T, Proto7Error>, Proto7Error> {
+    let shutdown = runtime.shutdown().map_err(Proto7Error::RuntimeError);
+    match (result, shutdown) {
+        (result, Ok(())) => Ok(result),
+        (Ok(_), Err(shutdown)) => Err(shutdown),
+        (Err(error), Err(shutdown)) => {
+            Err(Proto7Error::RuntimeError(p7::errors::RuntimeError::Other(
+                format!("{error}; additionally, native extension shutdown failed: {shutdown}"),
+            )))
+        }
+    }
+}
+
 fn run_test_case(
     module: p7::bytecode::Module,
     test_case: &TestCase,
@@ -291,21 +307,28 @@ fn run_test_case(
     let disassembly = unp7::disassemble_module(&module);
     let run_result = if let Some(project) = project {
         let mut runtime = p7::embedding::Runtime::new();
-        project
-            .load_native_extensions(&mut runtime)
-            .map_err(|error| Proto7Error::RuntimeError(p7::errors::RuntimeError::Other(error)))?;
-        runtime.set_script_dir(options.script_dir);
-        runtime.load_module(module);
-        match runtime.call(&test_case.function_name, Vec::new()) {
-            Ok(p7::embedding::CallOutcome::Returned(Some(value))) => Ok(value),
-            Ok(p7::embedding::CallOutcome::Returned(None)) => Err(Proto7Error::RuntimeError(
-                p7::errors::RuntimeError::StackUnderflow,
-            )),
-            Ok(p7::embedding::CallOutcome::Threw(value)) => Err(Proto7Error::RuntimeError(
-                p7::errors::RuntimeError::Other(format!("Script threw {value:?}")),
-            )),
-            Ok(p7::embedding::CallOutcome::Trapped(error)) => Err(Proto7Error::RuntimeError(error)),
-            Err(error) => Err(Proto7Error::RuntimeError(error)),
+        if let Err(error) = project.load_native_extensions(&mut runtime) {
+            let result = Err(Proto7Error::RuntimeError(p7::errors::RuntimeError::Other(
+                error,
+            )));
+            finish_test_runtime::<P7Value>(&mut runtime, result)?
+        } else {
+            runtime.set_script_dir(options.script_dir);
+            runtime.load_module(module);
+            let result = match runtime.call(&test_case.function_name, Vec::new()) {
+                Ok(p7::embedding::CallOutcome::Returned(Some(value))) => Ok(value),
+                Ok(p7::embedding::CallOutcome::Returned(None)) => Err(Proto7Error::RuntimeError(
+                    p7::errors::RuntimeError::StackUnderflow,
+                )),
+                Ok(p7::embedding::CallOutcome::Threw(value)) => Err(Proto7Error::RuntimeError(
+                    p7::errors::RuntimeError::Other(format!("Script threw {value:?}")),
+                )),
+                Ok(p7::embedding::CallOutcome::Trapped(error)) => {
+                    Err(Proto7Error::RuntimeError(error))
+                }
+                Err(error) => Err(Proto7Error::RuntimeError(error)),
+            };
+            finish_test_runtime(&mut runtime, result)?
         }
     } else {
         p7::run_with_options(module, &test_case.function_name, options)
@@ -322,6 +345,7 @@ fn run_test_case(
                     },
                 ))
             }
+
             Err(err) => {
                 let rendered = format!("{}", err);
                 if substring.is_empty() || rendered.contains(substring) {

@@ -155,16 +155,34 @@ fn run_project(path: &Path, _program_args: &[String]) -> Result<(), String> {
         .compile()
         .map_err(|error| format!("Error: {error}"))?;
     let mut runtime = p7::embedding::Runtime::new();
-    project.load_native_extensions(&mut runtime)?;
+    if let Err(error) = project.load_native_extensions(&mut runtime) {
+        return finish_runtime(&mut runtime, Err(error));
+    }
     runtime.set_script_dir(Some(package.root.to_string_lossy().into_owned()));
     runtime.load_module(module);
-    match runtime
-        .call("main", Vec::new())
-        .map_err(|error| format!("Error: {error}"))?
-    {
-        p7::embedding::CallOutcome::Returned(_) => Ok(()),
-        p7::embedding::CallOutcome::Threw(value) => Err(format!("Error: script threw {value:?}")),
-        p7::embedding::CallOutcome::Trapped(error) => Err(format!("Error: {error}")),
+    let result = match runtime.call("main", Vec::new()) {
+        Ok(p7::embedding::CallOutcome::Returned(_)) => Ok(()),
+        Ok(p7::embedding::CallOutcome::Threw(value)) => {
+            Err(format!("Error: script threw {value:?}"))
+        }
+        Ok(p7::embedding::CallOutcome::Trapped(error)) => Err(format!("Error: {error}")),
+        Err(error) => Err(format!("Error: {error}")),
+    };
+    finish_runtime(&mut runtime, result)
+}
+
+fn finish_runtime<T>(
+    runtime: &mut p7::embedding::Runtime,
+    result: Result<T, String>,
+) -> Result<T, String> {
+    let shutdown = runtime.shutdown().map_err(|error| error.to_string());
+    match (result, shutdown) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(shutdown)) => Err(format!("Error: {shutdown}")),
+        (Err(error), Err(shutdown)) => Err(format!(
+            "{error}\nAdditionally, native extension shutdown failed: {shutdown}"
+        )),
     }
 }
 

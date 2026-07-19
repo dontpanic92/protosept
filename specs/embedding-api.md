@@ -78,5 +78,16 @@ suspended.
 Callback invocation reports the same returned/threw/trapped outcome categories
 as top-level script calls.
 
-The current API is the Rust embedding contract. A versioned C ABI and dynamic
-native-extension loader remain the next interoperability milestone.
+## Runtime shutdown
+
+Embedders that load dynamic native extensions must call
+`Runtime::shutdown()` before discarding the runtime. Shutdown is idempotent and
+invokes optional extension hooks in reverse load order while the interpreter
+context remains alive. After each successful hook, the runtime removes that
+extension's registered callbacks and userdata before unloading its library.
+
+A shutdown error identifies the extension and intentionally keeps the unsafe
+library and its host context alive. Calls, module loads, roots, and extension
+loads are rejected after shutdown starts. `Drop` attempts the same sequence as
+a safety fallback, but explicit shutdown is required when the caller needs to
+report an error.

@@ -15,6 +15,12 @@ An extension exports:
 P7Status p7_extension_init_v1(const P7HostApi *api);
 ```
 
+An extension that owns state requiring deterministic cleanup may also export:
+
+```c
+P7Status p7_extension_shutdown_v1(const P7HostApi *api);
+```
+
 The extension must check `api->abi_version` and `api->struct_size` before using
 the table. The table itself is borrowed only during initialization; extensions
 may copy its function pointers and opaque `runtime` value. Registration is
@@ -22,11 +28,28 @@ transactional: if initialization returns a status
 other than `P7_STATUS_OK`, all registrations made by that initializer are
 removed before the library is unloaded.
 
-The runtime loads dependency extensions before root-package extensions.
-Successful libraries remain loaded for the process lifetime because GUI
-toolkits and some language runtimes do not support safe dynamic unloading.
-Failed initializers are still unloaded after their registrations are rolled
-back.
+The shutdown entry point is optional and is called at most once after a
+successful initialization. The runtime shuts extensions down in reverse load
+order while the interpreter context and rooted-callback services are still
+alive. The supplied host table is borrowed for the call. An extension may
+release rooted callbacks and invalidate foreign handles during shutdown, but
+must not register functions or foreign types, invoke arbitrary script
+callbacks, or retain the table or runtime pointer after returning.
+
+Before returning `P7_STATUS_OK`, an extension must stop event sources, cancel
+queued work, release every retained callback token, destroy its host objects,
+and make its language and toolkit finalizers safe to run. After a successful
+hook, the runtime removes that extension's registrations while its code is
+still mapped, then unloads the library. Extensions without a hook are assumed
+not to own external state; their registrations are removed before unload.
+
+The runtime loads dependency extensions before root-package extensions. If a
+shutdown hook returns a non-OK status or panics, the command fails and reports
+the extension path. The failing extension and dependencies that have not yet
+shut down remain loaded, and the host context they reference is retained,
+rather than being destroyed or unloaded unsafely. Extensions that already
+completed shutdown remain unloaded. Failed initializers are still unloaded
+after their registrations are rolled back.
 
 All ABI tables are append-only. Before reading an extension field, test that
 `struct_size` reaches the end of that field. The C header provides

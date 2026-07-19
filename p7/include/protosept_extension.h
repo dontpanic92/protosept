@@ -10,6 +10,7 @@ extern "C" {
 
 #define P7_NATIVE_ABI_VERSION 1u
 #define P7_EXTENSION_INIT_SYMBOL "p7_extension_init_v1"
+#define P7_EXTENSION_SHUTDOWN_SYMBOL "p7_extension_shutdown_v1"
 
 typedef enum P7Status {
     P7_STATUS_OK = 0,
@@ -178,6 +179,7 @@ struct P7CallApi {
 };
 
 typedef P7Status (*P7ExtensionInit)(const P7HostApi *api);
+typedef P7Status (*P7ExtensionShutdown)(const P7HostApi *api);
 
 #define P7_API_HAS_FIELD(api, type, field) \
     ((api) != NULL && \

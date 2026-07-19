@@ -1,17 +1,17 @@
 use crate::errors::{NativeError, RuntimeError};
-use crate::interpreter::context::{Context, Data};
+use crate::interpreter::context::{Context, Data, NativeRegistrationCheckpoint};
 use crate::interpreter::native::{NativeSignature, NativeType};
 use libloading::Library;
-use std::ffi::{CStr, c_char, c_void};
-use std::mem::ManuallyDrop;
-use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::Path;
+use std::ffi::{c_char, c_void, CStr};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::rc::Rc;
 use std::slice;
 
 pub const P7_NATIVE_ABI_VERSION: u32 = 1;
 pub const P7_EXTENSION_INIT_SYMBOL: &[u8] = b"p7_extension_init_v1\0";
+pub const P7_EXTENSION_SHUTDOWN_SYMBOL: &[u8] = b"p7_extension_shutdown_v1\0";
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,10 +206,14 @@ pub struct P7CallApi {
 }
 
 pub type P7ExtensionInit = unsafe extern "C" fn(*const P7HostApi) -> P7Status;
+pub type P7ExtensionShutdown = unsafe extern "C" fn(*const P7HostApi) -> P7Status;
 
 pub struct NativeExtension {
-    // GUI runtimes such as LCL Cocoa/GTK can crash during dynamic unloading.
-    _library: ManuallyDrop<Library>,
+    library: Option<Library>,
+    shutdown: Option<P7ExtensionShutdown>,
+    checkpoint: Option<NativeRegistrationCheckpoint>,
+    path: PathBuf,
+    failed_shutdown: Option<P7Status>,
 }
 
 impl NativeExtension {
@@ -234,10 +238,51 @@ impl NativeExtension {
                     ))
                 })?
         };
-        register_initializer(context, initializer)?;
+        let shutdown = unsafe {
+            library
+                .get::<P7ExtensionShutdown>(P7_EXTENSION_SHUTDOWN_SYMBOL)
+                .ok()
+                .map(|symbol| *symbol)
+        };
+        let checkpoint = register_initializer_with_checkpoint(context, initializer)?;
         Ok(Self {
-            _library: ManuallyDrop::new(library),
+            library: Some(library),
+            shutdown,
+            checkpoint: Some(checkpoint),
+            path: path.to_path_buf(),
+            failed_shutdown: None,
         })
+    }
+
+    pub fn shutdown(&mut self, context: &mut Context) -> Result<(), RuntimeError> {
+        if let Some(status) = self.failed_shutdown {
+            return Err(shutdown_error(&self.path, status));
+        }
+        if self.library.is_none() {
+            return Ok(());
+        }
+
+        if let Some(shutdown) = self.shutdown {
+            let api = host_api(context, false);
+            let status = match catch_unwind(AssertUnwindSafe(|| {
+                // SAFETY: The extension remains loaded and receives a valid
+                // host table for the duration of the shutdown call.
+                unsafe { shutdown(&api) }
+            })) {
+                Ok(status) => status,
+                Err(_) => P7Status::Panic,
+            };
+            if status != P7Status::Ok {
+                self.failed_shutdown = Some(status);
+                return Err(shutdown_error(&self.path, status));
+            }
+        }
+
+        if let Some(checkpoint) = self.checkpoint.take() {
+            context.rollback_native_registration(checkpoint);
+        }
+        drop(self.library.take());
+        Ok(())
     }
 }
 
@@ -245,18 +290,15 @@ pub fn register_initializer(
     context: &mut Context,
     initializer: P7ExtensionInit,
 ) -> Result<(), RuntimeError> {
+    register_initializer_with_checkpoint(context, initializer).map(|_| ())
+}
+
+fn register_initializer_with_checkpoint(
+    context: &mut Context,
+    initializer: P7ExtensionInit,
+) -> Result<NativeRegistrationCheckpoint, RuntimeError> {
     let checkpoint = context.native_registration_checkpoint();
-    let api = P7HostApi {
-        abi_version: P7_NATIVE_ABI_VERSION,
-        struct_size: std::mem::size_of::<P7HostApi>(),
-        runtime: (context as *mut Context).cast(),
-        register_function,
-        register_foreign_type,
-        invalidate_foreign_handle: invalidate_runtime_foreign_handle,
-        invoke_rooted_callback,
-        release_rooted_callback,
-        invoke_rooted_callback_values,
-    };
+    let api = host_api(context, true);
     let status = match catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: The initializer receives a valid API table for this call.
         unsafe { initializer(&api) }
@@ -273,7 +315,47 @@ pub fn register_initializer(
         context.rollback_native_registration(checkpoint);
         return Err(error);
     }
-    Ok(())
+    Ok(checkpoint)
+}
+
+fn host_api(context: &mut Context, allow_registration: bool) -> P7HostApi {
+    P7HostApi {
+        abi_version: P7_NATIVE_ABI_VERSION,
+        struct_size: std::mem::size_of::<P7HostApi>(),
+        runtime: (context as *mut Context).cast(),
+        register_function: if allow_registration {
+            register_function
+        } else {
+            reject_register_function
+        },
+        register_foreign_type: if allow_registration {
+            register_foreign_type
+        } else {
+            reject_register_foreign_type
+        },
+        invalidate_foreign_handle: invalidate_runtime_foreign_handle,
+        invoke_rooted_callback,
+        release_rooted_callback,
+        invoke_rooted_callback_values,
+    }
+}
+
+fn shutdown_error(path: &Path, status: P7Status) -> RuntimeError {
+    RuntimeError::Other(format!(
+        "Native extension '{}' shutdown failed with status {status:?}; the library remains loaded",
+        path.display()
+    ))
+}
+
+impl Drop for NativeExtension {
+    fn drop(&mut self) {
+        if let Some(library) = self.library.take() {
+            // A live library here means shutdown did not complete safely.
+            // Retain it so Context-owned callbacks can be destroyed without
+            // calling code that has already been unmapped.
+            std::mem::forget(library);
+        }
+    }
 }
 
 struct Userdata {
@@ -293,6 +375,21 @@ impl Drop for Userdata {
     }
 }
 
+unsafe extern "C" fn reject_register_function(
+    _runtime: *mut c_void,
+    _descriptor: *const P7NativeFunctionDescriptor,
+) -> P7Status {
+    P7Status::InvalidArgument
+}
+
+unsafe extern "C" fn reject_register_foreign_type(
+    _runtime: *mut c_void,
+    _type_tag: *const c_char,
+    _finalizer: *const c_char,
+) -> P7Status {
+    P7Status::InvalidArgument
+}
+
 unsafe extern "C" fn register_function(
     runtime: *mut c_void,
     descriptor: *const P7NativeFunctionDescriptor,
@@ -301,6 +398,7 @@ unsafe extern "C" fn register_function(
         if runtime.is_null() || descriptor.is_null() {
             return Err(P7Status::InvalidArgument);
         }
+
         // SAFETY: Null was rejected and the pointer is valid for this call.
         let descriptor = unsafe { &*descriptor };
         if descriptor.struct_size < std::mem::size_of::<P7NativeFunctionDescriptor>() {
